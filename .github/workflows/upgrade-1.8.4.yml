@@ -1,0 +1,80 @@
+name: Upgrade LX Music iOS to 1.8.4
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-1.8.4.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream v1.8.4 into iOS adaptation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/lx-merged
+          git clone --branch ios-adaptation --single-branch https://github.com/Q-1515/lx-music-mobile.git /tmp/lx-merged
+          cd /tmp/lx-merged
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add official https://github.com/lyswhut/lx-music-mobile.git
+          git fetch official refs/tags/v1.8.4:refs/tags/upstream-v1.8.4
+
+          if ! git merge --no-ff --no-edit -X ours refs/tags/upstream-v1.8.4; then
+            echo 'Resolving remaining conflicts in favor of the iOS adaptation.'
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              if git checkout --ours -- "$file" 2>/dev/null; then
+                git add -- "$file"
+              else
+                git rm -f --ignore-unmatch -- "$file" || true
+              fi
+            done < <(git diff --name-only --diff-filter=U)
+            git add -A
+            git commit -m 'Merge upstream v1.8.4 with iOS compatibility'
+          fi
+
+          # Keep the iOS-specific dependency/postinstall setup, but expose the
+          # actual app version as upstream 1.8.4 (build 76).
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('/tmp/lx-merged/package.json')
+          data = json.loads(p.read_text())
+          data['version'] = '1.8.4'
+          data['versionCode'] = 76
+          scripts = data.setdefault('scripts', {})
+          scripts.setdefault('postinstall', 'node dependencies-patch.js')
+          scripts.setdefault('lint:sound-effect-dsp', 'node scripts/check-sound-effect-dsp.js')
+          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Sync merged source to this repository
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            /tmp/lx-merged/ ./
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No upgrade changes to commit.'
+          else
+            git commit -m 'Upgrade iOS source to LX Music Mobile 1.8.4'
+            git push origin HEAD:main
+          fi
