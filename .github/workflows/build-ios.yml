@@ -3,8 +3,8 @@ name: Build LX Music iOS IPA
 on:
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/build-ios.yml'
+    paths-ignore:
+      - 'build-info/**'
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-ios:
-    name: Build unsigned IPA
+    name: Build TrollStore CarPlay IPA
     runs-on: macos-14
     env:
       NO_FLIPPER: 1
@@ -20,6 +20,7 @@ jobs:
       IOS_WORKSPACE: ios/LxMusicMobile.xcworkspace
       IOS_BUNDLE_IDENTIFIER: cn.toside.music.mobile
       DERIVED_DATA_PATH: build/DerivedData
+      CARPLAY_ENTITLEMENTS: ios/LxMusicMobile/LxMusicMobile.entitlements
 
     steps:
       - name: Checkout source
@@ -39,8 +40,23 @@ jobs:
           ruby-version: '3.2'
           bundler-cache: true
 
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Validate CarPlay configuration
+        shell: bash
+        run: |
+          plutil -lint ios/LxMusicMobile/Info.plist
+          plutil -lint "$CARPLAY_ENTITLEMENTS"
+          grep -q 'CPTemplateApplicationSceneSessionRoleApplication' ios/LxMusicMobile/Info.plist
+          grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
+          grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
+
       - name: Install JavaScript dependencies
         run: npm ci
+
+      - name: Verify sound-effect DSP patches
+        run: npm run lint:sound-effect-dsp
 
       - name: Install CocoaPods dependencies
         shell: bash
@@ -75,22 +91,43 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             clean build 2>&1 | tee build/xcodebuild.log
 
-      - name: Package unsigned IPA
+      - name: Inject TrollStore CarPlay entitlements
         shell: bash
         run: |
           APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
+          EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
+          test -f "$EXECUTABLE_PATH"
+
+          ldid -S"$CARPLAY_ENTITLEMENTS" "$EXECUTABLE_PATH"
+          ldid -e "$EXECUTABLE_PATH" > build/carplay-entitlements.plist
+          plutil -lint build/carplay-entitlements.plist
+          grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
+          grep -q 'com.apple.developer.playable-content' build/carplay-entitlements.plist
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Package TrollStore CarPlay IPA
+        shell: bash
+        run: |
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
           cd build
-          zip -qry "LXMusic-iOS-${PACKAGE_VERSION}-unsigned.ipa" Payload
+          zip -qry "LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-TrollStore.ipa" Payload
 
-      - name: Upload IPA artifact
+      - name: Upload CarPlay IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-unsigned
-          path: build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-unsigned.ipa
+          name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore
+          path: build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa
+          if-no-files-found: error
+
+      - name: Upload embedded entitlements
+        uses: actions/upload-artifact@v4
+        with:
+          name: carplay-entitlements-${{ github.run_id }}
+          path: build/carplay-entitlements.plist
           if-no-files-found: error
 
       - name: Upload Xcode log on failure
@@ -112,7 +149,7 @@ jobs:
           printf '%s\n' "run_id=${GITHUB_RUN_ID}" > build-info/last-run.txt
           printf '%s\n' "status=${BUILD_STATUS}" >> build-info/last-run.txt
           printf '%s\n' "version=${VERSION}" >> build-info/last-run.txt
-          printf '%s\n' "artifact=LXMusic-iOS-${VERSION}-unsigned" >> build-info/last-run.txt
+          printf '%s\n' "artifact=LXMusic-iOS-${VERSION}-CarPlay-TrollStore" >> build-info/last-run.txt
           printf '%s\n' "commit=${GITHUB_SHA}" >> build-info/last-run.txt
           if [ "$BUILD_STATUS" = "success" ]; then
             cp build-info/last-run.txt build-info/last-success.txt
