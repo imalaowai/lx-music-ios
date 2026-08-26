@@ -1,3 +1,4 @@
+# bootstrap revision 2
 name: Bootstrap LX Music iOS Source
 
 on:
@@ -45,7 +46,7 @@ jobs:
           p.write_text(json.dumps(data, ensure_ascii=False, indent=2)+'\n')
           PY
 
-          rm -rf "$GITHUB_WORKSPACE"/* "$GITHUB_WORKSPACE"/.[!.]* "$GITHUB_WORKSPACE"/..?* || true
+          find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
           rsync -a --exclude='.git' /tmp/lx-src/ "$GITHUB_WORKSPACE"/
           cd "$GITHUB_WORKSPACE"
 
@@ -128,13 +129,10 @@ jobs:
                     path: build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-unsigned.ipa
           YAML
 
-          git init
+          git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git add -A
           git commit -m "Import full iOS source and merge upstream v1.8.4"
-          git branch -M main
-          git push --force origin main
+          git push --force origin HEAD:main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
