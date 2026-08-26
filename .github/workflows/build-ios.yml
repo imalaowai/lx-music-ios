@@ -48,7 +48,12 @@ jobs:
         run: |
           plutil -lint ios/LxMusicMobile/Info.plist
           plutil -lint "$CARPLAY_ENTITLEMENTS"
-          grep -q 'CPTemplateApplicationSceneSessionRoleApplication' ios/LxMusicMobile/Info.plist
+          grep -q 'configurationForConnectingSceneSession' ios/LxMusicMobile/main.m
+          grep -q 'CPTemplateApplicationSceneSessionRoleApplication' ios/LxMusicMobile/main.m
+          if /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' ios/LxMusicMobile/Info.plist >/dev/null 2>&1; then
+            echo 'ERROR: UIApplicationSceneManifest would hijack the phone ReactNativeNavigation lifecycle and can cause a black screen.'
+            exit 1
+          fi
           grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
           grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
 
