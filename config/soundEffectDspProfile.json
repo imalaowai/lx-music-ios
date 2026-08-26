@@ -1,0 +1,24 @@
+{
+  "equalizerFrequencies": [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  "equalizerQ": 1.41,
+  "equalizerBypassThreshold": 0.01,
+  "equalizerHeadroomMode": "disabled",
+  "dynamics": {
+    "mode": "peakLimiter",
+    "thresholdLinear": 0.98,
+    "attackSeconds": 0.001,
+    "releaseSeconds": 0.08
+  },
+  "pitch": {
+    "defaultRate": 1,
+    "minRate": 0.5,
+    "maxRate": 1.5,
+    "bypassThreshold": 0.01
+  },
+  "phaseVocoder": {
+    "blockSize": 4096,
+    "hopSize": 128,
+    "windowScale": 0.8
+  },
+  "processingOrder": ["equalizer", "pitch", "convolution", "dynamics", "panner"]
+}

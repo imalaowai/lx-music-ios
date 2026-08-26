@@ -1,0 +1,19 @@
+import initPlayer from './player'
+import initPlayInfo from './playInfo'
+import initPlayStatus from './playStatus'
+import initWatchList from './watchList'
+import initPlayProgress from './playProgress'
+import initPreloadNextMusic from './preloadNextMusic'
+import initLyric from './lyric'
+import initRemoteCommand from './remoteCommand'
+
+export default async(setting: LX.AppSetting) => {
+  await initPlayer(setting)
+  await initLyric(setting)
+  await initPlayInfo(setting)
+  initPlayStatus()
+  initWatchList()
+  initPlayProgress()
+  initPreloadNextMusic()
+  initRemoteCommand()
+}
