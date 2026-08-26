@@ -94,7 +94,12 @@ export const searchListMusic = (list: LX.Music.MusicInfo[], text: string) => {
       data: mInfo,
     })
   }
-  return sortedList.map(item => item.data).reverse()
+  return [
+    ...fullMathNameResults.values(),
+    ...fullMathSingerResults.values(),
+    ...fullMathAlbumResults.values(),
+    ...sortedList.map(item => item.data).reverse(),
+  ]
 }
 
 export const handleShowMusicSourceDetail = async(minfo: SelectInfo['musicInfo']) => {

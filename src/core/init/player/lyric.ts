@@ -11,9 +11,17 @@ import { Platform } from 'react-native'
 const updateRemoteLyric = async(lrc?: string) => {
   setLastLyric(lrc)
   if (lrc == null) {
-    void updateNowPlayingTitles((state.prevDuration || 0) * 1000, playerState.musicInfo.name, playerState.musicInfo.singer ?? '', playerState.musicInfo.album ?? '')
+    void updateNowPlayingTitles({
+      title: playerState.musicInfo.name,
+      artist: playerState.musicInfo.singer ?? '',
+      album: playerState.musicInfo.album ?? '',
+    })
   } else {
-    void updateNowPlayingTitles((state.prevDuration || 0) * 1000, lrc, `${playerState.musicInfo.name}${playerState.musicInfo.singer ? ` - ${playerState.musicInfo.singer}` : ''}`, playerState.musicInfo.album ?? '')
+    void updateNowPlayingTitles({
+      title: lrc,
+      artist: `${playerState.musicInfo.name}${playerState.musicInfo.singer ? ` - ${playerState.musicInfo.singer}` : ''}`,
+      album: playerState.musicInfo.album ?? '',
+    })
   }
 }
 
@@ -42,7 +50,7 @@ export default async(setting: LX.AppSetting) => {
     })
   })
   onLyricLinePlay(({ text, extendedLyrics }) => {
-    if (!text && !state.isPlaying) {
+    if (!text && !playerState.isPlay) {
       void updateRemoteLyric()
     } else {
       void updateRemoteLyric(text)
