@@ -160,8 +160,8 @@ static void LXCarPlayEmitAction(NSDictionary *action);
    didConnectInterfaceController:(CPInterfaceController *)interfaceController {
   self.interfaceController = interfaceController;
   LXCarPlaySceneDelegateInstance = self;
-  // CarPlay requires a root template before this callback returns. This makes
-  // cold launches deterministic even when React Native or the network is slow.
+  // CarPlay requires a root template before this callback returns. This keeps
+  // the vehicle UI independent from React Native and network startup latency.
   [self refreshRootTemplate];
 }
 
@@ -258,6 +258,30 @@ static void LXCarPlayEmitAction(NSDictionary *action) {
     }
   });
 }
+
+// Keep the phone app on its existing AppDelegate/ReactNativeNavigation
+// lifecycle. Only CarPlay receives a UIScene configuration. This avoids the
+// black phone window caused by opting the entire app into UIApplicationSceneManifest.
+@implementation AppDelegate (LXCarPlaySceneConfiguration)
+
+- (UISceneConfiguration *)application:(UIApplication *)application
+ configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+                              options:(UISceneConnectionOptions *)options API_AVAILABLE(ios(13.0)) {
+  if ([connectingSceneSession.role isEqualToString:CPTemplateApplicationSceneSessionRoleApplication]) {
+    UISceneConfiguration *configuration = [[UISceneConfiguration alloc] initWithName:@"LX Music CarPlay"
+                                                                          sessionRole:connectingSceneSession.role];
+    configuration.sceneClass = [CPTemplateApplicationScene class];
+    configuration.delegateClass = [LXCarPlaySceneDelegate class];
+    return configuration;
+  }
+
+  // The phone UI is intentionally not declared in Info.plist as a scene.
+  // This fallback is only for an unexpected non-CarPlay scene request.
+  return [[UISceneConfiguration alloc] initWithName:@"LX Music Default"
+                                        sessionRole:connectingSceneSession.role];
+}
+
+@end
 
 int main(int argc, char *argv[])
 {
