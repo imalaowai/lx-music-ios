@@ -101,17 +101,26 @@ jobs:
           path: build/xcodebuild.log
           if-no-files-found: ignore
 
-      - name: Record successful build
-        if: success()
+      - name: Record build run
+        if: always()
         shell: bash
+        env:
+          BUILD_STATUS: ${{ job.status }}
         run: |
           mkdir -p build-info
-          printf '%s\n' "run_id=${GITHUB_RUN_ID}" > build-info/last-success.txt
-          printf '%s\n' "version=${PACKAGE_VERSION}" >> build-info/last-success.txt
-          printf '%s\n' "artifact=LXMusic-iOS-${PACKAGE_VERSION}-unsigned" >> build-info/last-success.txt
-          printf '%s\n' "commit=${GITHUB_SHA}" >> build-info/last-success.txt
+          VERSION="${PACKAGE_VERSION:-unknown}"
+          printf '%s\n' "run_id=${GITHUB_RUN_ID}" > build-info/last-run.txt
+          printf '%s\n' "status=${BUILD_STATUS}" >> build-info/last-run.txt
+          printf '%s\n' "version=${VERSION}" >> build-info/last-run.txt
+          printf '%s\n' "artifact=LXMusic-iOS-${VERSION}-unsigned" >> build-info/last-run.txt
+          printf '%s\n' "commit=${GITHUB_SHA}" >> build-info/last-run.txt
+          if [ "$BUILD_STATUS" = "success" ]; then
+            cp build-info/last-run.txt build-info/last-success.txt
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add build-info/last-success.txt
-          git commit -m 'Record successful iOS build [skip ci]'
-          git push origin HEAD:main
+          git add build-info/last-run.txt build-info/last-success.txt 2>/dev/null || git add build-info/last-run.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record iOS build ${BUILD_STATUS} [skip ci]"
+            git push origin HEAD:main
+          fi
