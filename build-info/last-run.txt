@@ -1,5 +1,5 @@
-run_id=32950554874
-status=failure
-version=unknown
-artifact=LXMusic-iOS-unknown-CarPlay-TrollStore
-commit=e61f99c9199faa3f0a004b25336df5472fca0f90
+run_id=32950653853
+status=success
+version=1.8.4
+artifact=LXMusic-iOS-1.8.4-CarPlay-TrollStore
+commit=558dc0b0f4ccd4756a4b8e22143d852cea937394
