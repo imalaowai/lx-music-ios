@@ -7,7 +7,6 @@ import initPlayer from './player'
 import dataInit from './dataInit'
 import initSync from './sync'
 import initCommonState from './common'
-import initCarPlay from './carPlay'
 import { initDeeplink } from './deeplink'
 import { setApiSource } from '@/core/apiSource'
 import commonActions from '@/store/common/action'
@@ -60,8 +59,6 @@ export default async() => {
   bootLog('Data inited.')
   await initCommonState(setting)
   bootLog('Common State inited.')
-  await initCarPlay()
-  bootLog('CarPlay inited.')
 
   void initSync(setting)
   bootLog('Sync inited.')
