@@ -1,0 +1,117 @@
+name: Build LX Music iOS IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Build unsigned IPA
+    runs-on: macos-14
+    env:
+      NO_FLIPPER: 1
+      IOS_SCHEME: LxMusicMobile
+      IOS_WORKSPACE: ios/LxMusicMobile.xcworkspace
+      IOS_BUNDLE_IDENTIFIER: cn.toside.music.mobile
+      DERIVED_DATA_PATH: build/DerivedData
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Install CocoaPods dependencies
+        shell: bash
+        run: |
+          cd ios
+          bundle exec pod install --repo-update
+
+      - name: Read app version
+        shell: bash
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_VERSION_CODE=$(node -p "require('./package.json').versionCode")
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION_CODE=$PACKAGE_VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Build unsigned iOS application
+        shell: bash
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_IDENTIFIER" \
+            MARKETING_VERSION="$PACKAGE_VERSION" \
+            CURRENT_PROJECT_VERSION="$PACKAGE_VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build 2>&1 | tee build/xcodebuild.log
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          zip -qry "LXMusic-iOS-${PACKAGE_VERSION}-unsigned.ipa" Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-unsigned
+          path: build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload Xcode log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-${{ github.run_id }}
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+
+      - name: Record successful build
+        if: success()
+        shell: bash
+        run: |
+          mkdir -p build-info
+          printf '%s\n' "run_id=${GITHUB_RUN_ID}" > build-info/last-success.txt
+          printf '%s\n' "version=${PACKAGE_VERSION}" >> build-info/last-success.txt
+          printf '%s\n' "artifact=LXMusic-iOS-${PACKAGE_VERSION}-unsigned" >> build-info/last-success.txt
+          printf '%s\n' "commit=${GITHUB_SHA}" >> build-info/last-success.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add build-info/last-success.txt
+          git commit -m 'Record successful iOS build [skip ci]'
+          git push origin HEAD:main
