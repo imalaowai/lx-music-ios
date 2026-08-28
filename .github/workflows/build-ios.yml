@@ -52,14 +52,23 @@ jobs:
 
           grep -q 'configurationForConnectingSceneSession' ios/LxMusicMobile/main.m
           grep -q 'CPTemplateApplicationSceneSessionRoleApplication' ios/LxMusicMobile/main.m
-          grep -q 'setRootTemplate:self.rootTemplate' ios/LxMusicMobile/main.m
+          grep -q 'setRootTemplate:self.tabBarTemplate' ios/LxMusicMobile/main.m
+          grep -q 'CPTabBarTemplate' ios/LxMusicMobile/main.m
+          grep -q 'CPNowPlayingTemplate' ios/LxMusicMobile/main.m
           grep -q 'RCT_EXPORT_MODULE(CarPlayModule)' ios/LxMusicMobile/main.m
-          grep -q 'CPSearchTemplateDelegate' ios/LxMusicMobile/main.m
           grep -q 'maximumItemCount' ios/LxMusicMobile/main.m
+          grep -q 'maximumTabCount' ios/LxMusicMobile/main.m
           grep -q 'LXCarPlayLibraryDidChange' ios/LxMusicMobile/main.m
           grep -q "initCarPlay" src/core/init/index.ts
           grep -q "playListById" src/core/init/carPlay.ts
           grep -q "carplay-action" src/utils/nativeModules/carPlay.ts
+
+          # CPSearchTemplate belongs to the navigation CarPlay category. Keep the audio
+          # implementation on List/TabBar/NowPlaying templates to avoid entitlement mismatch.
+          if grep -q 'CPSearchTemplate' ios/LxMusicMobile/main.m; then
+            echo 'ERROR: navigation-only CPSearchTemplate found in audio CarPlay implementation.'
+            exit 1
+          fi
 
           # Keep the phone UI on ReactNativeNavigation's existing lifecycle. A global
           # UIApplicationSceneManifest can make the phone scene bypass RNN and black-screen.
@@ -128,6 +137,7 @@ jobs:
           strings "$EXECUTABLE_PATH" | grep -q 'LXCarPlaySceneDelegate'
           strings "$EXECUTABLE_PATH" | grep -q 'carplay-action'
           strings "$EXECUTABLE_PATH" | grep -q 'refresh-library'
+          strings "$EXECUTABLE_PATH" | grep -q 'LXCarPlayLibraryDidChange'
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
