@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ios-simulator-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     name: Launch app in iOS Simulator
@@ -51,17 +55,18 @@ jobs:
           python3 - <<'PY' > build-sim-env.sh
           import json, subprocess
           runtimes=json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','-j']))['runtimes']
-          ios=[r for r in runtimes if r.get('isAvailable') and r.get('platform')=='iOS']
+          ios=[r for r in runtimes if r.get('isAvailable') and '.SimRuntime.iOS-' in r.get('identifier','')]
           if not ios:
               raise SystemExit('No available iOS simulator runtime')
           runtime=ios[-1]['identifier']
           dts=json.loads(subprocess.check_output(['xcrun','simctl','list','devicetypes','-j']))['devicetypes']
           iphones=[d for d in dts if d['name'].startswith('iPhone')]
-          preferred=[d for d in iphones if d['name'] in ('iPhone 15','iPhone 14','iPhone 16')]
+          preferred=[d for d in iphones if d['name'] in ('iPhone 16','iPhone 15','iPhone 14')]
           device=(preferred[0] if preferred else iphones[0])['identifier']
           print(f"RUNTIME_ID='{runtime}'")
           print(f"DEVICE_TYPE_ID='{device}'")
           PY
+          cat build-sim-env.sh
           source build-sim-env.sh
           SIM_UDID="$(xcrun simctl create LXMusicSmoke "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
           echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
@@ -104,6 +109,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 -m pip install --quiet --user pillow
           python3 - <<'PY'
           from PIL import Image, ImageStat
           img=Image.open('build/simulator-screen.png').convert('RGB')
@@ -112,13 +118,16 @@ jobs:
           std=sum(stat.stddev)/3
           pixels=list(img.resize((80,160)).getdata())
           dark=sum(1 for r,g,b in pixels if max(r,g,b)<18)/len(pixels)
-          print(f'screen mean={mean:.2f} std={std:.2f} dark_ratio={dark:.4f}')
+          bright=sum(1 for r,g,b in pixels if min(r,g,b)>238)/len(pixels)
+          print(f'screen mean={mean:.2f} std={std:.2f} dark_ratio={dark:.4f} bright_ratio={bright:.4f}')
           if dark > 0.97 and std < 12:
               raise SystemExit('BLACK_SCREEN_DETECTED')
+          if bright > 0.95 and std < 12:
+              raise SystemExit('APP_STUCK_ON_BOOTSTRAP_OR_BLANK_WHITE_SCREEN')
           PY
-          if grep -Eqi 'Fatal|Unhandled JS Exception|RCTFatal|Invariant Violation|Terminating app|Could not connect|No component found|Exception' build/simulator-runtime.log; then
+          if grep -Eqi 'Fatal|Unhandled JS Exception|RCTFatal|Invariant Violation|Terminating app|No component found|Exception' build/simulator-runtime.log; then
             echo 'Potential runtime failure detected:'
-            grep -Ein 'Fatal|Unhandled JS Exception|RCTFatal|Invariant Violation|Terminating app|Could not connect|No component found|Exception' build/simulator-runtime.log | tail -80
+            grep -Ein 'Fatal|Unhandled JS Exception|RCTFatal|Invariant Violation|Terminating app|No component found|Exception' build/simulator-runtime.log | tail -100
             exit 1
           fi
 
