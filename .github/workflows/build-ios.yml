@@ -144,6 +144,75 @@ jobs:
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
 
+      - name: Validate runtime closure and sign embedded code
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # A Release IPA can compile successfully yet still black-screen/fail at launch if
+          # Hermes or another @rpath framework is absent or unsigned. TrollStore needs every
+          # embedded Mach-O image to carry a valid ad-hoc/CoreTrust-compatible signature.
+          test -s "$APP_PATH/main.jsbundle"
+          file "$APP_PATH/main.jsbundle" | tee build/main-jsbundle-type.txt
+
+          /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
+          awk '$1 ~ /^@rpath\/.*\.framework\// {print $1}' build/app-dylibs.txt > build/app-rpath-frameworks.txt
+
+          while IFS= read -r dependency; do
+            [ -n "$dependency" ] || continue
+            relative="${dependency#@rpath/}"
+            if [ ! -f "$APP_PATH/Frameworks/$relative" ]; then
+              echo "ERROR: unresolved app runtime dependency: $dependency"
+              exit 1
+            fi
+          done < build/app-rpath-frameworks.txt
+
+          # Hermes is a hard requirement for this RN/Hermes build. The known-good reference
+          # IPA contains a signed Frameworks/hermes.framework/hermes image.
+          if grep -Fq '@rpath/hermes.framework/hermes' build/app-rpath-frameworks.txt; then
+            test -f "$APP_PATH/Frameworks/hermes.framework/hermes" || {
+              echo 'ERROR: Hermes is linked by the app but missing from Frameworks.'
+              exit 1
+            }
+          fi
+
+          : > build/embedded-mach-o.txt
+          : > build/embedded-code-signatures.txt
+          while IFS= read -r -d '' candidate; do
+            [ "$candidate" = "$EXECUTABLE_PATH" ] && continue
+            kind="$(file -b "$candidate" 2>/dev/null || true)"
+            case "$kind" in
+              *Mach-O*)
+                echo "$candidate" >> build/embedded-mach-o.txt
+                # CODE_SIGNING_ALLOWED=NO intentionally leaves nested frameworks unsigned.
+                # Sign each nested executable first; the app executable is signed last with
+                # its CarPlay entitlements in the next step.
+                ldid -S "$candidate"
+                /usr/bin/otool -l "$candidate" > build/load-commands.tmp
+                if ! grep -q 'LC_CODE_SIGNATURE' build/load-commands.tmp; then
+                  echo "ERROR: embedded Mach-O still has no code signature: $candidate"
+                  exit 1
+                fi
+                echo "SIGNED $candidate" >> build/embedded-code-signatures.txt
+                ;;
+            esac
+          done < <(find "$APP_PATH" -type f -print0)
+          rm -f build/load-commands.tmp
+
+          if [ ! -s build/embedded-mach-o.txt ]; then
+            echo 'ERROR: no embedded Mach-O runtime images were found.'
+            exit 1
+          fi
+
+          # Explicitly require signed Hermes when Hermes is linked.
+          if grep -Fq '@rpath/hermes.framework/hermes' build/app-rpath-frameworks.txt; then
+            /usr/bin/otool -l "$APP_PATH/Frameworks/hermes.framework/hermes" > build/hermes-load-commands.txt
+            grep -q 'LC_CODE_SIGNATURE' build/hermes-load-commands.txt || {
+              echo 'ERROR: Hermes framework is present but unsigned.'
+              exit 1
+            }
+          fi
+
       - name: Inject TrollStore CarPlay entitlements
         shell: bash
         run: |
@@ -153,6 +222,8 @@ jobs:
           plutil -lint build/carplay-entitlements.plist
           grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
           grep -q 'com.apple.developer.playable-content' build/carplay-entitlements.plist
+          /usr/bin/otool -l "$EXECUTABLE_PATH" > build/main-load-commands.txt
+          grep -q 'LC_CODE_SIGNATURE' build/main-load-commands.txt
 
       - name: Package TrollStore CarPlay IPA
         shell: bash
@@ -165,6 +236,9 @@ jobs:
           IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-TrollStore.ipa"
           zip -qry "$IPA_NAME" Payload
           shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
+          unzip -l "$IPA_NAME" > "$IPA_NAME.contents.txt"
+          grep -q '/Frameworks/hermes.framework/hermes' "$IPA_NAME.contents.txt"
+          grep -q '/main.jsbundle' "$IPA_NAME.contents.txt"
 
       - name: Upload CarPlay IPA artifact
         uses: actions/upload-artifact@v4
@@ -173,7 +247,12 @@ jobs:
           path: |
             build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa
             build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa.sha256
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa.contents.txt
             build/carplay-entitlements.plist
+            build/app-dylibs.txt
+            build/app-rpath-frameworks.txt
+            build/embedded-code-signatures.txt
+            build/main-jsbundle-type.txt
           if-no-files-found: error
 
       - name: Upload Xcode log on failure
