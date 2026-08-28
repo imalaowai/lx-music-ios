@@ -38,8 +38,12 @@ jobs:
           set -euo pipefail
           cat .carplay-build/main.b64.* | tr -d '\r\n' | /usr/bin/base64 -D > ios/LxMusicMobile/main.m
           cat .carplay-build/project.b64.* | tr -d '\r\n' | /usr/bin/base64 -D > ios/LxMusicMobile.xcodeproj/project.pbxproj
-          test "$(git hash-object ios/LxMusicMobile/main.m)" = "6818edb9c2e4ed0813895737251e5b41fcb427e7"
-          test "$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)" = "e9675eaeef34f6c0c2631db60ee9a5c0951cd1cc"
+          MAIN_HASH="$(git hash-object ios/LxMusicMobile/main.m)"
+          PROJECT_HASH="$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)"
+          echo "main_hash=$MAIN_HASH"
+          echo "project_hash=$PROJECT_HASH"
+          test "$MAIN_HASH" = "6818edb9c2e4ed0813895737251e5b41fcb427e7"
+          test "$PROJECT_HASH" = "e9675eaeef34f6c0c2631db60ee9a5c0951cd1cc"
           grep -q '#import <CarPlay/CarPlay.h>' ios/LxMusicMobile/main.m
           grep -q 'LXCarPlaySceneDelegate' ios/LxMusicMobile/main.m
           grep -q 'CPTemplateApplicationScene' ios/LxMusicMobile/main.m
