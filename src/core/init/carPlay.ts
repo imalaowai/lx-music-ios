@@ -85,7 +85,11 @@ const queueRefresh = (delay = 500) => {
   if (refreshTimer) clearTimeout(refreshTimer)
   refreshTimer = setTimeout(() => {
     refreshTimer = null
-    const run = async() => refreshLibrary().catch(err => console.log('CarPlay: refresh failed', err))
+    const run = async() => {
+      await refreshLibrary().catch(err => {
+        console.log('CarPlay: refresh failed', err)
+      })
+    }
     refreshPromise = refreshPromise.then(run, run)
   }, delay)
 }
@@ -110,15 +114,25 @@ export default async() => {
   initialized = true
 
   onCarPlayAction(action => {
-    void handleAction(action).catch(err => console.log('CarPlay: action failed', action, err))
+    void handleAction(action).catch(err => {
+      console.log('CarPlay: action failed', action, err)
+    })
   })
 
   // These events cover list metadata changes, list content changes, and playback-history changes.
-  global.state_event.on('mylistUpdated', () => queueRefresh())
-  global.app_event.on('myListMusicUpdate', () => queueRefresh())
-  global.state_event.on('playPlayedListChanged', () => queueRefresh(800))
+  global.state_event.on('mylistUpdated', () => {
+    queueRefresh()
+  })
+  global.app_event.on('myListMusicUpdate', () => {
+    queueRefresh()
+  })
+  global.state_event.on('playPlayedListChanged', () => {
+    queueRefresh(800)
+  })
 
   // Publish once after normal app data initialization. The native CarPlay scene keeps the
   // last successful snapshot on disk, so future cold CarPlay launches never wait for RN.
-  await refreshLibrary().catch(err => console.log('CarPlay: initial snapshot failed', err))
+  await refreshLibrary().catch(err => {
+    console.log('CarPlay: initial snapshot failed', err)
+  })
 }
