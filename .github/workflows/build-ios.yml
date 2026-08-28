@@ -132,12 +132,14 @@ jobs:
           EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
           test -f "$EXECUTABLE_PATH"
 
-          # Verify the native CarPlay classes/bridge survived the Release link step.
-          strings "$EXECUTABLE_PATH" | grep -q 'CarPlayModule'
-          strings "$EXECUTABLE_PATH" | grep -q 'LXCarPlaySceneDelegate'
-          strings "$EXECUTABLE_PATH" | grep -q 'carplay-action'
-          strings "$EXECUTABLE_PATH" | grep -q 'refresh-library'
-          strings "$EXECUTABLE_PATH" | grep -q 'LXCarPlayLibraryDidChange'
+          # Write strings once. With pipefail enabled, `strings | grep -q` can report SIGPIPE
+          # (exit 141) after grep finds a match even though the binary is valid.
+          strings "$EXECUTABLE_PATH" > build/app-strings.txt
+          grep -q 'CarPlayModule' build/app-strings.txt
+          grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
+          grep -q 'carplay-action' build/app-strings.txt
+          grep -q 'refresh-library' build/app-strings.txt
+          grep -q 'LXCarPlayLibraryDidChange' build/app-strings.txt
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
@@ -203,5 +205,8 @@ jobs:
           git add build-info/last-run.txt build-info/last-success.txt 2>/dev/null || git add build-info/last-run.txt
           if ! git diff --cached --quiet; then
             git commit -m "Record iOS build ${BUILD_STATUS} [skip ci]"
-            git push origin HEAD:main
+            # Source may have advanced while this long macOS job was running. Build-info is
+            # diagnostic only, so never turn a successful IPA into a failed workflow here.
+            git pull --rebase origin main || true
+            git push origin HEAD:main || echo 'Build-info push skipped because repository advanced.'
           fi
