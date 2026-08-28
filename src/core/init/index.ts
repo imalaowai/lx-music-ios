@@ -18,6 +18,16 @@ import { cheatTip } from '@/utils/tools'
 
 let isFirstPush = true
 const handlePushedHomeScreen = async() => {
+  // CarPlay library generation can touch every playlist and thousands of tracks. It must
+  // never sit on the phone application's critical startup path. Start it only after RNN has
+  // successfully installed the phone root screen, and keep it fully best-effort/background.
+  void initCarPlay().then(() => {
+    bootLog('CarPlay bridge inited in background.')
+  }).catch((err) => {
+    console.log('CarPlay: background init failed', err)
+    bootLog('CarPlay bridge background init failed; phone UI continues.')
+  })
+
   await cheatTip()
   if (settingState.setting['common.isAgreePact']) {
     if (isFirstPush) {
@@ -58,8 +68,6 @@ export default async() => {
   bootLog('Player inited.')
   await dataInit(setting)
   bootLog('Data inited.')
-  await initCarPlay()
-  bootLog('CarPlay bridge inited.')
   await initCommonState(setting)
   bootLog('Common State inited.')
 
