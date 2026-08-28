@@ -16,8 +16,16 @@ concurrency:
 
 jobs:
   smoke:
-    name: Launch app in iOS Simulator
+    name: Launch ${{ matrix.name }} in iOS Simulator
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: current-carplay
+            ref: main
+          - name: baseline-pre-carplay
+            ref: 29ae068ea255759e58db98bbff4e13023bd17199
     env:
       NO_FLIPPER: 1
       IOS_SCHEME: LxMusicMobile
@@ -27,6 +35,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -66,9 +76,8 @@ jobs:
           print(f"RUNTIME_ID='{runtime}'")
           print(f"DEVICE_TYPE_ID='{device}'")
           PY
-          cat build-sim-env.sh
           source build-sim-env.sh
-          SIM_UDID="$(xcrun simctl create LXMusicSmoke "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
+          SIM_UDID="$(xcrun simctl create LXMusicSmoke-${{ matrix.name }} "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
           echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM_UDID"
           xcrun simctl bootstatus "$SIM_UDID" -b
@@ -135,7 +144,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-simulator-smoke-${{ github.run_id }}
+          name: ios-simulator-smoke-${{ matrix.name }}-${{ github.run_id }}
           path: |
             build/simulator-screen.png
             build/simulator-runtime.log
