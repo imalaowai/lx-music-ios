@@ -5,11 +5,20 @@ import '@/config/globalData'
 import { getFontSize } from '@/utils/data'
 import { exitApp } from './utils/nativeModules/utils'
 import { windowSizeTools } from './utils/windowSizeTools'
-import { listenLaunchEvent } from './navigation/regLaunchedEvent'
+import { listenLaunchEvent, onAppLaunched } from './navigation/regLaunchedEvent'
+import { registerBootstrapScreen, showBootstrapScreen } from './navigation/bootstrapScreen'
 import { tipDialog } from './utils/tools'
 
 console.log('starting app...')
+registerBootstrapScreen()
 listenLaunchEvent()
+
+let bootstrapRootPromise: Promise<unknown> = Promise.resolve()
+onAppLaunched(() => {
+  bootstrapRootPromise = showBootstrapScreen().catch((err) => {
+    console.warn('[iOS bootstrap] Failed to install bootstrap root.', err)
+  })
+})
 
 void Promise.all([getFontSize(), windowSizeTools.init()]).then(async([fontSize]) => {
   global.lx.fontSize = fontSize
@@ -48,6 +57,10 @@ void Promise.all([getFontSize(), windowSizeTools.init()]).then(async([fontSize])
   const { init: initNavigation, navigations } = await import('@/navigation')
 
   initNavigation(async() => {
+    // Ensure the lightweight root is fully attached before any expensive player/data work.
+    // This makes cold-start failures visible instead of leaving an empty black UIWindow.
+    await bootstrapRootPromise
+
     await handleInit()
     if (!isInited) return
     // import('@/utils/nativeModules/cryptoTest')
