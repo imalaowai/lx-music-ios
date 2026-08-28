@@ -1,0 +1,188 @@
+name: Build Native CarPlay IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-native-carplay.yml'
+      - '.carplay-build/**'
+      - 'ios/LxMusicMobile/LxMusicMobile.entitlements'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-carplay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build Native CarPlay TrollStore IPA
+    runs-on: macos-14
+    env:
+      NO_FLIPPER: 1
+      IOS_SCHEME: LxMusicMobile
+      IOS_WORKSPACE: ios/LxMusicMobile.xcworkspace
+      IOS_BUNDLE_IDENTIFIER: cn.toside.music.mobile
+      DERIVED_DATA_PATH: build/DerivedData
+      CARPLAY_ENTITLEMENTS: ios/LxMusicMobile/LxMusicMobile.entitlements
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Restore exact native CarPlay source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .carplay-build/main.b64.* | tr -d '\r\n' | /usr/bin/base64 -D > ios/LxMusicMobile/main.m
+          cat .carplay-build/project.b64.* | tr -d '\r\n' | /usr/bin/base64 -D > ios/LxMusicMobile.xcodeproj/project.pbxproj
+          test "$(git hash-object ios/LxMusicMobile/main.m)" = "6818edb9c2e4ed0813895737251e5b41fcb427e7"
+          test "$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)" = "e9675eaeef34f6c0c2631db60ee9a5c0951cd1cc"
+          grep -q '#import <CarPlay/CarPlay.h>' ios/LxMusicMobile/main.m
+          grep -q 'LXCarPlaySceneDelegate' ios/LxMusicMobile/main.m
+          grep -q 'CPTemplateApplicationScene' ios/LxMusicMobile/main.m
+          grep -q 'CPTabBarTemplate' ios/LxMusicMobile/main.m
+          grep -q 'CPNowPlayingTemplate' ios/LxMusicMobile/main.m
+          grep -q 'CarPlay.framework' ios/LxMusicMobile.xcodeproj/project.pbxproj
+          plutil -lint "$CARPLAY_ENTITLEMENTS"
+          grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
+          grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Lint CarPlay bridge
+        run: npx eslint src/core/init/carPlay.ts src/utils/nativeModules/carPlay.ts src/app.ts src/navigation/regLaunchedEvent.ts
+
+      - name: Verify sound-effect DSP patches
+        run: npm run lint:sound-effect-dsp
+
+      - name: Install CocoaPods dependencies
+        shell: bash
+        run: |
+          cd ios
+          bundle exec pod install --repo-update
+
+      - name: Read app version
+        shell: bash
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_VERSION_CODE=$(node -p "require('./package.json').versionCode")
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION_CODE=$PACKAGE_VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Build unsigned iOS application
+        shell: bash
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_IDENTIFIER" \
+            MARKETING_VERSION="$PACKAGE_VERSION" \
+            CURRENT_PROJECT_VERSION="$PACKAGE_VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build 2>&1 | tee build/xcodebuild.log
+
+      - name: Locate and verify compiled application
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
+          EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
+          test -f "$EXECUTABLE_PATH"
+          strings "$EXECUTABLE_PATH" > build/app-strings.txt
+          grep -q 'CarPlayModule' build/app-strings.txt
+          grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
+          grep -q 'CPTemplateApplicationScene' build/app-strings.txt
+          grep -q 'CPTabBarTemplate' build/app-strings.txt
+          grep -q 'CPNowPlayingTemplate' build/app-strings.txt
+          /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
+          grep -q '/System/Library/Frameworks/CarPlay.framework/CarPlay' build/app-dylibs.txt
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign embedded code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$APP_PATH/main.jsbundle"
+          : > build/embedded-code-signatures.txt
+          while IFS= read -r -d '' candidate; do
+            [ "$candidate" = "$EXECUTABLE_PATH" ] && continue
+            kind="$(file -b "$candidate" 2>/dev/null || true)"
+            case "$kind" in
+              *Mach-O*)
+                ldid -S "$candidate"
+                echo "SIGNED $candidate" >> build/embedded-code-signatures.txt
+                ;;
+            esac
+          done < <(find "$APP_PATH" -type f -print0)
+
+      - name: Inject TrollStore CarPlay entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldid -S"$CARPLAY_ENTITLEMENTS" "$EXECUTABLE_PATH"
+          ldid -e "$EXECUTABLE_PATH" > build/carplay-entitlements.plist
+          plutil -lint build/carplay-entitlements.plist
+          grep -q 'com.apple.developer.playable-content' build/carplay-entitlements.plist
+          grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
+          /usr/bin/otool -l "$EXECUTABLE_PATH" | grep -q 'LC_CODE_SIGNATURE'
+
+      - name: Package IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-Native-CarPlay-TrollStore.ipa"
+          zip -qry "$IPA_NAME" Payload
+          unzip -t "$IPA_NAME"
+          shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-TrollStore
+          path: |
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-TrollStore.ipa
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-TrollStore.ipa.sha256
+            build/carplay-entitlements.plist
+            build/app-dylibs.txt
+          if-no-files-found: error
+
+      - name: Upload Xcode log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-${{ github.run_id }}
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
