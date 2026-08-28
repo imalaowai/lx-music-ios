@@ -67,8 +67,7 @@ static NSString *LXCPMusicDetail(NSDictionary *music) {
 }
 
 - (NSDictionary *)loadSnapshotFromDisk {
-  NSURL *url = [self snapshotURL];
-  NSData *data = [NSData dataWithContentsOfURL:url options:0 error:nil];
+  NSData *data = [NSData dataWithContentsOfURL:[self snapshotURL] options:0 error:nil];
   if (data.length == 0) return nil;
   id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
   return [object isKindOfClass:[NSDictionary class]] ? object : nil;
@@ -204,10 +203,12 @@ RCT_EXPORT_METHOD(updateLibrary:(NSDictionary *)snapshot
 @end
 
 API_AVAILABLE(ios(14.0))
-@interface LXCarPlaySceneDelegate : UIResponder <CPTemplateApplicationSceneDelegate, CPSearchTemplateDelegate>
+@interface LXCarPlaySceneDelegate : UIResponder <CPTemplateApplicationSceneDelegate>
 @property (nonatomic, strong) CPInterfaceController *interfaceController;
-@property (nonatomic, strong) CPListTemplate *rootTemplate;
-@property (nonatomic, strong) CPSearchTemplate *searchTemplate;
+@property (nonatomic, strong) CPTabBarTemplate *tabBarTemplate;
+@property (nonatomic, strong) CPListTemplate *homeTemplate;
+@property (nonatomic, strong) CPListTemplate *libraryTemplate;
+@property (nonatomic, strong) CPListTemplate *playlistsTemplate;
 @end
 
 API_AVAILABLE(ios(14.0))
@@ -324,10 +325,20 @@ API_AVAILABLE(ios(14.0))
   return item;
 }
 
-- (NSUInteger)pageCapacity {
+- (NSUInteger)maximumListItemCount {
   NSUInteger maximum = [CPListTemplate maximumItemCount];
-  if (maximum == 0) maximum = 12;
+  return maximum > 0 ? maximum : 12;
+}
+
+- (NSUInteger)pageCapacity {
+  NSUInteger maximum = [self maximumListItemCount];
   return maximum > 1 ? maximum - 1 : 1;
+}
+
+- (NSArray<CPListItem *> *)trimItems:(NSArray<CPListItem *> *)items {
+  NSUInteger maximum = [self maximumListItemCount];
+  if (items.count <= maximum) return items;
+  return [items subarrayWithRange:NSMakeRange(0, maximum)];
 }
 
 - (CPListTemplate *)musicTemplateWithTitle:(NSString *)title
@@ -343,16 +354,15 @@ API_AVAILABLE(ios(14.0))
     [items addObject:[self musicItem:music fallbackListId:listId]];
   }
 
-  if (end < musics.count && [CPListTemplate maximumItemCount] != 1) {
+  if (end < musics.count && [self maximumListItemCount] > 1) {
     __weak typeof(self) weakSelf = self;
     NSString *nextDetail = [NSString stringWithFormat:@"%lu–%lu / %lu",
                             (unsigned long)(end + 1),
                             (unsigned long)MIN(musics.count, end + capacity),
                             (unsigned long)musics.count];
-    CPListItem *next = [self containerItemWithText:@"下一页" detail:nextDetail handler:^{
+    [items addObject:[self containerItemWithText:@"下一页" detail:nextDetail handler:^{
       [weakSelf pushTemplate:[weakSelf musicTemplateWithTitle:title musics:musics listId:listId offset:end]];
-    }];
-    [items addObject:next];
+    }]];
   }
 
   CPListSection *section = [[CPListSection alloc] initWithItems:items];
@@ -367,12 +377,11 @@ API_AVAILABLE(ios(14.0))
 - (CPListTemplate *)templateForList:(NSDictionary *)list {
   NSString *title = LXCPString(list[@"name"], @"歌单");
   NSString *listId = LXCPString(list[@"id"], @"");
-  id rawMusics = list[@"musics"];
-  NSArray *musics = [rawMusics isKindOfClass:[NSArray class]] ? rawMusics : @[];
+  NSArray *musics = [list[@"musics"] isKindOfClass:[NSArray class]] ? list[@"musics"] : @[];
   return [self musicTemplateWithTitle:title musics:musics listId:listId offset:0];
 }
 
-- (CPListTemplate *)playlistsTemplateAtOffset:(NSUInteger)offset {
+- (NSArray<CPListItem *> *)playlistItemsAtOffset:(NSUInteger)offset {
   NSArray<NSDictionary *> *lists = [self userLists];
   NSUInteger capacity = [self pageCapacity];
   NSUInteger end = MIN(lists.count, offset + capacity);
@@ -382,136 +391,133 @@ API_AVAILABLE(ios(14.0))
   for (NSUInteger index = offset; index < end; index++) {
     NSDictionary *list = [lists[index] isKindOfClass:[NSDictionary class]] ? lists[index] : @{};
     NSArray *musics = [list[@"musics"] isKindOfClass:[NSArray class]] ? list[@"musics"] : @[];
-    NSString *detail = [NSString stringWithFormat:@"%lu 首", (unsigned long)musics.count];
-    CPListItem *item = [self containerItemWithText:LXCPString(list[@"name"], @"未命名歌单") detail:detail handler:^{
+    [items addObject:[self containerItemWithText:LXCPString(list[@"name"], @"未命名歌单")
+                                          detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)musics.count]
+                                         handler:^{
       [weakSelf pushTemplate:[weakSelf templateForList:list]];
-    }];
-    [items addObject:item];
+    }]];
   }
 
-  if (end < lists.count && [CPListTemplate maximumItemCount] != 1) {
-    CPListItem *next = [self containerItemWithText:@"下一页" detail:nil handler:^{
-      [weakSelf pushTemplate:[weakSelf playlistsTemplateAtOffset:end]];
-    }];
-    [items addObject:next];
+  if (end < lists.count && [self maximumListItemCount] > 1) {
+    [items addObject:[self containerItemWithText:@"下一页" detail:nil handler:^{
+      CPListSection *section = [[CPListSection alloc] initWithItems:[weakSelf playlistItemsAtOffset:end]];
+      CPListTemplate *next = [[CPListTemplate alloc] initWithTitle:@"我的歌单" sections:@[ section ]];
+      [weakSelf pushTemplate:next];
+    }]];
   }
-
-  CPListSection *section = [[CPListSection alloc] initWithItems:items];
-  CPListTemplate *template = [[CPListTemplate alloc] initWithTitle:@"我的歌单" sections:@[ section ]];
-  if (items.count == 0) {
-    template.emptyViewTitleVariants = @[ @"还没有自建歌单" ];
-  }
-  return template;
+  return items;
 }
 
-- (CPSearchTemplate *)makeSearchTemplate {
-  CPSearchTemplate *template = [[CPSearchTemplate alloc] init];
-  template.delegate = self;
-  return template;
-}
-
-- (NSArray<CPListSection *> *)rootSections {
+- (NSArray<CPListSection *> *)homeSections {
   __weak typeof(self) weakSelf = self;
-  NSMutableArray<CPListItem *> *primaryItems = [NSMutableArray array];
+  NSMutableArray<CPListItem *> *items = [NSMutableArray array];
 
-  CPListItem *nowPlaying = [self containerItemWithText:@"正在播放" detail:[self nowPlayingDetail] handler:^{
-    if (!weakSelf.interfaceController) return;
+  [items addObject:[self containerItemWithText:@"正在播放" detail:[self nowPlayingDetail] handler:^{
     CPNowPlayingTemplate *template = [CPNowPlayingTemplate sharedTemplate];
-    if (weakSelf.interfaceController.topTemplate != template) {
-      [weakSelf pushTemplate:template];
-    }
-  }];
-  [primaryItems addObject:nowPlaying];
-
-  NSDictionary *loveList = [self listWithKind:@"love"];
-  if (loveList) {
-    NSArray *musics = [loveList[@"musics"] isKindOfClass:[NSArray class]] ? loveList[@"musics"] : @[];
-    CPListItem *love = [self containerItemWithText:@"我的收藏"
-                                           detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)musics.count]
-                                          handler:^{ [weakSelf pushTemplate:[weakSelf templateForList:loveList]]; }];
-    [primaryItems addObject:love];
-  }
-
-  NSDictionary *defaultList = [self listWithKind:@"default"];
-  if (defaultList) {
-    NSArray *musics = [defaultList[@"musics"] isKindOfClass:[NSArray class]] ? defaultList[@"musics"] : @[];
-    CPListItem *audition = [self containerItemWithText:LXCPString(defaultList[@"name"], @"试听列表")
-                                                detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)musics.count]
-                                               handler:^{ [weakSelf pushTemplate:[weakSelf templateForList:defaultList]]; }];
-    [primaryItems addObject:audition];
-  }
-
-  NSArray *userLists = [self userLists];
-  if (userLists.count) {
-    CPListItem *playlists = [self containerItemWithText:@"我的歌单"
-                                                 detail:[NSString stringWithFormat:@"%lu 个歌单", (unsigned long)userLists.count]
-                                                handler:^{ [weakSelf pushTemplate:[weakSelf playlistsTemplateAtOffset:0]]; }];
-    [primaryItems addObject:playlists];
-  }
+    if (weakSelf.interfaceController.topTemplate != template) [weakSelf pushTemplate:template];
+  }]];
 
   NSArray *recent = [self recentItems];
   if (recent.count) {
-    CPListItem *recentItem = [self containerItemWithText:@"最近播放"
-                                                  detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)recent.count]
-                                                 handler:^{ [weakSelf pushTemplate:[weakSelf musicTemplateWithTitle:@"最近播放" musics:recent listId:@"" offset:0]]; }];
-    [primaryItems addObject:recentItem];
+    [items addObject:[self containerItemWithText:@"最近播放"
+                                          detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)recent.count]
+                                         handler:^{
+      [weakSelf pushTemplate:[weakSelf musicTemplateWithTitle:@"最近播放" musics:recent listId:@"" offset:0]];
+    }]];
   }
-
-  CPListItem *search = [self containerItemWithText:@"搜索音乐" detail:@"搜索已同步的收藏和歌单" handler:^{
-    weakSelf.searchTemplate = [weakSelf makeSearchTemplate];
-    [weakSelf pushTemplate:weakSelf.searchTemplate];
-  }];
-  [primaryItems addObject:search];
 
   CPListItem *refresh = [[CPListItem alloc] initWithText:@"刷新音乐库" detailText:[self syncDetail]];
   refresh.handler = ^(id<CPSelectableListItem> selectedItem, dispatch_block_t completionBlock) {
     [[LXCarPlayStore sharedStore] enqueueAction:@{ @"type": @"refresh-library" }];
     if (completionBlock) completionBlock();
   };
-  [primaryItems addObject:refresh];
+  [items addObject:refresh];
 
-  NSUInteger maximum = [CPListTemplate maximumItemCount];
-  if (maximum > 0 && primaryItems.count > maximum) {
-    [primaryItems removeObjectsInRange:NSMakeRange(maximum, primaryItems.count - maximum)];
-  }
-  return @[ [[CPListSection alloc] initWithItems:primaryItems] ];
+  return @[ [[CPListSection alloc] initWithItems:[self trimItems:items]] ];
 }
 
-- (CPListTemplate *)buildRootTemplate {
-  CPListTemplate *template = [[CPListTemplate alloc] initWithTitle:@"LX Music" sections:[self rootSections]];
-  if ([self allLists].count == 0) {
-    template.emptyViewTitleVariants = @[ @"LX Music" ];
-    template.emptyViewSubtitleVariants = @[ @"正在等待手机端同步音乐库" ];
+- (NSArray<CPListSection *> *)librarySections {
+  __weak typeof(self) weakSelf = self;
+  NSMutableArray<CPListItem *> *items = [NSMutableArray array];
+  NSDictionary *loveList = [self listWithKind:@"love"];
+  NSDictionary *defaultList = [self listWithKind:@"default"];
+
+  if (loveList) {
+    NSArray *musics = [loveList[@"musics"] isKindOfClass:[NSArray class]] ? loveList[@"musics"] : @[];
+    [items addObject:[self containerItemWithText:@"我的收藏"
+                                          detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)musics.count]
+                                         handler:^{ [weakSelf pushTemplate:[weakSelf templateForList:loveList]]; }]];
   }
-  return template;
+
+  if (defaultList) {
+    NSArray *musics = [defaultList[@"musics"] isKindOfClass:[NSArray class]] ? defaultList[@"musics"] : @[];
+    [items addObject:[self containerItemWithText:LXCPString(defaultList[@"name"], @"试听列表")
+                                          detail:[NSString stringWithFormat:@"%lu 首", (unsigned long)musics.count]
+                                         handler:^{ [weakSelf pushTemplate:[weakSelf templateForList:defaultList]]; }]];
+  }
+
+  return @[ [[CPListSection alloc] initWithItems:[self trimItems:items]] ];
 }
 
-- (void)refreshRootTemplate {
-  if (!self.interfaceController || !self.rootTemplate) return;
+- (NSArray<CPListSection *> *)playlistsSections {
+  return @[ [[CPListSection alloc] initWithItems:[self playlistItemsAtOffset:0]] ];
+}
+
+- (void)configureTabAppearance:(CPListTemplate *)template title:(NSString *)title systemImage:(NSString *)systemImageName {
+  template.tabTitle = title;
+  UIImage *image = [UIImage systemImageNamed:systemImageName];
+  if (image) template.tabImage = image;
+}
+
+- (CPTabBarTemplate *)buildRootTemplate {
+  self.homeTemplate = [[CPListTemplate alloc] initWithTitle:@"LX Music" sections:[self homeSections]];
+  [self configureTabAppearance:self.homeTemplate title:@"首页" systemImage:@"music.note.house"];
+
+  self.libraryTemplate = [[CPListTemplate alloc] initWithTitle:@"音乐库" sections:[self librarySections]];
+  self.libraryTemplate.emptyViewTitleVariants = @[ @"音乐库为空" ];
+  self.libraryTemplate.emptyViewSubtitleVariants = @[ @"请先在手机端添加收藏或歌曲" ];
+  [self configureTabAppearance:self.libraryTemplate title:@"音乐库" systemImage:@"music.note.list"];
+
+  self.playlistsTemplate = [[CPListTemplate alloc] initWithTitle:@"我的歌单" sections:[self playlistsSections]];
+  self.playlistsTemplate.emptyViewTitleVariants = @[ @"还没有自建歌单" ];
+  [self configureTabAppearance:self.playlistsTemplate title:@"歌单" systemImage:@"music.note"];
+
+  NSMutableArray<CPTemplate *> *templates = [NSMutableArray arrayWithObjects:self.homeTemplate, self.libraryTemplate, self.playlistsTemplate, nil];
+  NSInteger maximumTabs = [CPTabBarTemplate maximumTabCount];
+  if (maximumTabs > 0 && templates.count > (NSUInteger)maximumTabs) {
+    [templates removeObjectsInRange:NSMakeRange((NSUInteger)maximumTabs, templates.count - (NSUInteger)maximumTabs)];
+  }
+  return [[CPTabBarTemplate alloc] initWithTemplates:templates];
+}
+
+- (void)refreshRootTemplates {
+  if (!self.interfaceController) return;
   dispatch_async(dispatch_get_main_queue(), ^{
-    [self.rootTemplate updateSections:[self rootSections]];
+    if (self.homeTemplate) [self.homeTemplate updateSections:[self homeSections]];
+    if (self.libraryTemplate) [self.libraryTemplate updateSections:[self librarySections]];
+    if (self.playlistsTemplate) [self.playlistsTemplate updateSections:[self playlistsSections]];
   });
 }
 
 - (void)handleLibraryChanged:(NSNotification *)notification {
-  [self refreshRootTemplate];
+  [self refreshRootTemplates];
 }
 
 - (void)handlePlaybackChanged:(NSNotification *)notification {
-  [self refreshRootTemplate];
+  [self refreshRootTemplates];
 }
 
 - (void)templateApplicationScene:(CPTemplateApplicationScene *)templateApplicationScene
    didConnectInterfaceController:(CPInterfaceController *)interfaceController {
   self.interfaceController = interfaceController;
 
-  // CarPlay requires a root template before this callback returns. Build it only from
-  // local/native state: never wait for React Native, networking, custom sources, or disk writes.
-  self.rootTemplate = [self buildRootTemplate];
-  [interfaceController setRootTemplate:self.rootTemplate animated:NO completion:NULL];
+  // Do not wait for React Native, network, custom sources, or asynchronous disk writes here.
+  // The CarPlay root must be installed synchronously so a cold connection cannot show a blank UI.
+  self.tabBarTemplate = [self buildRootTemplate];
+  [interfaceController setRootTemplate:self.tabBarTemplate animated:NO completion:NULL];
 
-  // Ask RN to refresh in the background. If RN is still booting the action stays queued and
-  // is delivered as soon as CarPlayModule starts observing.
+  // Refresh the persisted snapshot in the background. If RN is still booting, the native
+  // action queue keeps this request until CarPlayModule starts observing.
   [[LXCarPlayStore sharedStore] enqueueAction:@{ @"type": @"refresh-library" }];
 }
 
@@ -519,71 +525,11 @@ API_AVAILABLE(ios(14.0))
  didDisconnectInterfaceController:(CPInterfaceController *)interfaceController {
   if (self.interfaceController == interfaceController) {
     self.interfaceController = nil;
-    self.rootTemplate = nil;
-    self.searchTemplate = nil;
+    self.tabBarTemplate = nil;
+    self.homeTemplate = nil;
+    self.libraryTemplate = nil;
+    self.playlistsTemplate = nil;
   }
-}
-
-#pragma mark - CPSearchTemplateDelegate
-
-- (void)searchTemplate:(CPSearchTemplate *)searchTemplate
-     updatedSearchText:(NSString *)searchText
-     completionHandler:(void (^)(NSArray<CPListItem *> *searchResults))completionHandler {
-  NSString *query = [searchText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  if (query.length == 0) {
-    completionHandler(@[]);
-    return;
-  }
-
-  NSMutableArray<CPListItem *> *results = [NSMutableArray array];
-  NSMutableSet<NSString *> *seen = [NSMutableSet set];
-  NSUInteger maximum = [CPListTemplate maximumItemCount];
-  if (maximum == 0) maximum = 24;
-
-  for (NSDictionary *list in [self allLists]) {
-    NSString *listId = LXCPString(list[@"id"], @"");
-    NSArray *musics = [list[@"musics"] isKindOfClass:[NSArray class]] ? list[@"musics"] : @[];
-    for (NSDictionary *music in musics) {
-      NSString *musicId = LXCPString(music[@"id"], @"");
-      if (musicId.length == 0 || [seen containsObject:musicId]) continue;
-      NSString *name = LXCPString(music[@"name"], @"");
-      NSString *singer = LXCPString(music[@"singer"], @"");
-      NSString *album = LXCPString(music[@"album"], @"");
-      BOOL matched = [name localizedCaseInsensitiveContainsString:query]
-        || [singer localizedCaseInsensitiveContainsString:query]
-        || [album localizedCaseInsensitiveContainsString:query];
-      if (!matched) continue;
-
-      CPListItem *item = [[CPListItem alloc] initWithText:name.length ? name : @"未知歌曲"
-                                               detailText:LXCPMusicDetail(music)];
-      item.userInfo = @{ @"listId": listId, @"musicId": musicId };
-      [results addObject:item];
-      [seen addObject:musicId];
-      if (results.count >= maximum) break;
-    }
-    if (results.count >= maximum) break;
-  }
-  completionHandler(results);
-}
-
-- (void)searchTemplate:(CPSearchTemplate *)searchTemplate
-         selectedResult:(CPListItem *)item
-      completionHandler:(void (^)(void))completionHandler {
-  NSDictionary *payload = [item.userInfo isKindOfClass:[NSDictionary class]] ? item.userInfo : @{};
-  NSString *listId = LXCPString(payload[@"listId"], @"");
-  NSString *musicId = LXCPString(payload[@"musicId"], @"");
-  if (listId.length && musicId.length) {
-    [[LXCarPlayStore sharedStore] enqueueAction:@{
-      @"type": @"play",
-      @"listId": listId,
-      @"musicId": musicId,
-    }];
-  }
-  if (completionHandler) completionHandler();
-}
-
-- (void)searchTemplateSearchButtonPressed:(CPSearchTemplate *)searchTemplate {
-  // Results are updated incrementally by updatedSearchText; no network request is needed here.
 }
 
 @end
@@ -602,7 +548,7 @@ API_AVAILABLE(ios(14.0))
       return configuration;
     }
   }
-  // The phone UI intentionally remains on ReactNativeNavigation's legacy AppDelegate lifecycle.
+  // Keep the phone UI on ReactNativeNavigation's existing AppDelegate lifecycle.
   return nil;
 }
 
