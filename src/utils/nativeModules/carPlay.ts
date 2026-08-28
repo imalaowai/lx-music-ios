@@ -1,24 +1,28 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native'
 
-export type CarPlayMusicItem = {
+export interface CarPlayMusicItem {
   id: string
   name: string
   singer: string
   album: string
 }
 
-export type CarPlayListItem = {
+export interface CarPlayListItem {
   id: string
   name: string
   kind: 'default' | 'love' | 'user'
   musics: CarPlayMusicItem[]
 }
 
-export type CarPlayLibrarySnapshot = {
+export interface CarPlayRecentItem extends CarPlayMusicItem {
+  listId: string
+}
+
+export interface CarPlayLibrarySnapshot {
   version: 2
   updatedAt: number
   lists: CarPlayListItem[]
-  recent: Array<CarPlayMusicItem & { listId: string }>
+  recent: CarPlayRecentItem[]
 }
 
 export type CarPlayAction =
@@ -27,8 +31,8 @@ export type CarPlayAction =
 
 interface NativeCarPlayModule {
   updateLibrary: (snapshot: CarPlayLibrarySnapshot) => Promise<void>
-  addListener?: (eventName: string) => void
-  removeListeners?: (count: number) => void
+  addListener: (eventName: string) => void
+  removeListeners: (count: number) => void
 }
 
 const nativeModule = NativeModules.CarPlayModule as NativeCarPlayModule | undefined
@@ -36,13 +40,15 @@ const nativeModule = NativeModules.CarPlayModule as NativeCarPlayModule | undefi
 export const isCarPlayBridgeAvailable = Platform.OS == 'ios' && nativeModule != null && typeof nativeModule.updateLibrary == 'function'
 
 export const updateCarPlayLibrary = async(snapshot: CarPlayLibrarySnapshot) => {
-  if (!isCarPlayBridgeAvailable) return
-  await nativeModule!.updateLibrary(snapshot)
+  if (!isCarPlayBridgeAvailable || !nativeModule) return
+  await nativeModule.updateLibrary(snapshot)
 }
 
 export const onCarPlayAction = (listener: (action: CarPlayAction) => void) => {
   if (!isCarPlayBridgeAvailable || !nativeModule) return () => {}
-  const emitter = new NativeEventEmitter(nativeModule as any)
+  const emitter = new NativeEventEmitter(nativeModule)
   const subscription = emitter.addListener('carplay-action', listener)
-  return () => subscription.remove()
+  return () => {
+    subscription.remove()
+  }
 }
