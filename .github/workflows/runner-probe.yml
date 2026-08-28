@@ -1,0 +1,22 @@
+name: Runner Probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/runner-probe.yml'
+  workflow_dispatch:
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo UBUNTU_RUNNER_OK
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - run: |
+          echo MACOS_RUNNER_OK
+          xcodebuild -version
+          xcrun simctl list runtimes | head -30
