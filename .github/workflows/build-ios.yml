@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ios-device-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-ios:
     name: Build TrollStore CarPlay IPA
@@ -50,41 +54,40 @@ jobs:
           plutil -lint ios/LxMusicMobile/Info.plist
           plutil -lint "$CARPLAY_ENTITLEMENTS"
 
-          grep -q 'configurationForConnectingSceneSession' ios/LxMusicMobile/main.m
-          grep -q 'CPTemplateApplicationSceneSessionRoleApplication' ios/LxMusicMobile/main.m
-          grep -q 'setRootTemplate:self.tabBarTemplate' ios/LxMusicMobile/main.m
-          grep -q 'CPTabBarTemplate' ios/LxMusicMobile/main.m
-          grep -q 'CPNowPlayingTemplate' ios/LxMusicMobile/main.m
+          # Stability-first CarPlay architecture: MediaPlayer playable content only.
+          # Never opt this legacy ReactNativeNavigation phone app into a UIScene lifecycle.
+          grep -q 'MPPlayableContentManager' ios/LxMusicMobile/main.m
+          grep -q 'MPPlayableContentDataSource' ios/LxMusicMobile/main.m
+          grep -q 'MPPlayableContentDelegate' ios/LxMusicMobile/main.m
           grep -q 'RCT_EXPORT_MODULE(CarPlayModule)' ios/LxMusicMobile/main.m
-          grep -q 'maximumItemCount' ios/LxMusicMobile/main.m
-          grep -q 'maximumTabCount' ios/LxMusicMobile/main.m
-          grep -q 'LXCarPlayLibraryDidChange' ios/LxMusicMobile/main.m
-          grep -q "initCarPlay" src/core/init/index.ts
+          grep -q 'carplay-action' ios/LxMusicMobile/main.m
           grep -q "playListById" src/core/init/carPlay.ts
           grep -q "carplay-action" src/utils/nativeModules/carPlay.ts
 
-          # CPSearchTemplate belongs to the navigation CarPlay category. Keep the audio
-          # implementation on List/TabBar/NowPlaying templates to avoid entitlement mismatch.
-          if grep -q 'CPSearchTemplate' ios/LxMusicMobile/main.m; then
-            echo 'ERROR: navigation-only CPSearchTemplate found in audio CarPlay implementation.'
+          if grep -q '@import CarPlay' ios/LxMusicMobile/main.m; then
+            echo 'ERROR: CarPlay.framework scene integration must not be linked into the phone startup path.'
             exit 1
           fi
-
-          # Keep the phone UI on ReactNativeNavigation's existing lifecycle. A global
-          # UIApplicationSceneManifest can make the phone scene bypass RNN and black-screen.
+          if grep -q 'CPTemplateApplicationScene\|configurationForConnectingSceneSession\|CPTabBarTemplate\|CPListTemplate' ios/LxMusicMobile/main.m; then
+            echo 'ERROR: UIScene-based CarPlay code found; this build must use MediaPlayer only.'
+            exit 1
+          fi
           if /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' ios/LxMusicMobile/Info.plist >/dev/null 2>&1; then
             echo 'ERROR: UIApplicationSceneManifest would hijack the phone ReactNativeNavigation lifecycle.'
             exit 1
           fi
 
-          grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
           grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
+          if grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"; then
+            echo 'ERROR: carplay-audio entitlement is intentionally disabled for the MediaPlayer-only build.'
+            exit 1
+          fi
 
       - name: Install JavaScript dependencies
         run: npm ci
 
       - name: Lint CarPlay bridge
-        run: npx eslint src/core/init/carPlay.ts src/utils/nativeModules/carPlay.ts
+        run: npx eslint src/core/init/carPlay.ts src/utils/nativeModules/carPlay.ts src/app.ts src/navigation/regLaunchedEvent.ts
 
       - name: Verify sound-effect DSP patches
         run: npm run lint:sound-effect-dsp
@@ -132,14 +135,15 @@ jobs:
           EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
           test -f "$EXECUTABLE_PATH"
 
-          # Write strings once. With pipefail enabled, `strings | grep -q` can report SIGPIPE
-          # (exit 141) after grep finds a match even though the binary is valid.
           strings "$EXECUTABLE_PATH" > build/app-strings.txt
           grep -q 'CarPlayModule' build/app-strings.txt
-          grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
+          grep -q 'LXPlayableContentCoordinator' build/app-strings.txt
           grep -q 'carplay-action' build/app-strings.txt
           grep -q 'refresh-library' build/app-strings.txt
-          grep -q 'LXCarPlayLibraryDidChange' build/app-strings.txt
+          if grep -q 'LXCarPlaySceneDelegate\|CPTemplateApplicationScene' build/app-strings.txt; then
+            echo 'ERROR: scene-based CarPlay symbols leaked into final binary.'
+            exit 1
+          fi
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
@@ -148,10 +152,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # A Release IPA can compile successfully yet still black-screen/fail at launch if
-          # Hermes or another @rpath framework is absent or unsigned. TrollStore needs every
-          # embedded Mach-O image to carry a valid ad-hoc/CoreTrust-compatible signature.
           test -s "$APP_PATH/main.jsbundle"
           file "$APP_PATH/main.jsbundle" | tee build/main-jsbundle-type.txt
 
@@ -167,8 +167,6 @@ jobs:
             fi
           done < build/app-rpath-frameworks.txt
 
-          # Hermes is a hard requirement for this RN/Hermes build. The known-good reference
-          # IPA contains a signed Frameworks/hermes.framework/hermes image.
           if grep -Fq '@rpath/hermes.framework/hermes' build/app-rpath-frameworks.txt; then
             test -f "$APP_PATH/Frameworks/hermes.framework/hermes" || {
               echo 'ERROR: Hermes is linked by the app but missing from Frameworks.'
@@ -184,44 +182,36 @@ jobs:
             case "$kind" in
               *Mach-O*)
                 echo "$candidate" >> build/embedded-mach-o.txt
-                # CODE_SIGNING_ALLOWED=NO intentionally leaves nested frameworks unsigned.
-                # Sign each nested executable first; the app executable is signed last with
-                # its CarPlay entitlements in the next step.
                 ldid -S "$candidate"
                 /usr/bin/otool -l "$candidate" > build/load-commands.tmp
-                if ! grep -q 'LC_CODE_SIGNATURE' build/load-commands.tmp; then
+                grep -q 'LC_CODE_SIGNATURE' build/load-commands.tmp || {
                   echo "ERROR: embedded Mach-O still has no code signature: $candidate"
                   exit 1
-                fi
+                }
                 echo "SIGNED $candidate" >> build/embedded-code-signatures.txt
                 ;;
             esac
           done < <(find "$APP_PATH" -type f -print0)
           rm -f build/load-commands.tmp
 
-          if [ ! -s build/embedded-mach-o.txt ]; then
-            echo 'ERROR: no embedded Mach-O runtime images were found.'
-            exit 1
-          fi
-
-          # Explicitly require signed Hermes when Hermes is linked.
+          test -s build/embedded-mach-o.txt
           if grep -Fq '@rpath/hermes.framework/hermes' build/app-rpath-frameworks.txt; then
             /usr/bin/otool -l "$APP_PATH/Frameworks/hermes.framework/hermes" > build/hermes-load-commands.txt
-            grep -q 'LC_CODE_SIGNATURE' build/hermes-load-commands.txt || {
-              echo 'ERROR: Hermes framework is present but unsigned.'
-              exit 1
-            }
+            grep -q 'LC_CODE_SIGNATURE' build/hermes-load-commands.txt
           fi
 
-      - name: Inject TrollStore CarPlay entitlements
+      - name: Inject TrollStore playable-content entitlement
         shell: bash
         run: |
           set -euo pipefail
           ldid -S"$CARPLAY_ENTITLEMENTS" "$EXECUTABLE_PATH"
           ldid -e "$EXECUTABLE_PATH" > build/carplay-entitlements.plist
           plutil -lint build/carplay-entitlements.plist
-          grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
           grep -q 'com.apple.developer.playable-content' build/carplay-entitlements.plist
+          if grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist; then
+            echo 'ERROR: unexpected scene-based CarPlay entitlement in final binary.'
+            exit 1
+          fi
           /usr/bin/otool -l "$EXECUTABLE_PATH" > build/main-load-commands.txt
           grep -q 'LC_CODE_SIGNATURE' build/main-load-commands.txt
 
@@ -284,8 +274,6 @@ jobs:
           git add build-info/last-run.txt build-info/last-success.txt 2>/dev/null || git add build-info/last-run.txt
           if ! git diff --cached --quiet; then
             git commit -m "Record iOS build ${BUILD_STATUS} [skip ci]"
-            # Source may have advanced while this long macOS job was running. Build-info is
-            # diagnostic only, so never turn a successful IPA into a failed workflow here.
             git pull --rebase origin main || true
             git push origin HEAD:main || echo 'Build-info push skipped because repository advanced.'
           fi
