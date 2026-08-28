@@ -1,0 +1,135 @@
+name: iOS Simulator Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'build-info/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Launch app in iOS Simulator
+    runs-on: macos-14
+    env:
+      NO_FLIPPER: 1
+      IOS_SCHEME: LxMusicMobile
+      IOS_WORKSPACE: ios/LxMusicMobile.xcworkspace
+      IOS_BUNDLE_IDENTIFIER: cn.toside.music.mobile
+      DERIVED_DATA_PATH: build/SimulatorDerived
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Install CocoaPods dependencies
+        run: |
+          cd ios
+          bundle exec pod install --repo-update
+
+      - name: Create and boot simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > build-sim-env.sh
+          import json, subprocess
+          runtimes=json.loads(subprocess.check_output(['xcrun','simctl','list','runtimes','-j']))['runtimes']
+          ios=[r for r in runtimes if r.get('isAvailable') and r.get('platform')=='iOS']
+          if not ios:
+              raise SystemExit('No available iOS simulator runtime')
+          runtime=ios[-1]['identifier']
+          dts=json.loads(subprocess.check_output(['xcrun','simctl','list','devicetypes','-j']))['devicetypes']
+          iphones=[d for d in dts if d['name'].startswith('iPhone')]
+          preferred=[d for d in iphones if d['name'] in ('iPhone 15','iPhone 14','iPhone 16')]
+          device=(preferred[0] if preferred else iphones[0])['identifier']
+          print(f"RUNTIME_ID='{runtime}'")
+          print(f"DEVICE_TYPE_ID='{device}'")
+          PY
+          source build-sim-env.sh
+          SIM_UDID="$(xcrun simctl create LXMusicSmoke "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
+          echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM_UDID"
+          xcrun simctl bootstatus "$SIM_UDID" -b
+
+      - name: Build Release for simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "id=$SIM_UDID" \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_IDENTIFIER" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build 2>&1 | tee build/simulator-xcodebuild.log
+
+      - name: Install and launch app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphonesimulator" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          echo "SIM_APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          xcrun simctl install "$SIM_UDID" "$APP_PATH"
+          xcrun simctl spawn "$SIM_UDID" log stream --style compact --level debug --predicate 'process == "LxMusicMobile" OR subsystem CONTAINS "React"' > build/simulator-runtime.log 2>&1 &
+          echo $! > build/log-stream.pid
+          xcrun simctl launch "$SIM_UDID" "$IOS_BUNDLE_IDENTIFIER" | tee build/simulator-launch.txt
+          sleep 20
+          xcrun simctl io "$SIM_UDID" screenshot build/simulator-screen.png
+          kill "$(cat build/log-stream.pid)" 2>/dev/null || true
+
+      - name: Detect black screen and runtime errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from PIL import Image, ImageStat
+          img=Image.open('build/simulator-screen.png').convert('RGB')
+          stat=ImageStat.Stat(img)
+          mean=sum(stat.mean)/3
+          std=sum(stat.stddev)/3
+          pixels=list(img.resize((80,160)).getdata())
+          dark=sum(1 for r,g,b in pixels if max(r,g,b)<18)/len(pixels)
+          print(f'screen mean={mean:.2f} std={std:.2f} dark_ratio={dark:.4f}')
+          if dark > 0.97 and std < 12:
+              raise SystemExit('BLACK_SCREEN_DETECTED')
+          PY
+          if grep -Eqi 'Fatal|Unhandled JS Exception|RCTFatal|Invariant Violation|Terminating app|Could not connect|No component found|Exception' build/simulator-runtime.log; then
+            echo 'Potential runtime failure detected:'
+            grep -Ein 'Fatal|Unhandled JS Exception|RCTFatal|Invariant Violation|Terminating app|Could not connect|No component found|Exception' build/simulator-runtime.log | tail -80
+            exit 1
+          fi
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-smoke-${{ github.run_id }}
+          path: |
+            build/simulator-screen.png
+            build/simulator-runtime.log
+            build/simulator-launch.txt
+            build/simulator-xcodebuild.log
+          if-no-files-found: ignore
