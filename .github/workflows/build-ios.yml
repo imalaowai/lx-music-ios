@@ -43,22 +43,39 @@ jobs:
       - name: Install ldid
         run: brew install ldid
 
-      - name: Validate CarPlay configuration
+      - name: Validate CarPlay source configuration
         shell: bash
         run: |
+          set -euo pipefail
           plutil -lint ios/LxMusicMobile/Info.plist
           plutil -lint "$CARPLAY_ENTITLEMENTS"
+
           grep -q 'configurationForConnectingSceneSession' ios/LxMusicMobile/main.m
           grep -q 'CPTemplateApplicationSceneSessionRoleApplication' ios/LxMusicMobile/main.m
+          grep -q 'setRootTemplate:self.rootTemplate' ios/LxMusicMobile/main.m
+          grep -q 'RCT_EXPORT_MODULE(CarPlayModule)' ios/LxMusicMobile/main.m
+          grep -q 'CPSearchTemplateDelegate' ios/LxMusicMobile/main.m
+          grep -q 'maximumItemCount' ios/LxMusicMobile/main.m
+          grep -q 'LXCarPlayLibraryDidChange' ios/LxMusicMobile/main.m
+          grep -q "initCarPlay" src/core/init/index.ts
+          grep -q "playListById" src/core/init/carPlay.ts
+          grep -q "carplay-action" src/utils/nativeModules/carPlay.ts
+
+          # Keep the phone UI on ReactNativeNavigation's existing lifecycle. A global
+          # UIApplicationSceneManifest can make the phone scene bypass RNN and black-screen.
           if /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' ios/LxMusicMobile/Info.plist >/dev/null 2>&1; then
-            echo 'ERROR: UIApplicationSceneManifest would hijack the phone ReactNativeNavigation lifecycle and can cause a black screen.'
+            echo 'ERROR: UIApplicationSceneManifest would hijack the phone ReactNativeNavigation lifecycle.'
             exit 1
           fi
+
           grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
           grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
 
       - name: Install JavaScript dependencies
         run: npm ci
+
+      - name: Lint CarPlay bridge
+        run: npx eslint src/core/init/carPlay.ts src/utils/nativeModules/carPlay.ts
 
       - name: Verify sound-effect DSP patches
         run: npm run lint:sound-effect-dsp
@@ -96,43 +113,55 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             clean build 2>&1 | tee build/xcodebuild.log
 
-      - name: Inject TrollStore CarPlay entitlements
+      - name: Locate and verify compiled application
         shell: bash
         run: |
+          set -euo pipefail
           APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$APP_PATH"
           EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
           EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
           test -f "$EXECUTABLE_PATH"
 
+          # Verify the native CarPlay classes/bridge survived the Release link step.
+          strings "$EXECUTABLE_PATH" | grep -q 'CarPlayModule'
+          strings "$EXECUTABLE_PATH" | grep -q 'LXCarPlaySceneDelegate'
+          strings "$EXECUTABLE_PATH" | grep -q 'carplay-action'
+          strings "$EXECUTABLE_PATH" | grep -q 'refresh-library'
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
+
+      - name: Inject TrollStore CarPlay entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
           ldid -S"$CARPLAY_ENTITLEMENTS" "$EXECUTABLE_PATH"
           ldid -e "$EXECUTABLE_PATH" > build/carplay-entitlements.plist
           plutil -lint build/carplay-entitlements.plist
           grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
           grep -q 'com.apple.developer.playable-content' build/carplay-entitlements.plist
-          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
       - name: Package TrollStore CarPlay IPA
         shell: bash
         run: |
+          set -euo pipefail
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
           cd build
-          zip -qry "LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-TrollStore.ipa" Payload
+          IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-TrollStore.ipa"
+          zip -qry "$IPA_NAME" Payload
+          shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
 
       - name: Upload CarPlay IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore
-          path: build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa
-          if-no-files-found: error
-
-      - name: Upload embedded entitlements
-        uses: actions/upload-artifact@v4
-        with:
-          name: carplay-entitlements-${{ github.run_id }}
-          path: build/carplay-entitlements.plist
+          path: |
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-CarPlay-TrollStore.ipa.sha256
+            build/carplay-entitlements.plist
           if-no-files-found: error
 
       - name: Upload Xcode log on failure
