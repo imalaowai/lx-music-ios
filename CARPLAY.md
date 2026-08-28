@@ -1,17 +1,18 @@
 # LX Music iOS — CarPlay (TrollStore)
 
-本分支包含原生 CarPlay 音乐界面，目标是 TrollStore 自用安装。
+本分支包含原生 CarPlay 音频界面，目标是 TrollStore 自用安装。
 
 ## 实现方式
 
 - CarPlay UI 使用 Apple `CarPlay.framework` 原生模板，不渲染 React Native 页面。
-- CarPlay 连接后同步设置 `CPListTemplate` 根模板，避免等待 RN / 网络 / 自定义源导致空白或黑屏。
+- 根界面使用 `CPTabBarTemplate`，子页面使用 `CPListTemplate`，正在播放使用系统 `CPNowPlayingTemplate`。
+- CarPlay 连接回调中同步设置根模板，避免等待 RN / 网络 / 自定义源导致空白或黑屏。
 - 手机端与 CarPlay 共用同一套 LX 播放器，不创建第二个 `AVPlayer`。
 - CarPlay 只发送 `listId + musicId` 播放请求给 JS；实际取播放 URL、FLAC、音效、队列、后台播放都继续走现有 LX 播放器。
 - 我的收藏、试听列表、自建歌单、最近播放会同步成本地 CarPlay 快照。
 - 快照写入 Application Support；CarPlay 冷启动会先读取上一次成功快照，再异步让 RN 刷新。
-- 歌曲列表按 `CPListTemplate.maximumItemCount` 自动分页，兼容不同车机的 UI 限制。
-- 搜索使用 `CPSearchTemplate`，直接搜索已同步的本地歌单快照，不依赖车机界面等待网络请求。
+- 歌曲列表按 `CPListTemplate.maximumItemCount` 自动分页，Tab 数量按 `CPTabBarTemplate.maximumTabCount` 自动限制，兼容不同车机的 UI 限制。
+- 为避免音频类 CarPlay entitlement 与导航专用模板不匹配，车机端不使用 `CPSearchTemplate`；需要搜索新歌曲时继续在手机端使用 LX 搜索，已收藏/已加入歌单的内容可直接在 CarPlay 中浏览播放。
 - 正在播放使用系统 `CPNowPlayingTemplate` + `MPNowPlayingInfoCenter`，与锁屏、方向盘按键共用状态。
 
 ## Entitlements
@@ -37,13 +38,15 @@ GitHub Actions 成功后下载：
 
 1. 安装后至少打开一次手机端 LX Music，让歌单快照完成首次同步。
 2. 连接 CarPlay。
-3. CarPlay 首页应立即出现 `正在播放 / 我的收藏 / 试听列表 / 我的歌单 / 搜索音乐 / 刷新音乐库` 中可用的项目。
-4. CarPlay 中选择歌曲后，播放请求会进入现有 LX 播放器；自定义源、音效、FLAC 等继续由手机端播放器处理。
+3. 根界面为原生 Tab：`首页 / 音乐库 / 歌单`；首页包含 `正在播放 / 最近播放 / 刷新音乐库`，音乐库包含可用的 `我的收藏 / 试听列表`。
+4. CarPlay 中选择歌曲后，播放请求会进入现有 LX 播放器；自定义源、音效、FLAC、播放队列等继续由手机端现有播放器处理。
 
 ## 稳定性设计
 
 - CarPlay scene 不依赖网络才能建立根界面。
 - RN 尚未完成初始化时，CarPlay action 会在原生侧排队，Bridge 开始监听后自动补发。
 - CarPlay 断开时清理 interface controller；重新连接时重新建立原生根模板。
-- 音乐库变更与播放状态变化只更新已有根模板，不重新创建手机端 UI。
-- CarPlay 搜索与列表显示不会直接调用自定义源，因此自定义源超时不会造成 CarPlay UI 黑屏。
+- 音乐库变更与播放状态变化只更新已有模板 sections，不主动重建手机 UI 或启动第二套播放器。
+- CarPlay 列表显示不直接调用自定义源，因此自定义源超时不会造成 CarPlay 根界面黑屏。
+- CI 会检查手机端没有全局 `UIApplicationSceneManifest`，防止 CarPlay 场景配置抢占 ReactNativeNavigation 的手机启动流程。
+- CI 会在 Release 二进制中检查 CarPlay 原生 bridge/scene 字符串，并在 `ldid` 后重新读取 entitlement，只有检查通过才打包 CarPlay IPA。
