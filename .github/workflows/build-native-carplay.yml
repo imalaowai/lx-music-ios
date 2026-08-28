@@ -37,13 +37,40 @@ jobs:
         run: |
           set -euo pipefail
           cat .carplay-build/main.b64.* | tr -d '\r\n' | /usr/bin/base64 -D > ios/LxMusicMobile/main.m
-          cat .carplay-build/project.b64.* | tr -d '\r\n' | /usr/bin/base64 -D > ios/LxMusicMobile.xcodeproj/project.pbxproj
-          MAIN_HASH="$(git hash-object ios/LxMusicMobile/main.m)"
-          PROJECT_HASH="$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)"
-          echo "main_hash=$MAIN_HASH"
-          echo "project_hash=$PROJECT_HASH"
-          test "$MAIN_HASH" = "6818edb9c2e4ed0813895737251e5b41fcb427e7"
-          test "$PROJECT_HASH" = "e9675eaeef34f6c0c2631db60ee9a5c0951cd1cc"
+          test "$(git hash-object ios/LxMusicMobile/main.m)" = "6818edb9c2e4ed0813895737251e5b41fcb427e7"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('ios/LxMusicMobile.xcodeproj/project.pbxproj')
+          text = path.read_text()
+          insertions = [
+              (
+                  '\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */; };',
+                  '\t\t77C4A001C4A24A5E9B5B0001 /* CarPlay.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */; };'
+              ),
+              (
+                  '\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };',
+                  '\t\t77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };'
+              ),
+              (
+                  '\t\t\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */,',
+                  '\t\t\t\t77C4A001C4A24A5E9B5B0001 /* CarPlay.framework in Frameworks */,'
+              ),
+              (
+                  '\t\t\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */,',
+                  '\t\t\t\t77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */,'
+              ),
+          ]
+          for anchor, addition in insertions:
+              if addition not in text:
+                  if anchor not in text:
+                      raise SystemExit(f'Missing Xcode project anchor: {anchor}')
+                  text = text.replace(anchor, anchor + '\n' + addition, 1)
+          path.write_text(text)
+          PY
+
+          echo "project_hash=$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)"
+          test "$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)" = "e9675eaeef34f6c0c2631db60ee9a5c0951cd1cc"
           grep -q '#import <CarPlay/CarPlay.h>' ios/LxMusicMobile/main.m
           grep -q 'LXCarPlaySceneDelegate' ios/LxMusicMobile/main.m
           grep -q 'CPTemplateApplicationScene' ios/LxMusicMobile/main.m
