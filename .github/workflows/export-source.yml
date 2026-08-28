@@ -1,0 +1,39 @@
+name: Export LX Music iOS Source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/export-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Create source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          zip -qry dist/LXMusic-iOS-1.8.4-source.zip . \
+            -x '.git/*' \
+               'node_modules/*' \
+               'ios/Pods/*' \
+               'build/*' \
+               'dist/*' \
+               '*.ipa'
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: LXMusic-iOS-1.8.4-source
+          path: dist/LXMusic-iOS-1.8.4-source.zip
+          if-no-files-found: error
+          retention-days: 30
