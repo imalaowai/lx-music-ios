@@ -44,7 +44,7 @@ jobs:
 
           plutil -lint ios/LxMusicMobile/Info.plist
           plutil -lint "$CARPLAY_ENTITLEMENTS"
-          grep -q '@import CarPlay' ios/LxMusicMobile/main.m
+          grep -q '#import <CarPlay/CarPlay.h>' ios/LxMusicMobile/main.m
           grep -q 'LXCarPlaySceneDelegate' ios/LxMusicMobile/main.m
           grep -q 'LXPhoneSceneDelegate' ios/LxMusicMobile/main.m
           grep -q 'CPTabBarTemplate.maximumTabCount' ios/LxMusicMobile/main.m
