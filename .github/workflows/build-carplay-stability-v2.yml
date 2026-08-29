@@ -1,0 +1,200 @@
+name: Build CarPlay StabilityFix V2
+
+on:
+  push:
+    branches: [carplay-stabilityfix-20260829-v2]
+    paths-ignore:
+      - 'build-info/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: carplay-stability-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build TrollStore CarPlay StabilityFix V2
+    runs-on: macos-14
+    env:
+      NO_FLIPPER: 1
+      IOS_SCHEME: LxMusicMobile
+      IOS_WORKSPACE: ios/LxMusicMobile.xcworkspace
+      IOS_BUNDLE_IDENTIFIER: cn.toside.music.mobile
+      DERIVED_DATA_PATH: build/DerivedData
+      CARPLAY_ENTITLEMENTS: ios/LxMusicMobile/LxMusicMobile.entitlements
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore native CarPlay scene source and apply stability fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .carplay-build/main.b64.* | base64 --decode > ios/LxMusicMobile/main.m
+          python3 .carplay-build/apply_phone_scene.py
+          python3 .carplay-build/apply_carplay_stability.py
+          python3 .carplay-build/apply_carplay_stability_v2.py
+          python3 .carplay-build/apply_carplay_project.py
+
+          plutil -lint ios/LxMusicMobile/Info.plist
+          plutil -lint "$CARPLAY_ENTITLEMENTS"
+          grep -q '@import CarPlay' ios/LxMusicMobile/main.m
+          grep -q 'LXCarPlaySceneDelegate' ios/LxMusicMobile/main.m
+          grep -q 'LXPhoneSceneDelegate' ios/LxMusicMobile/main.m
+          grep -q 'CPTabBarTemplate.maximumTabCount' ios/LxMusicMobile/main.m
+          grep -q 'pushTemplate failed' ios/LxMusicMobile/main.m
+          grep -q 'setRootTemplate failed' ios/LxMusicMobile/main.m
+          grep -q '!self.hasJSListeners' ios/LxMusicMobile/main.m
+          grep -q 'window.rootViewController == nil' ios/LxMusicMobile/main.m
+          grep -q 'CarPlay.framework' ios/LxMusicMobile.xcodeproj/project.pbxproj
+          grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
+          grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
+
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' ios/LxMusicMobile/Info.plist | grep -q 'LXPhoneSceneDelegate'
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0:UISceneClassName' ios/LxMusicMobile/Info.plist | grep -q 'CPTemplateApplicationScene'
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0:UISceneDelegateClassName' ios/LxMusicMobile/Info.plist | grep -q 'LXCarPlaySceneDelegate'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Lint CarPlay bridge
+        run: npx eslint src/core/init/carPlay.ts src/utils/nativeModules/carPlay.ts src/app.ts src/navigation/regLaunchedEvent.ts
+
+      - name: Install CocoaPods dependencies
+        shell: bash
+        run: |
+          cd ios
+          bundle exec pod install --repo-update
+
+      - name: Read app version
+        shell: bash
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_VERSION_CODE=$(node -p "require('./package.json').versionCode")
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION_CODE=$PACKAGE_VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Build unsigned iOS application
+        shell: bash
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_IDENTIFIER" \
+            MARKETING_VERSION="$PACKAGE_VERSION" \
+            CURRENT_PROJECT_VERSION="$PACKAGE_VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build 2>&1 | tee build/xcodebuild.log
+
+      - name: Locate and validate compiled app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
+          EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
+          test -f "$EXECUTABLE_PATH"
+          test -s "$APP_PATH/main.jsbundle"
+
+          strings "$EXECUTABLE_PATH" > build/app-strings.txt
+          grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
+          grep -q 'LXPhoneSceneDelegate' build/app-strings.txt
+          grep -q 'pushTemplate failed' build/app-strings.txt
+          grep -q 'CPTabBarTemplate creation failed' build/app-strings.txt
+          /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
+          grep -q '/CarPlay.framework/CarPlay' build/app-dylibs.txt
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign embedded Mach-O code
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' candidate; do
+            [ "$candidate" = "$EXECUTABLE_PATH" ] && continue
+            kind="$(file -b "$candidate" 2>/dev/null || true)"
+            case "$kind" in
+              *Mach-O*) ldid -S "$candidate" ;;
+            esac
+          done < <(find "$APP_PATH" -type f -print0)
+
+      - name: Inject TrollStore CarPlay entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldid -S"$CARPLAY_ENTITLEMENTS" "$EXECUTABLE_PATH"
+          ldid -e "$EXECUTABLE_PATH" > build/carplay-entitlements.plist
+          plutil -lint build/carplay-entitlements.plist
+          grep -q 'com.apple.developer.playable-content' build/carplay-entitlements.plist
+          grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
+
+      - name: Package StabilityFix V2 IPA and patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/Payload build/patched-source
+          mkdir -p build/Payload build/patched-source/ios/LxMusicMobile
+          cp -R "$APP_PATH" build/Payload/
+          cp ios/LxMusicMobile/main.m build/patched-source/ios/LxMusicMobile/main.m
+          cp ios/LxMusicMobile/Info.plist build/patched-source/ios/LxMusicMobile/Info.plist
+          cp ios/LxMusicMobile/LxMusicMobile.entitlements build/patched-source/ios/LxMusicMobile/LxMusicMobile.entitlements
+          cp ios/LxMusicMobile.xcodeproj/project.pbxproj build/patched-source/project.pbxproj
+
+          cd build
+          IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-StabilityFixV2-TrollStore.ipa"
+          SOURCE_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-StabilityFixV2-patched-source.zip"
+          zip -qry "$IPA_NAME" Payload
+          zip -qry "$SOURCE_NAME" patched-source
+          shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
+          shasum -a 256 "$SOURCE_NAME" > "$SOURCE_NAME.sha256"
+
+      - name: Upload StabilityFix V2 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LXMusic-CarPlay-StabilityFixV2
+          path: |
+            build/LXMusic-iOS-*-CarPlay-StabilityFixV2-TrollStore.ipa
+            build/LXMusic-iOS-*-CarPlay-StabilityFixV2-TrollStore.ipa.sha256
+            build/LXMusic-iOS-*-CarPlay-StabilityFixV2-patched-source.zip
+            build/LXMusic-iOS-*-CarPlay-StabilityFixV2-patched-source.zip.sha256
+            build/carplay-entitlements.plist
+            build/app-dylibs.txt
+          if-no-files-found: error
+
+      - name: Upload Xcode log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-${{ github.run_id }}
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
