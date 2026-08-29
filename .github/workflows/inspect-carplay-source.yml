@@ -1,0 +1,30 @@
+name: Inspect CarPlay Source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inspect-carplay-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct and inspect native CarPlay source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .carplay-build/main.b64.* | tr -d '\r\n' | base64 -d > /tmp/main.m
+          echo '=== HASH ==='
+          git hash-object /tmp/main.m
+          echo '=== TEMPLATE TRANSITIONS ==='
+          grep -n -C 5 -E 'setRootTemplate|pushTemplate|popTemplate|presentTemplate|maximumTabCount|CPTabBarTemplate' /tmp/main.m || true
+          echo '=== SCENE CONNECT/DISCONNECT ==='
+          grep -n -C 8 -E 'didConnectInterfaceController|didDisconnectInterfaceController|sceneDidDisconnect|CarPlaySceneDelegate' /tmp/main.m || true
+          echo '=== OBSERVERS ==='
+          grep -n -C 5 -E 'addObserver|removeObserver|NSNotificationCenter' /tmp/main.m || true
