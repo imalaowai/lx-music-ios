@@ -140,7 +140,7 @@ jobs:
             -isysroot "$SDK" \
             -miphoneos-version-min=14.0 \
             -fobjc-arc \
-            -framework Foundation -framework UIKit -framework CarPlay \
+            -framework Foundation -framework UIKit -framework CoreGraphics -framework CarPlay \
             diagnostic-build/main.m \
             -o diagnostic-build/CarPlayDiagnostic.app/CarPlayDiagnostic
 
