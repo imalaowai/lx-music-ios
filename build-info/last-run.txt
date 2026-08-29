@@ -1,5 +1,5 @@
-run_id=33226500722
-status=failure
+run_id=33227813450
+status=cancelled
 version=unknown
 artifact=LXMusic-iOS-unknown-CarPlay-TrollStore
-commit=f8873dcae6ceba500dba3725579698a4970b64b0
+commit=0452d11764bbe8dc648981a24b63c490087cbbf1
