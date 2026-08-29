@@ -62,7 +62,7 @@ jobs:
           PY
 
           echo "fixed_main_hash=$(git hash-object ios/LxMusicMobile/main.m)"
-          test "$(git hash-object ios/LxMusicMobile/main.m)" = "722bc51562a538570ef8957ffd7b56da573e7a16"
+          test "$(git hash-object ios/LxMusicMobile/main.m)" = "53e4b1229d534dad81cb1ccb54041de1a6bf719e"
           grep -q 'LXPhoneSceneDelegate' ios/LxMusicMobile/main.m
           grep -q 'window.windowScene = windowScene' ios/LxMusicMobile/main.m
           grep -q 'configuration.delegateClass = LXPhoneSceneDelegate.class' ios/LxMusicMobile/main.m
