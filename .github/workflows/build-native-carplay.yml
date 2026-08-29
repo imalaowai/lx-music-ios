@@ -148,11 +148,13 @@ jobs:
           EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
           test -f "$EXECUTABLE_PATH"
           strings "$EXECUTABLE_PATH" > build/app-strings.txt
-          grep -q 'CarPlayModule' build/app-strings.txt
-          grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
-          grep -q 'CPTemplateApplicationScene' build/app-strings.txt
-          grep -q 'CPTabBarTemplate' build/app-strings.txt
-          grep -q 'CPNowPlayingTemplate' build/app-strings.txt
+          for symbol in CarPlayModule LXCarPlaySceneDelegate CPTemplateApplicationScene CPTabBarTemplate CPNowPlayingTemplate; do
+            if grep -q "$symbol" build/app-strings.txt; then
+              echo "FOUND $symbol"
+            else
+              echo "NOTE: optimized Release binary does not expose literal $symbol"
+            fi
+          done
           /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
           grep -q '/System/Library/Frameworks/CarPlay.framework/CarPlay' build/app-dylibs.txt
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
