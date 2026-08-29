@@ -1,0 +1,175 @@
+name: Build CarPlay Minimal Diagnostic V2
+
+on:
+  push:
+    branches: [carplay-minimal-diagnostic-20260829]
+    paths:
+      - '.github/workflows/build-carplay-minimal-diagnostic-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Build diagnostic V2 with full TrollStore identity entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf diagnostic-v2
+          mkdir -p diagnostic-v2/CarPlayDiagnosticV2.app diagnostic-v2/Payload
+
+          cat > diagnostic-v2/main.m <<'EOF'
+          #import <UIKit/UIKit.h>
+          #import <CarPlay/CarPlay.h>
+
+          @interface AppDelegate : UIResponder <UIApplicationDelegate>
+          @end
+          @interface PhoneSceneDelegate : UIResponder <UIWindowSceneDelegate>
+          @property (nonatomic, strong) UIWindow *window;
+          @end
+          @interface CarPlaySceneDelegate : UIResponder <CPTemplateApplicationSceneDelegate>
+          @property (nonatomic, strong) CPInterfaceController *interfaceController;
+          @end
+
+          @implementation AppDelegate
+          - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions { return YES; }
+          @end
+
+          @implementation PhoneSceneDelegate
+          - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
+            if (![scene isKindOfClass:UIWindowScene.class]) return;
+            UIWindow *window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+            UIViewController *vc = [UIViewController new];
+            vc.view.backgroundColor = UIColor.systemBackgroundColor;
+            UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
+            label.text = @"CarPlay Diagnostic V2";
+            label.textAlignment = NSTextAlignmentCenter;
+            label.translatesAutoresizingMaskIntoConstraints = NO;
+            [vc.view addSubview:label];
+            [NSLayoutConstraint activateConstraints:@[
+              [label.centerXAnchor constraintEqualToAnchor:vc.view.centerXAnchor],
+              [label.centerYAnchor constraintEqualToAnchor:vc.view.centerYAnchor]
+            ]];
+            window.rootViewController = vc;
+            self.window = window;
+            [window makeKeyAndVisible];
+          }
+          @end
+
+          @implementation CarPlaySceneDelegate
+          - (void)templateApplicationScene:(CPTemplateApplicationScene *)scene didConnectInterfaceController:(CPInterfaceController *)controller API_AVAILABLE(ios(14.0)) {
+            self.interfaceController = controller;
+            CPListItem *item = [[CPListItem alloc] initWithText:@"CarPlay identity OK" detailText:@"Full TrollStore baseline entitlements"];
+            CPListSection *section = [[CPListSection alloc] initWithItems:@[item]];
+            CPListTemplate *root = [[CPListTemplate alloc] initWithTitle:@"Diagnostic V2" sections:@[section]];
+            [controller setRootTemplate:root animated:NO completion:nil];
+          }
+          - (void)templateApplicationScene:(CPTemplateApplicationScene *)scene didDisconnectInterfaceController:(CPInterfaceController *)controller API_AVAILABLE(ios(14.0)) {
+            self.interfaceController = nil;
+          }
+          @end
+
+          int main(int argc, char *argv[]) {
+            @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class)); }
+          }
+          EOF
+
+          cat > diagnostic-v2/CarPlayDiagnosticV2.app/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleDisplayName</key><string>CarPlay Diagnostic V2</string>
+            <key>CFBundleExecutable</key><string>CarPlayDiagnosticV2</string>
+            <key>CFBundleIdentifier</key><string>com.imalaowai.carplaydiagnostic.v2</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>CarPlay Diagnostic V2</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>2.0</string>
+            <key>CFBundleVersion</key><string>2</string>
+            <key>LSRequiresIPhoneOS</key><true/>
+            <key>MinimumOSVersion</key><string>14.0</string>
+            <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+            <key>UIBackgroundModes</key><array><string>audio</string></array>
+            <key>UIApplicationSceneManifest</key>
+            <dict>
+              <key>UIApplicationSupportsMultipleScenes</key><true/>
+              <key>UISceneConfigurations</key>
+              <dict>
+                <key>UIWindowSceneSessionRoleApplication</key>
+                <array><dict>
+                  <key>UISceneClassName</key><string>UIWindowScene</string>
+                  <key>UISceneConfigurationName</key><string>Phone</string>
+                  <key>UISceneDelegateClassName</key><string>PhoneSceneDelegate</string>
+                </dict></array>
+                <key>CPTemplateApplicationSceneSessionRoleApplication</key>
+                <array><dict>
+                  <key>UISceneClassName</key><string>CPTemplateApplicationScene</string>
+                  <key>UISceneConfigurationName</key><string>CarPlay</string>
+                  <key>UISceneDelegateClassName</key><string>CarPlaySceneDelegate</string>
+                </dict></array>
+              </dict>
+            </dict>
+            <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+          </dict></plist>
+          EOF
+
+          cat > diagnostic-v2/Full.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>application-identifier</key><string>TROLLTROLL.*</string>
+            <key>com.apple.developer.team-identifier</key><string>TROLLTROLL</string>
+            <key>get-task-allow</key><true/>
+            <key>keychain-access-groups</key>
+            <array>
+              <string>TROLLTROLL.*</string>
+              <string>com.apple.token</string>
+            </array>
+            <key>com.apple.developer.carplay-audio</key><true/>
+          </dict></plist>
+          EOF
+
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang \
+            -arch arm64 -isysroot "$SDK" -miphoneos-version-min=14.0 -fobjc-arc \
+            -framework Foundation -framework UIKit -framework CoreGraphics -framework CarPlay \
+            diagnostic-v2/main.m -o diagnostic-v2/CarPlayDiagnosticV2.app/CarPlayDiagnosticV2
+
+          plutil -lint diagnostic-v2/CarPlayDiagnosticV2.app/Info.plist
+          plutil -lint diagnostic-v2/Full.entitlements
+          ldid -Sdiagnostic-v2/Full.entitlements -M diagnostic-v2/CarPlayDiagnosticV2.app
+          ldid -e diagnostic-v2/CarPlayDiagnosticV2.app/CarPlayDiagnosticV2 > diagnostic-v2/final-entitlements.plist
+          plutil -lint diagnostic-v2/final-entitlements.plist
+          grep -q 'com.apple.developer.carplay-audio' diagnostic-v2/final-entitlements.plist
+          grep -q 'application-identifier' diagnostic-v2/final-entitlements.plist
+          grep -q 'com.apple.developer.team-identifier' diagnostic-v2/final-entitlements.plist
+          grep -q 'keychain-access-groups' diagnostic-v2/final-entitlements.plist
+
+          /usr/bin/otool -L diagnostic-v2/CarPlayDiagnosticV2.app/CarPlayDiagnosticV2 > diagnostic-v2/dylibs.txt
+          grep -q '/CarPlay.framework/CarPlay' diagnostic-v2/dylibs.txt
+          strings diagnostic-v2/CarPlayDiagnosticV2.app/CarPlayDiagnosticV2 | grep -q 'CarPlaySceneDelegate'
+
+          cp -R diagnostic-v2/CarPlayDiagnosticV2.app diagnostic-v2/Payload/
+          cd diagnostic-v2
+          zip -qry CarPlay-Minimal-Diagnostic-V2-FullIdentity-TrollStore.ipa Payload
+          shasum -a 256 CarPlay-Minimal-Diagnostic-V2-FullIdentity-TrollStore.ipa > CarPlay-Minimal-Diagnostic-V2-FullIdentity-TrollStore.ipa.sha256
+
+      - name: Upload diagnostic V2
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarPlay-Minimal-Diagnostic-V2-FullIdentity
+          path: |
+            diagnostic-v2/CarPlay-Minimal-Diagnostic-V2-FullIdentity-TrollStore.ipa
+            diagnostic-v2/CarPlay-Minimal-Diagnostic-V2-FullIdentity-TrollStore.ipa.sha256
+            diagnostic-v2/final-entitlements.plist
+            diagnostic-v2/dylibs.txt
+          if-no-files-found: error
