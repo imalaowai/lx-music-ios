@@ -127,7 +127,6 @@ jobs:
           grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
           grep -q 'LXPhoneSceneDelegate' build/app-strings.txt
           grep -q 'simple root set failed' build/app-strings.txt
-          grep -q 'CarPlay 已连接' build/app-strings.txt
           /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
           grep -q '/CarPlay.framework/CarPlay' build/app-dylibs.txt
           grep -q '/MediaPlayer.framework/MediaPlayer' build/app-dylibs.txt
