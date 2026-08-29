@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/build-native-carplay-phone-scene-fix.yml'
+      - 'ios/LxMusicMobile/Info.plist'
 
 permissions:
   contents: read
@@ -16,7 +17,7 @@ concurrency:
 
 jobs:
   build-ios:
-    name: Build CarPlay PhoneScene Fix TrollStore IPA
+    name: Build CarPlay SceneManifest Fix TrollStore IPA
     runs-on: macos-14
     env:
       NO_FLIPPER: 1
@@ -25,6 +26,7 @@ jobs:
       IOS_BUNDLE_IDENTIFIER: cn.toside.music.mobile
       DERIVED_DATA_PATH: build/DerivedData
       CARPLAY_ENTITLEMENTS: ios/LxMusicMobile/LxMusicMobile.entitlements
+      INFO_PLIST: ios/LxMusicMobile/Info.plist
 
     steps:
       - name: Checkout source
@@ -43,7 +45,7 @@ jobs:
           path = Path('ios/LxMusicMobile/main.m')
           text = path.read_text()
           marker = '@implementation AppDelegate (LXCarPlaySceneConfiguration)\n'
-          phone_scene = '''@interface LXPhoneSceneDelegate : UIResponder <UIWindowSceneDelegate>\n@property (nonatomic, strong, nullable) UIWindow *window;\n@end\n\n@implementation LXPhoneSceneDelegate\n\n- (void)scene:(UIScene *)scene\nwillConnectToSession:(UISceneSession *)session\n        options:(UISceneConnectionOptions *)connectionOptions API_AVAILABLE(ios(13.0)) {\n  if (![scene isKindOfClass:[UIWindowScene class]]) return;\n\n  AppDelegate *appDelegate = (AppDelegate *)UIApplication.sharedApplication.delegate;\n  UIWindowScene *windowScene = (UIWindowScene *)scene;\n\n  // React Native Navigation 7.39.2 creates and owns UIApplication.delegate.window.\n  // Reuse that exact window and attach it to the phone UIWindowScene instead of\n  // creating a second window. This preserves the existing RNN root/navigation stack.\n  UIWindow *window = appDelegate.window;\n  if (window == nil) {\n    window = [[UIWindow alloc] initWithWindowScene:windowScene];\n    appDelegate.window = window;\n  } else if (window.windowScene != windowScene) {\n    window.windowScene = windowScene;\n  }\n\n  self.window = window;\n  [window makeKeyAndVisible];\n}\n\n- (void)sceneDidBecomeActive:(UIScene *)scene API_AVAILABLE(ios(13.0)) {\n  [self.window makeKeyAndVisible];\n}\n\n@end\n\n'''
+          phone_scene = '''@interface LXPhoneSceneDelegate : UIResponder <UIWindowSceneDelegate>\n@property (nonatomic, strong, nullable) UIWindow *window;\n@end\n\n@implementation LXPhoneSceneDelegate\n\n- (void)scene:(UIScene *)scene\nwillConnectToSession:(UISceneSession *)session\n        options:(UISceneConnectionOptions *)connectionOptions API_AVAILABLE(ios(13.0)) {\n  if (![scene isKindOfClass:[UIWindowScene class]]) return;\n\n  AppDelegate *appDelegate = (AppDelegate *)UIApplication.sharedApplication.delegate;\n  UIWindowScene *windowScene = (UIWindowScene *)scene;\n\n  UIWindow *window = appDelegate.window;\n  if (window == nil) {\n    window = [[UIWindow alloc] initWithWindowScene:windowScene];\n    appDelegate.window = window;\n  } else if (window.windowScene != windowScene) {\n    window.windowScene = windowScene;\n  }\n\n  self.window = window;\n  [window makeKeyAndVisible];\n}\n\n- (void)sceneDidBecomeActive:(UIScene *)scene API_AVAILABLE(ios(13.0)) {\n  [self.window makeKeyAndVisible];\n}\n\n@end\n\n'''
           if phone_scene not in text:
               if marker not in text:
                   raise SystemExit('Missing AppDelegate CarPlay scene category marker')
@@ -71,22 +73,10 @@ jobs:
           path = Path('ios/LxMusicMobile.xcodeproj/project.pbxproj')
           text = path.read_text()
           insertions = [
-              (
-                  '\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */; };',
-                  '\t\t77C4A001C4A24A5E9B5B0001 /* CarPlay.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */; };'
-              ),
-              (
-                  '\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };',
-                  '\t\t77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };'
-              ),
-              (
-                  '\t\t\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */,',
-                  '\t\t\t\t77C4A001C4A24A5E9B5B0001 /* CarPlay.framework in Frameworks */,'
-              ),
-              (
-                  '\t\t\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */,',
-                  '\t\t\t\t77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */,'
-              ),
+              ('\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */; };', '\t\t77C4A001C4A24A5E9B5B0001 /* CarPlay.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */; };'),
+              ('\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };', '\t\t77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };'),
+              ('\t\t\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */,', '\t\t\t\t77C4A001C4A24A5E9B5B0001 /* CarPlay.framework in Frameworks */,'),
+              ('\t\t\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */,', '\t\t\t\t77C4A000C4A24A5E9B5B0001 /* CarPlay.framework */,'),
           ]
           for anchor, addition in insertions:
               if addition not in text:
@@ -97,9 +87,15 @@ jobs:
           PY
 
           test "$(git hash-object ios/LxMusicMobile.xcodeproj/project.pbxproj)" = "e9675eaeef34f6c0c2631db60ee9a5c0951cd1cc"
+
           plutil -lint "$CARPLAY_ENTITLEMENTS"
           grep -q 'com.apple.developer.playable-content' "$CARPLAY_ENTITLEMENTS"
           grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
+
+          plutil -lint "$INFO_PLIST"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0:UISceneClassName' "$INFO_PLIST")" = "CPTemplateApplicationScene"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0:UISceneDelegateClassName' "$INFO_PLIST")" = "LXCarPlaySceneDelegate"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "$INFO_PLIST")" = "LXPhoneSceneDelegate"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -167,11 +163,19 @@ jobs:
           EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
           EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
           test -f "$EXECUTABLE_PATH"
+
           strings "$EXECUTABLE_PATH" > build/app-strings.txt
           grep -q 'LX Music Phone' build/app-strings.txt
           grep -q 'LX Music CarPlay' build/app-strings.txt
           /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
           grep -q '/System/Library/Frameworks/CarPlay.framework/CarPlay' build/app-dylibs.txt
+
+          plutil -lint "$APP_PATH/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0:UISceneClassName' "$APP_PATH/Info.plist")" = "CPTemplateApplicationScene"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0:UISceneDelegateClassName' "$APP_PATH/Info.plist")" = "LXCarPlaySceneDelegate"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:UIWindowSceneSessionRoleApplication:0:UISceneDelegateClassName' "$APP_PATH/Info.plist")" = "LXPhoneSceneDelegate"
+          cp "$APP_PATH/Info.plist" build/final-Info.plist
+
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
 
@@ -206,7 +210,7 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
           cd build
-          IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-Native-CarPlay-PhoneSceneFix-TrollStore.ipa"
+          IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-Native-CarPlay-SceneManifestFix-TrollStore.ipa"
           zip -qry "$IPA_NAME" Payload
           unzip -t "$IPA_NAME"
           shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
@@ -214,18 +218,19 @@ jobs:
       - name: Upload fixed IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-PhoneSceneFix-TrollStore
+          name: LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-SceneManifestFix-TrollStore
           path: |
-            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-PhoneSceneFix-TrollStore.ipa
-            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-PhoneSceneFix-TrollStore.ipa.sha256
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-SceneManifestFix-TrollStore.ipa
+            build/LXMusic-iOS-${{ env.PACKAGE_VERSION }}-Native-CarPlay-SceneManifestFix-TrollStore.ipa.sha256
             build/carplay-entitlements.plist
             build/app-dylibs.txt
+            build/final-Info.plist
           if-no-files-found: error
 
       - name: Upload Xcode log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: xcodebuild-phone-scene-fix-${{ github.run_id }}
+          name: xcodebuild-carplay-scene-manifest-${{ github.run_id }}
           path: build/xcodebuild.log
           if-no-files-found: ignore
