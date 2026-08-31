@@ -3,6 +3,7 @@ import plistlib
 
 main_path = Path('ios/LxMusicMobile/main.m')
 plist_path = Path('ios/LxMusicMobile/Info.plist')
+entitlements_path = Path('ios/LxMusicMobile/LxMusicMobile.entitlements')
 text = main_path.read_text()
 
 # V6 intentionally preserves the original ReactNativeNavigation phone lifecycle.
@@ -137,7 +138,8 @@ new_connect = r'''- (void)templateApplicationScene:(CPTemplateApplicationScene *
 text = text[:connect_start] + new_connect + text[connect_end:]
 main_path.write_text(text)
 
-# Keep only Apple's CarPlay scene role. Do not opt the phone UI into UIWindowScene.
+# Match the working KMusic pattern: only the CarPlay scene is declared statically.
+# The phone UI remains on the app's pre-existing UIApplication/AppDelegate lifecycle.
 plist = plistlib.loads(plist_path.read_bytes())
 manifest = plist.setdefault('UIApplicationSceneManifest', {})
 manifest['UIApplicationSupportsMultipleScenes'] = True
@@ -151,3 +153,8 @@ configs['CPTemplateApplicationSceneSessionRoleApplication'] = [{
 manifest['UISceneConfigurations'] = configs
 plist['UIApplicationSceneManifest'] = manifest
 plist_path.write_bytes(plistlib.dumps(plist, fmt=plistlib.FMT_XML, sort_keys=False))
+
+# V4 intentionally reduced the signing payload to carplay-audio only. V6 restores the real
+# identity from the user's original LX Music IPA, then adds CarPlay exactly like the known-working
+# KMusic build preserves its original identity while adding com.apple.developer.carplay-audio.
+entitlements_path.write_text('''<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>application-identifier</key>\n\t<string>63VNAMT4FN.com.klxmc.music.mobile</string>\n\t<key>com.apple.developer.team-identifier</key>\n\t<string>63VNAMT4FN</string>\n\t<key>get-task-allow</key>\n\t<true/>\n\t<key>com.apple.developer.carplay-audio</key>\n\t<true/>\n</dict>\n</plist>\n''')
