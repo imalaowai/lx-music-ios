@@ -110,6 +110,7 @@ jobs:
             PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_IDENTIFIER" \
             MARKETING_VERSION="$PACKAGE_VERSION" \
             CURRENT_PROJECT_VERSION="$PACKAGE_VERSION_CODE" \
+            OTHER_LDFLAGS='$(inherited) -framework MediaPlayer' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             clean build 2>&1 | tee build/xcodebuild.log
@@ -119,29 +120,33 @@ jobs:
         run: |
           set -euo pipefail
           APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
-          test -n "$APP_PATH"
+          if [ -z "$APP_PATH" ]; then echo 'ERROR: compiled .app not found'; exit 1; fi
           EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
           EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
-          test -f "$EXECUTABLE_PATH"
-          test -s "$APP_PATH/main.jsbundle"
+          if [ ! -f "$EXECUTABLE_PATH" ]; then echo 'ERROR: app executable not found'; exit 1; fi
+          if [ ! -s "$APP_PATH/main.jsbundle" ]; then echo 'ERROR: main.jsbundle missing or empty'; exit 1; fi
 
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -q '^com.klxmc.music.mobile$'
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          if [ "$BUNDLE_ID" != 'com.klxmc.music.mobile' ]; then echo "ERROR: wrong bundle id: $BUNDLE_ID"; exit 1; fi
           if /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' "$APP_PATH/Info.plist" >/dev/null 2>&1; then
-            echo 'ERROR: compiled V8 app unexpectedly contains UIApplicationSceneManifest.'
+            echo 'ERROR: compiled V8 app unexpectedly contains UIApplicationSceneManifest'
             exit 1
           fi
 
           strings "$EXECUTABLE_PATH" > build/app-strings.txt
-          grep -q 'LXPlayableContentCoordinator' build/app-strings.txt
-          grep -q 'MPPlayableContentManager' build/app-strings.txt
-          ! grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
-          ! grep -q 'CPTemplateApplicationScene' build/app-strings.txt
-          ! grep -q 'configurationForConnectingSceneSession' build/app-strings.txt
+          if ! grep -q 'LXPlayableContentCoordinator' build/app-strings.txt; then echo 'ERROR: LXPlayableContentCoordinator missing'; exit 1; fi
+          if ! grep -q 'MPPlayableContentManager' build/app-strings.txt; then echo 'ERROR: MPPlayableContentManager missing'; exit 1; fi
+          if grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt; then echo 'ERROR: LXCarPlaySceneDelegate still present'; exit 1; fi
+          if grep -q 'CPTemplateApplicationScene' build/app-strings.txt; then echo 'ERROR: CPTemplateApplicationScene still present'; exit 1; fi
+          if grep -q 'configurationForConnectingSceneSession' build/app-strings.txt; then echo 'ERROR: UIScene configuration method still present'; exit 1; fi
 
           /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
-          grep -q '/MediaPlayer.framework/MediaPlayer' build/app-dylibs.txt
-          ! grep -q '/CarPlay.framework/CarPlay' build/app-dylibs.txt
+          echo '===== V8 linked frameworks ====='
+          cat build/app-dylibs.txt
+          if ! grep -q '/MediaPlayer.framework/MediaPlayer' build/app-dylibs.txt; then echo 'ERROR: MediaPlayer.framework not linked'; exit 1; fi
+          if grep -q '/CarPlay.framework/CarPlay' build/app-dylibs.txt; then echo 'ERROR: CarPlay.framework unexpectedly linked'; exit 1; fi
 
+          echo 'V8 compiled app validation passed.'
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
           echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
 
@@ -235,5 +240,3 @@ jobs:
           name: xcodebuild-log-v8-${{ github.run_id }}
           path: build/xcodebuild.log
           if-no-files-found: ignore
-
-# V8 compiled validation fix
