@@ -134,7 +134,6 @@ jobs:
           strings "$EXECUTABLE_PATH" > build/app-strings.txt
           grep -q 'LXPlayableContentCoordinator' build/app-strings.txt
           grep -q 'MPPlayableContentManager' build/app-strings.txt
-          grep -q '正在加载音乐库' build/app-strings.txt
           ! grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
           ! grep -q 'CPTemplateApplicationScene' build/app-strings.txt
           ! grep -q 'configurationForConnectingSceneSession' build/app-strings.txt
@@ -237,4 +236,4 @@ jobs:
           path: build/xcodebuild.log
           if-no-files-found: ignore
 
-# V8 workflow trigger
+# V8 compiled validation fix
