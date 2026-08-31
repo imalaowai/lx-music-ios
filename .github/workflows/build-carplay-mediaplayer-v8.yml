@@ -1,0 +1,238 @@
+name: Build CarPlay MediaPlayer V8
+
+on:
+  push:
+    branches: [carplay-mediaplayer-v8-20260831]
+    paths-ignore:
+      - 'build-info/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: carplay-mediaplayer-v8-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build TrollStore CarPlay MediaPlayer V8
+    runs-on: macos-14
+    env:
+      NO_FLIPPER: 1
+      IOS_SCHEME: LxMusicMobile
+      IOS_WORKSPACE: ios/LxMusicMobile.xcworkspace
+      IOS_BUNDLE_IDENTIFIER: com.klxmc.music.mobile
+      DERIVED_DATA_PATH: build/DerivedData
+      CARPLAY_ENTITLEMENTS: ios/LxMusicMobile/LxMusicMobile.entitlements
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore source and apply V8 MediaPlayer-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .carplay-build/main.b64.* | base64 --decode > ios/LxMusicMobile/main.m
+          python3 .carplay-build/apply_carplay_mediaplayer_v8.py
+
+          plutil -lint ios/LxMusicMobile/Info.plist
+          plutil -lint "$CARPLAY_ENTITLEMENTS"
+
+          grep -q 'MPPlayableContentManager' ios/LxMusicMobile/main.m
+          grep -q 'LXPlayableContentCoordinator' ios/LxMusicMobile/main.m
+          grep -q 'V8: MediaPlayer-only CarPlay provider' ios/LxMusicMobile/main.m
+          grep -q '正在加载音乐库' ios/LxMusicMobile/main.m
+          ! grep -q '#import <CarPlay/CarPlay.h>' ios/LxMusicMobile/main.m
+          ! grep -q 'CPTemplateApplicationScene' ios/LxMusicMobile/main.m
+          ! grep -q 'LXCarPlaySceneDelegate' ios/LxMusicMobile/main.m
+          ! grep -q 'configurationForConnectingSceneSession' ios/LxMusicMobile/main.m
+          ! grep -q 'UIApplicationSceneManifest' ios/LxMusicMobile/Info.plist
+          ! grep -q 'CarPlay.framework' ios/LxMusicMobile.xcodeproj/project.pbxproj
+
+          grep -q '<key>application-identifier</key>' "$CARPLAY_ENTITLEMENTS"
+          grep -q '63VNAMT4FN.com.klxmc.music.mobile' "$CARPLAY_ENTITLEMENTS"
+          grep -q '<key>com.apple.developer.team-identifier</key>' "$CARPLAY_ENTITLEMENTS"
+          grep -q '63VNAMT4FN' "$CARPLAY_ENTITLEMENTS"
+          grep -q '<key>com.apple.developer.playable-content</key>' "$CARPLAY_ENTITLEMENTS"
+          ! grep -q 'com.apple.developer.carplay-audio' "$CARPLAY_ENTITLEMENTS"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Lint CarPlay bridge
+        run: npx eslint src/core/init/carPlay.ts src/utils/nativeModules/carPlay.ts src/app.ts src/navigation/regLaunchedEvent.ts
+
+      - name: Install CocoaPods dependencies
+        shell: bash
+        run: |
+          cd ios
+          bundle exec pod install --repo-update
+
+      - name: Read app version
+        shell: bash
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_VERSION_CODE=$(node -p "require('./package.json').versionCode")
+          echo "PACKAGE_VERSION=$PACKAGE_VERSION" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION_CODE=$PACKAGE_VERSION_CODE" >> "$GITHUB_ENV"
+
+      - name: Build unsigned iOS application
+        shell: bash
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_IDENTIFIER" \
+            MARKETING_VERSION="$PACKAGE_VERSION" \
+            CURRENT_PROJECT_VERSION="$PACKAGE_VERSION_CODE" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean build 2>&1 | tee build/xcodebuild.log
+
+      - name: Locate and validate compiled app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "$DERIVED_DATA_PATH/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
+          EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
+          test -f "$EXECUTABLE_PATH"
+          test -s "$APP_PATH/main.jsbundle"
+
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist" | grep -q '^com.klxmc.music.mobile$'
+          if /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest' "$APP_PATH/Info.plist" >/dev/null 2>&1; then
+            echo 'ERROR: compiled V8 app unexpectedly contains UIApplicationSceneManifest.'
+            exit 1
+          fi
+
+          strings "$EXECUTABLE_PATH" > build/app-strings.txt
+          grep -q 'LXPlayableContentCoordinator' build/app-strings.txt
+          grep -q 'MPPlayableContentManager' build/app-strings.txt
+          grep -q '正在加载音乐库' build/app-strings.txt
+          ! grep -q 'LXCarPlaySceneDelegate' build/app-strings.txt
+          ! grep -q 'CPTemplateApplicationScene' build/app-strings.txt
+          ! grep -q 'configurationForConnectingSceneSession' build/app-strings.txt
+
+          /usr/bin/otool -L "$EXECUTABLE_PATH" > build/app-dylibs.txt
+          grep -q '/MediaPlayer.framework/MediaPlayer' build/app-dylibs.txt
+          ! grep -q '/CarPlay.framework/CarPlay' build/app-dylibs.txt
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "EXECUTABLE_PATH=$EXECUTABLE_PATH" >> "$GITHUB_ENV"
+
+      - name: Sign embedded Mach-O code
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' candidate; do
+            [ "$candidate" = "$EXECUTABLE_PATH" ] && continue
+            kind="$(file -b "$candidate" 2>/dev/null || true)"
+            case "$kind" in
+              *Mach-O*) ldid -S "$candidate" ;;
+            esac
+          done < <(find "$APP_PATH" -type f -print0)
+
+      - name: Sign app with original identity plus playable-content
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldid -S"$CARPLAY_ENTITLEMENTS" -M "$APP_PATH"
+          ldid -e "$EXECUTABLE_PATH" > build/carplay-entitlements.plist
+          plutil -lint build/carplay-entitlements.plist
+          grep -q '63VNAMT4FN.com.klxmc.music.mobile' build/carplay-entitlements.plist
+          grep -q '<key>com.apple.developer.playable-content</key>' build/carplay-entitlements.plist
+          ! grep -q 'com.apple.developer.carplay-audio' build/carplay-entitlements.plist
+
+      - name: Package V8 IPA and source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/Payload build/patched-source build/full-source
+          mkdir -p build/Payload build/patched-source/ios/LxMusicMobile build/patched-source/.carplay-build
+          cp -R "$APP_PATH" build/Payload/
+          cp ios/LxMusicMobile/main.m build/patched-source/ios/LxMusicMobile/main.m
+          cp ios/LxMusicMobile/Info.plist build/patched-source/ios/LxMusicMobile/Info.plist
+          cp ios/LxMusicMobile/LxMusicMobile.entitlements build/patched-source/ios/LxMusicMobile/LxMusicMobile.entitlements
+          cp ios/LxMusicMobile.xcodeproj/project.pbxproj build/patched-source/project.pbxproj
+          cp .carplay-build/apply_carplay_mediaplayer_v8.py build/patched-source/.carplay-build/
+          cp src/core/init/carPlay.ts build/patched-source/carPlay.ts
+          cp src/utils/nativeModules/carPlay.ts build/patched-source/carPlay-native-module.ts
+
+          cat > build/FINAL-V8-VERIFY.txt <<EOF
+          LX Music CarPlay MediaPlayer V8
+          Bundle ID: $IOS_BUNDLE_IDENTIFIER
+          Phone lifecycle: original UIApplication/AppDelegate / ReactNativeNavigation
+          UIApplicationSceneManifest: absent
+          UIScene AppDelegate configuration method: absent
+          CPTemplateApplicationScene: absent
+          CarPlay.framework: not linked
+          CarPlay integration: MPPlayableContentManager / MediaPlayer.framework only
+          Entitlement: com.apple.developer.playable-content = true
+          Original LX identity preserved: 63VNAMT4FN.com.klxmc.music.mobile
+          Empty library fallback: static LX Music / 正在加载音乐库 content
+          EOF
+
+          mkdir -p "build/full-source/LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-MediaPlayerV8"
+          rsync -a --exclude='.git' --exclude='node_modules' --exclude='ios/Pods' --exclude='build' ./ "build/full-source/LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-MediaPlayerV8/"
+
+          cd build
+          IPA_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-MediaPlayerV8-TrollStore.ipa"
+          PATCHED_SOURCE_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-MediaPlayerV8-patched-source.zip"
+          FULL_SOURCE_NAME="LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-MediaPlayerV8-full-source.zip"
+          zip -qry "$IPA_NAME" Payload
+          zip -qry "$PATCHED_SOURCE_NAME" patched-source
+          (cd full-source && zip -qry "../$FULL_SOURCE_NAME" "LXMusic-iOS-${PACKAGE_VERSION}-CarPlay-MediaPlayerV8")
+          shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
+          shasum -a 256 "$PATCHED_SOURCE_NAME" > "$PATCHED_SOURCE_NAME.sha256"
+          shasum -a 256 "$FULL_SOURCE_NAME" > "$FULL_SOURCE_NAME.sha256"
+
+      - name: Upload V8 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LXMusic-CarPlay-MediaPlayerV8
+          compression-level: 6
+          path: |
+            build/LXMusic-iOS-*-CarPlay-MediaPlayerV8-TrollStore.ipa
+            build/LXMusic-iOS-*-CarPlay-MediaPlayerV8-TrollStore.ipa.sha256
+            build/LXMusic-iOS-*-CarPlay-MediaPlayerV8-patched-source.zip
+            build/LXMusic-iOS-*-CarPlay-MediaPlayerV8-patched-source.zip.sha256
+            build/LXMusic-iOS-*-CarPlay-MediaPlayerV8-full-source.zip
+            build/LXMusic-iOS-*-CarPlay-MediaPlayerV8-full-source.zip.sha256
+            build/carplay-entitlements.plist
+            build/app-dylibs.txt
+            build/FINAL-V8-VERIFY.txt
+          if-no-files-found: error
+
+      - name: Upload Xcode log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log-v8-${{ github.run_id }}
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
