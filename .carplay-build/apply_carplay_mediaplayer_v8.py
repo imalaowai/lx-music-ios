@@ -94,7 +94,34 @@ plist_path.write_bytes(plistlib.dumps(plist, fmt=plistlib.FMT_XML, sort_keys=Fal
 # Preserve the original LX identity and use only the entitlement required by MediaPlayer CarPlay.
 ent_path.write_text('''<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>application-identifier</key>\n  <string>63VNAMT4FN.com.klxmc.music.mobile</string>\n  <key>com.apple.developer.team-identifier</key>\n  <string>63VNAMT4FN</string>\n  <key>get-task-allow</key>\n  <true/>\n  <key>com.apple.developer.playable-content</key>\n  <true/>\n</dict>\n</plist>\n''')
 
-# Remove CarPlay.framework from the Xcode project. MediaPlayer.framework remains linked.
+# Remove CarPlay.framework completely, then explicitly add MediaPlayer.framework to the app target.
 project = project_path.read_text()
 project = '\n'.join(line for line in project.splitlines() if 'CarPlay.framework' not in line) + '\n'
+
+build_id = '77D8A001B4A24A5E9B5B0001'
+file_id = '77D8A000B4A24A5E9B5B0001'
+build_line = f'\t\t{build_id} /* MediaPlayer.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {file_id} /* MediaPlayer.framework */; }};'
+file_line = f'\t\t{file_id} /* MediaPlayer.framework */ = {{isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; }};'
+phase_line = f'\t\t\t\t{build_id} /* MediaPlayer.framework in Frameworks */,'
+group_line = f'\t\t\t\t{file_id} /* MediaPlayer.framework */,'
+
+anchors = [
+    ('\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */; };', build_line),
+    ('\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };', file_line),
+    ('\t\t\t\t11D2C601B4A24A5E9B5B0001 /* CoreMotion.framework in Frameworks */,', phase_line),
+    ('\t\t\t\t11D2C600B4A24A5E9B5B0001 /* CoreMotion.framework */,', group_line),
+]
+for anchor, addition in anchors:
+    if addition not in project:
+        if anchor not in project:
+            raise SystemExit(f'Missing Xcode project anchor: {anchor}')
+        project = project.replace(anchor, anchor + '\n' + addition, 1)
+
+if project.count('MediaPlayer.framework in Frameworks') != 2:
+    raise SystemExit('Unexpected MediaPlayer PBX build references')
+if project.count('System/Library/Frameworks/MediaPlayer.framework') != 1:
+    raise SystemExit('Unexpected MediaPlayer framework file references')
+if 'CarPlay.framework' in project:
+    raise SystemExit('CarPlay.framework must not be linked in V8')
+
 project_path.write_text(project)
