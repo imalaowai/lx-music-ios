@@ -35,7 +35,7 @@ final class CarScene: UIResponder, CPTemplateApplicationSceneDelegate, CPNowPlay
         return item
     }
     func refresh(force: Bool = false) {
-        let signature = "\(player.index)|\(player.wanted)|\(player.failure)|\(player.queue.map(\.key).joined(separator: ","))|\(player.library.map {text($0["id"]) + text($0["name"]) + String(($0["list"] as? [Object])?.count ?? 0)}.joined())|\(player.room.roomID)|\(player.room.connected)|\(player.room.participants.count)|\(player.room.controller)"
+        let signature = "\(player.index)|\(player.wanted)|\(player.failure)|\(player.queueRevision)|\(player.libraryRevision)|\(player.room.roomID)|\(player.room.connected)|\(player.room.participants.count)|\(player.room.controller)"
         guard force || signature != lastSignature else { return }; lastSignature = signature
         var items: [CPListItem] = []
         if player.current != nil { items.append(row("正在播放", player.current?.name) { [weak self] in self?.showNowPlaying() }) }

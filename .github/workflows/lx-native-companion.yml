@@ -36,6 +36,18 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -project LXCompanion.xcodeproj -scheme LXCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee build/xcodebuild.log
+      - name: Launch the phone scene in iOS Simulator
+        run: |
+          set -euo pipefail
+          xcodebuild -project LXCompanion.xcodeproj -scheme LXCompanion -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build > build/simulator-build.log 2>&1
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for group in d["devices"].values() for v in group if v["name"].startswith("iPhone")))')
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl install "$DEVICE" build/simulator/Build/Products/Debug-iphonesimulator/LXCompanion.app
+          xcrun simctl launch "$DEVICE" net.minyue.lxcompanion | tee build/simulator-launch.log
+          sleep 8
+          xcrun simctl spawn "$DEVICE" launchctl list | grep net.minyue.lxcompanion
+          xcrun simctl io "$DEVICE" screenshot build/phone-launch.png
       - name: Sign for TrollStore and verify CarPlay capability
         run: |
           set -euo pipefail
@@ -63,6 +75,7 @@ jobs:
             NativeCompanion/build/LX-Native-CarPlay.ipa.sha256
             NativeCompanion/build/final-entitlements.plist
             NativeCompanion/build/frameworks.txt
+            NativeCompanion/build/phone-launch.png
           if-no-files-found: error
       - name: Upload build logs on failure
         if: failure()

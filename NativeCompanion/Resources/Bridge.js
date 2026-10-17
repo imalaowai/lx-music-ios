@@ -3,6 +3,7 @@
   if (window.top !== window || !window.webkit?.messageHandlers?.lxNative) return;
   const pending = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
+  let renderedQueue = -1, renderedSong = '', renderedQuality = '', selection = 0;
   let room = {binding: null, state: {}, participants: [], connected: false, enabled: true, syncOnTrack: true};
   const post = (op, values = {}) => new Promise((resolve, reject) => {
     const id = ++sequence;
@@ -33,9 +34,10 @@
     reportTrackFailure() {}, disconnect: () => send('roomRefresh')
   };
   window.ListenRoom = nativeRoom;
+  window.iOSBackgroundAudio = {usesNativePlayback: () => true, isIOS: () => true, init() {}, prepare() {}, ensureAnchorPlaying() {}, mediaUrl: value => value, play: () => post('play')};
   function audioElement() { return document.getElementById('audio-player'); }
   function receiveState(state) {
-    playback = state;
+    const previous = playback; playback = {...playback, ...state}; state = playback;
     if (!installed) return;
     applying = true;
     try {
@@ -45,13 +47,22 @@
       requestedRoomSong = currentPlayingSong; roomAudioSongKey = key(currentPlayingSong);
       currentQuality = state.quality || null; playbackProgressReady = state.duration > 0;
       shouldAutoRecoverPlayback = !state.paused; currentLoadingSongId = null;
-      if (state.song?.name) { updatePlayerInfo(state.song, state.quality); }
+      const changedSong = key(state.song) !== renderedSong;
+      if (state.song?.name && (changedSong || renderedQuality !== state.quality)) { updatePlayerInfo(state.song, state.quality); renderedQuality = state.quality; }
+      if (changedSong && state.song?.name) { renderedSong = key(state.song); try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {} }
       updatePlayButton(!state.paused);
       setPlayerStatus(state.error || (state.loading ? '正在获取播放链接' : ''), !state.paused);
       const audio = audioElement();
-      if (audio) { audio.dispatchEvent(new Event('timeupdate')); }
+      if (audio) {
+        audio.dispatchEvent(new Event('timeupdate'));
+        // Lyrics follow native playback; do not dispatch HTML play/pause recovery handlers.
+        if (typeof lyricPlayer !== 'undefined' && lyricPlayer) {
+          if (state.paused) lyricPlayer.pause();
+          else if (state.playing && (!previous.playing || changedSong)) lyricPlayer.play(state.position * 1000);
+        }
+      }
       if (typeof updatePlayModeUI === 'function') updatePlayModeUI();
-      if (typeof renderQueue === 'function') renderQueue();
+      if (typeof renderQueue === 'function' && (renderedQueue !== state.queueRevision || changedSong || previous.index !== state.index)) {renderQueue(); renderedQueue = state.queueRevision;}
       if (state.error) document.getElementById('lx-native-state')?.replaceChildren(document.createTextNode(state.error));
     } catch (error) { console.warn('[LX Native] UI update', error); }
     finally { applying = false; }
@@ -91,9 +102,11 @@
   Storage.prototype.removeItem = function (key) {originalRemove.call(this, key); if (this === localStorage && ['lx_sync_user', 'lx_user_token'].includes(key)) queueMicrotask(syncAuth);};
   Storage.prototype.clear = function () {originalClear.call(this); if (this === localStorage) queueMicrotask(syncAuth);};
   async function importDevice(song) {
+    const cached = await post('importLookup', {key: song.deviceKey});
+    if (cached.url) return {...song, url: cached.url, isLocal: true, deviceKey: undefined};
     const blob = await window.DeviceLibrary.blobFor(song, false);
     if (!blob || blob.size > 500 * 1024 * 1024) throw new Error('设备文件无法读取，或超过 500 MB');
-    const opened = await post('importBegin', {name: song.filename || song.name || 'audio.mp3'});
+    const opened = await post('importBegin', {key: song.deviceKey, name: song.filename || song.name + '.mp3'});
     try {
       for (let at = 0; at < blob.size; at += 48 * 1024) {
         const bytes = new Uint8Array(await blob.slice(at, at + 48 * 1024).arrayBuffer());
@@ -106,13 +119,18 @@
   }
   async function select(song, index, quality, noPlay) {
     if (noPlay) return;
+    const request = ++selection;
     syncAuth();
     let queue = window.__LX_PLAYER_GETTERS__?.getCurrentPlaylist?.()?.slice() || [song];
     let at = Number.isInteger(index) && key(queue[index]) === key(song) ? index : queue.findIndex(item => key(item) === key(song));
     if (at < 0) {queue = [song]; at = 0;}
-    if (song.deviceKey) {song = await importDevice(song); queue[at] = song;}
+    for (let i = 0; i < queue.length; i++) {
+      if (request !== selection) return;
+      if (queue[i].deviceKey) {window.setPlayerStatus?.(`正在准备设备音乐 ${i + 1}/${queue.length}`, false); queue[i] = await importDevice(queue[i]);}
+    }
+    if (request !== selection) return;
     await post('select', {queue, index: at, ...preferences(), ...(quality ? {quality} : {})});
-    try {fetchLyric(song, quality); savePlayHistory(song, quality);} catch {}
+
   }
   function syncQueue() {if (applying) return; const api = window.__LX_PLAYER_GETTERS__; if (api) send('queue', {queue: api.getCurrentPlaylist(), index: api.getCurrentIndex(), ...preferences()});}
   function membership(operation) {
@@ -125,16 +143,20 @@
     installed = true;
     const audio = audioElement();
     if (audio) {
-      const properties = {currentTime: {get: () => playback.position || 0, set: value => {if (!applying) send('seek', {time: Number(value)});}}, duration: {get: () => playback.duration || NaN}, paused: {get: () => playback.paused !== false}, ended: {get: () => false}, readyState: {get: () => playback.duration > 0 ? 4 : 0}, seeking: {get: () => false}};
+      let deviceVolume = Number(audio.volume) || 1, deviceMuted = !!audio.muted;
+      const properties = {volume: {get: () => deviceVolume, set: value => {deviceVolume = Math.max(0, Math.min(1, Number(value))); if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, muted: {get: () => deviceMuted, set: value => {deviceMuted = !!value; if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, currentTime: {get: () => playback.position || 0, set: value => {if (!applying) send('seek', {time: Number(value)});}}, duration: {get: () => playback.duration || NaN}, paused: {get: () => playback.paused !== false}, ended: {get: () => false}, readyState: {get: () => playback.duration > 0 ? 4 : 0}, seeking: {get: () => false}};
       for (const [name, descriptor] of Object.entries(properties)) Object.defineProperty(audio, name, {...descriptor, configurable: true});
-      Object.defineProperty(audio, 'src', {get: () => playback.song?.id ? 'lx-native://current' : '', set() {}, configurable: true});
+      Object.defineProperty(audio, 'src', {get: () => playback.song?.name ? 'lx-native://current' : '', set() {}, configurable: true});
       audio.load = () => {}; audio.play = () => post('play'); audio.pause = () => {if (!applying) send('pause');};
     }
     window.playSong = (...args) => select(...args).catch(warn);
+    window.loadSong = window.playSong;
     window.playNext = () => post('next'); window.playPrev = () => post('previous');
     window.togglePlay = paused => post(typeof paused === 'boolean' ? paused ? 'pause' : 'play' : playback.paused ? 'play' : 'pause');
     if (window.ListenRoom !== nativeRoom) {try {window.ListenRoom?.disconnect?.();} catch {}}
     window.ListenRoom = nativeRoom;
+    window.prefetchNextSong = async () => {};
+    window.handleUnexpectedPlaybackPause = () => false;
     window.soundEffects && (window.soundEffects.init = () => {});
     document.getElementById('ios-audio-mode')?.remove();
     const settingsView = document.getElementById('view-settings');
@@ -143,6 +165,7 @@
     document.getElementById('listen-room-close')?.addEventListener('click', () => modal(false));
     document.getElementById('listen-room-modal')?.addEventListener('click', event => {if (event.target.id === 'listen-room-modal') modal(false);});
     for (const operation of ['create', 'join', 'leave']) document.getElementById(`listen-room-${operation}-action`)?.addEventListener('click', () => membership(operation));
+    document.getElementById('listen-room-copy-action')?.addEventListener('click', () => {if (room.binding?.roomId) navigator.clipboard?.writeText(room.binding.roomId).catch(warn);});
     document.getElementById('listen-room-refresh-action')?.addEventListener('click', () => send('roomRefresh'));
     const api = window.__LX_PLAYER_GETTERS__, originalEnqueue = api.enqueue;
     api.enqueue = function () {const result = originalEnqueue.apply(this, arguments); syncQueue(); return result;};

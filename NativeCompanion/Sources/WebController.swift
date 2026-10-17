@@ -5,7 +5,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     let player = Player.shared
     var web: WKWebView!
     var address: URL?
-    var importing: (ticket: String, url: URL, handle: FileHandle, bytes: Int)?
+    var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
     var lastSong = ""
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -24,8 +24,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reload))
         player.onState = { [weak self] value in self?.emit("state", value) }
         player.onRoom = { [weak self] value in self?.emit("room", value) }
+        player.onRevoked = { [weak self] in self?.web.evaluateJavaScript("window.LXBridge?.revoked()", completionHandler: nil) }
         player.onChat = { [weak self] type, value in self?.emitChat(type, value) }
-        let rules: [Object] = [["trigger": ["url-filter": ".*/js/(listen_room|queue_audio|pwa_update)\\.js([?].*)?$", "resource-type": ["script"]], "action": ["type": "block"]]]
+        let rules: [Object] = [["trigger": ["url-filter": ".*/js/(listen_room|queue_audio|pwa_update|ios-background-audio|ios_audio_output|room_start)\\.js([?].*)?$", "resource-type": ["script"]], "action": ["type": "block"]]]
         let data = try! JSONSerialization.data(withJSONObject: rules)
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "LXNativeOwner-v1", encodedContentRuleList: String(data: data, encoding: .utf8)!) { [weak self] rules, error in
             guard let self = self else { return }
@@ -92,18 +93,22 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         case "queue":
             guard let list = value["queue"] as? [Object], list.count <= 20000 else { done(false, "播放队列无效"); return }
             let selected = player.current?.key
-            player.queue = list.map { Song(raw: $0) }; player.index = player.queue.firstIndex(where: {$0.key == selected}) ?? Int(number(value["index"], -1))
+            player.queue = list.map { Song(raw: $0) }; player.queueRevision += 1; player.index = player.queue.firstIndex(where: {$0.key == selected}) ?? Int(number(value["index"], -1))
             player.room.sendState(reason: "queue"); player.persistQueue(); player.publish(); done()
         case "play": player.play(); done()
         case "pause": player.pause(); done()
         case "next": player.move(); done()
         case "previous": player.move(previous: true); done()
+        case "volume": player.audio.volume = Float(max(0, min(1, number(value["volume"], 1)))); player.audio.isMuted = bool(value["muted"]); player.publish(includeQueue: false); done()
         case "seek": player.seek(number(value["time"])); done()
         case "roomRefresh": player.room.refresh(); done()
         case "roomMembership":
             player.room.membership(text(value["operation"]), values: ["roomId": text(value["roomId"]), "password": text(value["password"])]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
         case "library":
-            if let lists = value["lists"] as? [Object] { player.library = lists; player.persistLibrary(); NotificationCenter.default.post(name: .lxLibrary, object: player) }; done()
+            if let lists = value["lists"] as? [Object] { player.library = lists; player.libraryRevision += 1; player.persistLibrary(); NotificationCenter.default.post(name: .lxLibrary, object: player) }; done()
+        case "importLookup":
+            let key = "lx.import." + (player.api.credentials?.server ?? "") + "." + (player.api.credentials?.username ?? "") + "." + text(value["key"])
+            if let stored = UserDefaults.standard.string(forKey: key), let url = URL(string: stored), url.path.hasPrefix((try? Self.importDirectory().path) ?? "INVALID"), FileManager.default.fileExists(atPath: url.path) { done(["url": stored]) } else { done([:]) }
         case "importBegin":
             do {
                 cancelImport()
@@ -111,14 +116,14 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 guard ["mp3", "flac", "m4a", "aac", "wav", "aiff", "alac", "ogg", "opus"].contains(ext) else { throw ClientError("请选择音频文件") }
                 let url = directory.appendingPathComponent(ticket).appendingPathExtension(ext)
                 FileManager.default.createFile(atPath: url.path, contents: nil)
-                importing = (ticket, url, try FileHandle(forWritingTo: url), 0); done(["ticket": ticket])
+                importing = (ticket, "lx.import." + (player.api.credentials?.server ?? "") + "." + (player.api.credentials?.username ?? "") + "." + text(value["key"]), url, try FileHandle(forWritingTo: url), 0); done(["ticket": ticket])
             } catch { done(false, error.localizedDescription) }
         case "importChunk":
             guard var item = importing, item.ticket == text(value["ticket"]), let data = Data(base64Encoded: text(value["data"])), data.count <= 65536, item.bytes + data.count <= 500 * 1024 * 1024 else { done(false, "设备文件接收状态无效"); return }
             do { try item.handle.write(contentsOf: data); item.bytes += data.count; importing = item; done() } catch { cancelImport(); done(false, error.localizedDescription) }
         case "importEnd":
             guard let item = importing, item.ticket == text(value["ticket"]), item.bytes > 0 else { done(false, "设备文件为空"); return }
-            do { try item.handle.close(); importing = nil; done(["url": item.url.absoluteString]) } catch { cancelImport(); done(false, error.localizedDescription) }
+            do { try item.handle.close(); UserDefaults.standard.set(item.url.absoluteString, forKey: item.key); importing = nil; done(["url": item.url.absoluteString]) } catch { cancelImport(); done(false, error.localizedDescription) }
         case "importCancel": cancelImport(); done()
         default: done(false, "App 不支持此操作")
         }

@@ -19,11 +19,15 @@ final class Player {
     var generation = 0
     var onState: ((Object) -> Void)?
     var onRoom: ((Object) -> Void)?
+    var onRevoked: (() -> Void)?
+    var queueRevision = 0
+    var libraryRevision = 0
     var onChat: ((String, Object) -> Void)?
     var observers: [NSObjectProtocol] = []
     var statusObservation: NSKeyValueObservation?
     var clock: Any?
     var resolution: URLSessionDataTask?
+    var prefetchTask: URLSessionDataTask?
     var artworkTask: URLSessionDataTask?
     var artwork: MPMediaItemArtwork?
     var currentURL: URL?
@@ -62,12 +66,13 @@ final class Player {
     }
     func configure(_ credentials: Credentials?) {
         if api.credentials == credentials { return }
+        prefetchTask?.cancel(); api.sourceCache.removeAll()
         if let old = api.credentials, let credentials = credentials, old.server == credentials.server, old.username == credentials.username {
             api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true); room.refresh(); return
         }
         pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
-        room.disconnect(clear: true); queue = []; index = -1; failure = ""; artwork = nil
-        library = []; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
+        room.disconnect(clear: true); queue = []; queueRevision += 1; index = -1; failure = ""; artwork = nil
+        library = []; libraryRevision += 1; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
     }
     func configureCommands() {
         let c = MPRemoteCommandCenter.shared()
@@ -97,9 +102,12 @@ final class Player {
     }
     func select(_ songs: [Song], index target: Int, paused: Bool = false, user: Bool = true, time: Double = 0) {
         guard songs.indices.contains(target) else { return }
-        queue = songs; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
+        if room.active, songs[target].raw["deviceKey"] != nil || text(songs[target].raw["url"]).hasPrefix("file:") {
+            failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
+        }
+        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
         let epoch = generation, song = songs[target]
-        resolution?.cancel(); artworkTask?.cancel(); artwork = nil
+        resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel(); artwork = nil
         audio.pause(); audio.replaceCurrentItem(with: nil); currentURL = nil
         if user { room.sendState(reason: "track") }
         persistQueue(); publish(); updateArtwork(song)
@@ -118,7 +126,7 @@ final class Player {
                             self.loading = false
                             if self.resumeTime > 0.1 { let time = self.resumeTime; self.resumeTime = 0; self.seek(time, user: false) }
                             if self.wanted { do { try self.activate(); self.audio.play() } catch { self.fail(error) } }
-                            self.room.mediaReady(); self.publish()
+                            self.room.mediaReady(); self.prefetchNext(); self.publish()
                         }
                     }
                 }
@@ -127,6 +135,13 @@ final class Player {
                 self.publish()
             } catch { self.fail(error) }
         }
+    }
+    func prefetchNext() {
+        guard mode != "random", let next = QueuePolicy.next(count: queue.count, index: index, mode: mode, automatic: true), next != index else { return }
+        let song = queue[next]
+        guard song.raw["deviceKey"] == nil, song.raw["openlist"] == nil, !bool(song.raw["isLocal"]) else { return }
+        // Resolve one future address only. AVPlayer opens audio when selected.
+        prefetchTask = api.resolve(song, quality: quality, allowFallback: allowFallback) { _ in }
     }
     func play(user: Bool = true) {
         guard current != nil else { return }
@@ -151,15 +166,16 @@ final class Player {
         loading = false; wanted = false; audio.pause(); failure = error.localizedDescription; publish()
     }
     func tick() {
-        publish()
+        publish(includeQueue: false)
         let now = Date().timeIntervalSince1970
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
-    func snapshot() -> Object {
-        ["queue": queue.map(\.raw), "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.rate > 0, "loading": loading, "quality": resolvedQuality, "error": failure]
+    func snapshot(includeQueue: Bool = true) -> Object {
+        var value: Object = ["queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.rate > 0, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
-    func publish() {
-        updateNowPlaying(); onState?(snapshot()); NotificationCenter.default.post(name: .lxPlayback, object: self)
+    func publish(includeQueue: Bool = true) {
+        updateNowPlaying(); onState?(snapshot(includeQueue: includeQueue)); NotificationCenter.default.post(name: .lxPlayback, object: self)
     }
     func updateNowPlaying() {
         let c = MPRemoteCommandCenter.shared()
@@ -199,7 +215,7 @@ final class Player {
             guard let self = self else { return }
             if case .success(let data) = result {
                 self.library = [["id": "love", "name": "我的收藏", "list": data["loveList"] as? [Object] ?? []], ["id": "default", "name": "默认列表", "list": data["defaultList"] as? [Object] ?? []]] + (data["userList"] as? [Object] ?? [])
-                self.persistLibrary(); NotificationCenter.default.post(name: .lxLibrary, object: self)
+                self.libraryRevision += 1; self.persistLibrary(); NotificationCenter.default.post(name: .lxLibrary, object: self)
             }
             completion?()
         }

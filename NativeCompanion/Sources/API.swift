@@ -27,6 +27,7 @@ enum Vault {
 }
 final class API {
     var credentials: Credentials?
+    var sourceCache: [String: (URL, String, Date)] = [:]
     let session: URLSession
     init() {
         credentials = Vault.load()
@@ -61,7 +62,23 @@ final class API {
         task.resume()
         return task
     }
+    func cacheKey(_ song: Song, _ quality: String, _ allowFallback: Bool) -> String { "\(credentials?.server ?? "")|\(credentials?.username ?? "")|\(text(song.raw["source"]))|\(song.key)|\(quality)|\(allowFallback)" }
     func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<(URL, String), Error>) -> Void) -> URLSessionDataTask? {
+        let key = cacheKey(song, quality, allowFallback)
+        if let cached = sourceCache[key], Date().timeIntervalSince(cached.2) < 180 { completion(.success((cached.0, cached.1))); return nil }
+        if song.raw["openlist"] is Object {
+            return request("/api/openlist/play", method: "POST", body: song.raw["openlist"] as? Object) { [weak self] result in
+                do {
+                    let value = try result.get()
+                    guard let self = self, let base = self.base else { throw ClientError("服务器地址无效") }
+                    var components = URLComponents(url: try MediaAddress.direct(text(value["url"]), base: base), resolvingAgainstBaseURL: false)!
+                    components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "token", value: self.credentials?.token)]
+                    guard let url = components.url else { throw ClientError("网盘播放地址无效") }
+                    completion(.success((url, text(song.raw["quality"]))))
+                } catch { completion(.failure(error)) }
+            }
+        }
+        if song.raw["deviceKey"] != nil { completion(.failure(ClientError("请先在手机页面中准备设备音乐，再锁屏或连接车机"))); return nil }
         if let direct = song.raw["url"] as? String, !direct.isEmpty, bool(song.raw["isLocal"]) || song.raw["openlist"] != nil || song.raw["deviceKey"] != nil {
             guard let base = base else { completion(.failure(ClientError("服务器地址无效"))); return nil }
             do {
@@ -78,7 +95,10 @@ final class API {
             do {
                 let value = try result.get()
                 guard let base = self?.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
-                completion(.success((try MediaAddress.direct(text(value["url"]), base: base), text(value["type"]).isEmpty ? quality : text(value["type"]))))
+                let url = try MediaAddress.direct(text(value["url"]), base: base), actual = text(value["type"]).isEmpty ? quality : text(value["type"])
+                if (self?.sourceCache.count ?? 0) > 24 { self?.sourceCache.removeAll() }
+                self?.sourceCache[key] = (url, actual, Date())
+                completion(.success((url, actual)))
             } catch { completion(.failure(error)) }
         }
     }

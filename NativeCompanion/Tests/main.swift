@@ -12,6 +12,7 @@ check(!order.accept(["revision": 5, "controllerId": "me", "commandId": "older", 
 check(order.accept(["revision": 6, "controllerId": "me", "commandId": "newer", "songKey": "C"], participant: "me"), "current track ACK accepted")
 check(!order.accept(["revision": 4, "controllerId": "other", "songKey": "A"], participant: "me"), "stale remote revision rejected")
 order.pendingID = "pending"; order.pendingKey = "D"
+check(!order.accept(["revision": 6, "controllerId": "other", "songKey": "old"], participant: "me"), "an already observed snapshot cannot cancel a new local track")
 check(order.accept(["revision": 7, "controllerId": "other", "commandId": "remote", "songKey": "X"], participant: "me"), "new explicit controller may supersede a local pending command")
 let base = URL(string: "https://music.invalid:99/custom/")!
 let upstream = "https://cdn.invalid/audio.flac?signature=a%2Fb"

@@ -36,6 +36,7 @@ struct RoomOrder {
         let key = (state["song"] as? Object).map { Song(raw: $0).key } ?? text(state["songKey"])
         let command = text(state["commandId"])
         let other = !controller.isEmpty && controller != participant
+        if !pendingID.isEmpty, other, rev <= revision { return false }
         if !pendingID.isEmpty, !other {
             if !command.isEmpty && command != pendingID { return false }
             if command.isEmpty && key != pendingKey { return false }
