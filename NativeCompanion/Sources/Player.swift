@@ -27,6 +27,7 @@ final class Player {
     var statusObservation: NSKeyValueObservation?
     var clock: Any?
     var resolution: URLSessionDataTask?
+    var transitionTask: UIBackgroundTaskIdentifier = .invalid
     var prefetchTask: URLSessionDataTask?
     var artworkTask: URLSessionDataTask?
     var artwork: MPMediaItemArtwork?
@@ -70,7 +71,7 @@ final class Player {
         if let old = api.credentials, let credentials = credentials, old.server == credentials.server, old.username == credentials.username {
             api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true); room.refresh(); return
         }
-        pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
+        finishTransition(); pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
         room.disconnect(clear: true); queue = []; queueRevision += 1; index = -1; failure = ""; artwork = nil
         library = []; libraryRevision += 1; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
     }
@@ -106,6 +107,10 @@ final class Player {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
         queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
+        finishTransition()
+        transitionTask = UIApplication.shared.beginBackgroundTask(withName: "LX Track Transition") { [weak self] in
+            guard let self = self else { return }; self.generation += 1; self.resolution?.cancel(); self.fail(ClientError("后台播放链接请求超时，请恢复网络后播放"))
+        }
         let epoch = generation, song = songs[target]
         resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel(); artwork = nil
         audio.pause(); audio.replaceCurrentItem(with: nil); currentURL = nil
@@ -126,7 +131,7 @@ final class Player {
                             self.loading = false
                             if self.resumeTime > 0.1 { let time = self.resumeTime; self.resumeTime = 0; self.seek(time, user: false) }
                             if self.wanted { do { try self.activate(); self.audio.play() } catch { self.fail(error) } }
-                            self.room.mediaReady(); self.prefetchNext(); self.publish()
+                            self.finishTransition(); self.room.mediaReady(); self.prefetchNext(); self.publish()
                         }
                     }
                 }
@@ -135,6 +140,9 @@ final class Player {
                 self.publish()
             } catch { self.fail(error) }
         }
+    }
+    func finishTransition() {
+        if transitionTask != .invalid { UIApplication.shared.endBackgroundTask(transitionTask); transitionTask = .invalid }
     }
     func prefetchNext() {
         guard mode != "random", let next = QueuePolicy.next(count: queue.count, index: index, mode: mode, automatic: true), next != index else { return }
@@ -150,7 +158,7 @@ final class Player {
         do { try activate(); audio.play(); if user { room.sendState(reason: "play") }; publish() } catch { fail(error) }
     }
     func pause(user: Bool = true) {
-        wanted = false; audio.pause(); if user { room.sendState(reason: "pause") }; persistQueue(); publish()
+        interruptionWanted = false; wanted = false; audio.pause(); if user { room.sendState(reason: "pause") }; persistQueue(); publish()
     }
     func seek(_ time: Double, user: Bool = true) {
         let target = max(0, duration > 0 ? min(time, max(0, duration - 0.05)) : time)
@@ -163,7 +171,7 @@ final class Player {
         select(queue, index: target)
     }
     func fail(_ error: Error) {
-        loading = false; wanted = false; audio.pause(); failure = error.localizedDescription; publish()
+        finishTransition(); loading = false; wanted = false; audio.pause(); failure = error.localizedDescription; publish()
     }
     func tick() {
         publish(includeQueue: false)

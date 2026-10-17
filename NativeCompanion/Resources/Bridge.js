@@ -79,7 +79,7 @@
         const label = document.createElement('span'); label.textContent = (member.id === room.state?.controllerId ? '♛ ' : '') + (member.nickname || member.name || '成员'); row.append(label); container.append(row);
       }
     }
-    window.dispatchEvent(new CustomEvent('lx-room-members-change', {detail: {participants: room.participants || [], roomId: room.binding?.roomId || ''}}));
+    window.dispatchEvent(new CustomEvent('lx-room-members-change', {detail: {participants: room.participants || [], controllerId: room.state?.controllerId || '', owner: room.owner || '', roomId: room.binding?.roomId || ''}}));
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
@@ -169,6 +169,10 @@
     document.getElementById('listen-room-refresh-action')?.addEventListener('click', () => send('roomRefresh'));
     const api = window.__LX_PLAYER_GETTERS__, originalEnqueue = api.enqueue;
     api.enqueue = function () {const result = originalEnqueue.apply(this, arguments); syncQueue(); return result;};
+    for (const name of ['removeFromQueue', 'clearQueue']) {
+      const original = window[name];
+      if (typeof original === 'function') window[name] = async function () {const result = await original.apply(this, arguments); syncQueue(); return result;};
+    }
     const originalMode = window.updatePlayModeUI;
     window.updatePlayModeUI = function () {const result = originalMode?.apply(this, arguments); if (!applying) send('preferences', preferences()); return result;};
     syncAuth(); send('preferences', preferences()); send('ready');

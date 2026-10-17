@@ -11,6 +11,7 @@ function fixture(){
   window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>window.LXBridge.reply(value.id,true,null));}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
+  window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
   window.updatePlayModeUI=()=>{};window.dispatchEvent=()=>{};window.showError=e=>{throw Error(String(e));};
   context={window,document,navigator:{mediaSession:{}},Storage,localStorage:storage,HTMLMediaElement:Media,Event:class{constructor(type){this.type=type;}},CustomEvent:class{constructor(type,value){this.type=type;this.detail=value?.detail;}},setTimeout,clearTimeout,setInterval:f=>intervals.push(f),queueMicrotask,Promise,console,Map,
     settings:{preferredQuality:'flac'},playMode:'list',currentPlaylist:queue,currentIndex:0,currentPlayingSong:null,requestedRoomSong:null,roomAudioSongKey:'',currentQuality:null,playbackProgressReady:false,shouldAutoRecoverPlayback:false,currentLoadingSongId:null,
@@ -52,4 +53,10 @@ test('Progress-only snapshots retain the queue and avoid repeated metadata and q
 test('Device volume changes go to the native player without a room command',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;f.audio.volume=0.3;f.audio.muted=true;await f.settle();
   assert.equal(f.messages.at(-1).op,'volume');assert.equal(f.messages.at(-1).muted,true);assert.equal(f.messages.at(-1).volume,0.3);assert.equal(f.messages.some(m=>m.op==='roomMembership'),false);
+});
+
+test('Web queue removal and clearing are forwarded to the native queue',async()=>{
+  const f=fixture();await f.settle();f.messages.length=0;
+  await f.window.removeFromQueue(1);await f.settle();assert.equal(f.messages.find(m=>m.op==='queue').queue.length,1);
+  await f.window.clearQueue();await f.settle();assert.equal(f.messages.filter(m=>m.op==='queue').at(-1).queue.length,0);
 });

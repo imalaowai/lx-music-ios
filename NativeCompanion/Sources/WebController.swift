@@ -82,7 +82,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         case "ready": player.onState?(player.snapshot()); player.onRoom?(player.room.snapshot()); player.room.refresh(); done()
         case "preferences":
             player.quality = text(value["quality"]).isEmpty ? "flac" : text(value["quality"]); player.allowFallback = bool(value["allowFallback"], true)
+            let previousMode = player.mode
             if ["list", "single", "random", "order"].contains(text(value["mode"])) { player.mode = text(value["mode"]) }
+            if previousMode != player.mode { player.room.sendState(reason: "mode") }
             player.persistQueue(); done()
         case "select":
             guard let queue = value["queue"] as? [Object], queue.count <= 20000 else { done(false, "播放队列无效"); return }
@@ -93,8 +95,15 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         case "queue":
             guard let list = value["queue"] as? [Object], list.count <= 20000 else { done(false, "播放队列无效"); return }
             let selected = player.current?.key
-            player.queue = list.map { Song(raw: $0) }; player.queueRevision += 1; player.index = player.queue.firstIndex(where: {$0.key == selected}) ?? Int(number(value["index"], -1))
-            player.room.sendState(reason: "queue"); player.persistQueue(); player.publish(); done()
+            let songs = list.map { Song(raw: $0) }, found = songs.firstIndex(where: {$0.key == selected})
+            if !songs.isEmpty, selected != nil, found == nil {
+                player.select(songs, index: max(0, min(Int(number(value["index"])), songs.count - 1)), paused: !player.wanted)
+            } else {
+                player.queue = songs; player.queueRevision += 1; player.index = found ?? -1
+                if songs.isEmpty { player.finishTransition(); player.pause(); player.generation += 1; player.resolution?.cancel(); player.audio.replaceCurrentItem(with: nil) }
+                player.room.sendState(reason: "queue"); player.persistQueue(); player.publish()
+            }
+            done()
         case "play": player.play(); done()
         case "pause": player.pause(); done()
         case "next": player.move(); done()
