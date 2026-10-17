@@ -48,8 +48,9 @@ jobs:
           sleep 8
           xcrun simctl spawn "$DEVICE" launchctl list | grep net.minyue.lxcompanion
           CONTAINER=$(xcrun simctl get_app_container "$DEVICE" net.minyue.lxcompanion data)
-          test "$(cat "$CONTAINER/Library/Application Support/NativeBridgeReady")" = ready
           xcrun simctl io "$DEVICE" screenshot build/phone-launch.png
+          cat "$CONTAINER/Library/Application Support/NativeBridgeError" 2>/dev/null || true
+          test "$(cat "$CONTAINER/Library/Application Support/NativeBridgeReady")" = ready
       - name: Sign for TrollStore and verify CarPlay capability
         run: |
           set -euo pipefail
@@ -84,5 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lx-native-build-errors
-          path: NativeCompanion/build/*.log
+          path: |
+            NativeCompanion/build/*.log
+            NativeCompanion/build/phone-launch.png
           if-no-files-found: ignore

@@ -33,7 +33,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "LXNativeOwner-v2", encodedContentRuleList: String(data: data, encoding: .utf8)!) { [weak self] rules, error in
             guard let self = self else { return }
             DispatchQueue.main.async {
-                guard let rules = rules else { self.alert("无法初始化 App 播放接入：\(error?.localizedDescription ?? "未知错误")"); return }
+                guard let rules = rules else {
+                    #if DEBUG
+                    if let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data(String(describing: error).utf8).write(to: support.appendingPathComponent("NativeBridgeError")) }
+                    #endif
+                    self.alert("无法初始化 App 播放接入：\(error?.localizedDescription ?? "未知错误")"); return }
                 self.web.configuration.userContentController.add(rules)
                 #if DEBUG
                 // CI must verify actual WebKit initialization, not only process launch.
