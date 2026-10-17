@@ -1,0 +1,73 @@
+name: LX Native Web + CarPlay IPA
+on:
+  push:
+    branches: [codex/native-web-carplay]
+    paths: ['NativeCompanion/**', '.github/workflows/lx-native-companion.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lx-native-companion-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: NativeCompanion
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate project and check native policy
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          xcodebuild -version
+          python3 scripts/prepare.py
+          plutil -lint Info.plist CarPlay.entitlements LXCompanion.xcodeproj/project.pbxproj
+          node --test Tests/bridge.test.cjs
+          xcrun swiftc Sources/Core.swift Tests/main.swift -o build/core-tests
+          build/core-tests
+      - name: Build real arm64 iOS application
+        run: |
+          set -euo pipefail
+          xcodebuild -project LXCompanion.xcodeproj -scheme LXCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build 2>&1 | tee build/xcodebuild.log
+      - name: Sign for TrollStore and verify CarPlay capability
+        run: |
+          set -euo pipefail
+          brew install ldid
+          APP=build/device/Build/Products/Release-iphoneos/LXCompanion.app
+          ldid -SCarPlay.entitlements "$APP/LXCompanion"
+          ldid -e "$APP/LXCompanion" > build/final-entitlements.plist
+          plutil -lint "$APP/Info.plist" build/final-entitlements.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.carplay-audio' build/final-entitlements.plist)" = true
+          /usr/libexec/PlistBuddy -c 'Print :UIApplicationSceneManifest:UISceneConfigurations:CPTemplateApplicationSceneSessionRoleApplication:0' "$APP/Info.plist"
+          otool -L "$APP/LXCompanion" > build/frameworks.txt
+          grep -q CarPlay.framework build/frameworks.txt
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qry LX-Native-CarPlay.ipa Payload
+          unzip -t LX-Native-CarPlay.ipa
+          shasum -a 256 LX-Native-CarPlay.ipa > LX-Native-CarPlay.ipa.sha256
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LX-Native-CarPlay-iOS15-TrollStore
+          path: |
+            NativeCompanion/build/LX-Native-CarPlay.ipa
+            NativeCompanion/build/LX-Native-CarPlay.ipa.sha256
+            NativeCompanion/build/final-entitlements.plist
+            NativeCompanion/build/frameworks.txt
+          if-no-files-found: error
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lx-native-build-errors
+          path: NativeCompanion/build/*.log
+          if-no-files-found: ignore
