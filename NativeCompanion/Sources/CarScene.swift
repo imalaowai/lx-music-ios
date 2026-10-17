@@ -25,7 +25,7 @@ final class CarScene: UIResponder, CPTemplateApplicationSceneDelegate, CPNowPlay
         refresh(force: true)
         player.refreshLibrary(); player.room.refresh()
     }
-    func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene, didDisconnect interfaceController: CPInterfaceController) {
+    func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene, didDisconnectInterfaceController interfaceController: CPInterfaceController) {
         for item in observers { NotificationCenter.default.removeObserver(item) }; observers = []
         CPNowPlayingTemplate.shared.remove(self); controller = nil; queueTemplate = nil; libraryTemplate = nil; roomTemplate = nil; lastSignature = ""
     }

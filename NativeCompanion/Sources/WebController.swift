@@ -26,13 +26,19 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         player.onRoom = { [weak self] value in self?.emit("room", value) }
         player.onRevoked = { [weak self] in self?.web.evaluateJavaScript("window.LXBridge?.revoked()", completionHandler: nil) }
         player.onChat = { [weak self] type, value in self?.emitChat(type, value) }
-        let rules: [Object] = [["trigger": ["url-filter": ".*/js/(listen_room|queue_audio|pwa_update|ios-background-audio|ios_audio_output|room_start)\\.js([?].*)?$", "resource-type": ["script"]], "action": ["type": "block"]]]
+        let rules: [Object] = ["listen_room", "queue_audio", "pwa_update", "ios-background-audio", "ios_audio_output", "room_start"].map { name in
+            ["trigger": ["url-filter": ".*/js/" + name + "[.]js.*", "resource-type": ["script"]], "action": ["type": "block"]]
+        }
         let data = try! JSONSerialization.data(withJSONObject: rules)
-        WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "LXNativeOwner-v1", encodedContentRuleList: String(data: data, encoding: .utf8)!) { [weak self] rules, error in
+        WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "LXNativeOwner-v2", encodedContentRuleList: String(data: data, encoding: .utf8)!) { [weak self] rules, error in
             guard let self = self else { return }
             DispatchQueue.main.async {
                 guard let rules = rules else { self.alert("无法初始化 App 播放接入：\(error?.localizedDescription ?? "未知错误")"); return }
                 self.web.configuration.userContentController.add(rules)
+                #if DEBUG
+                // CI must verify actual WebKit initialization, not only process launch.
+                if let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("NativeBridgeReady")) }
+                #endif
                 if let saved = UserDefaults.standard.string(forKey: "lx.server"), let url = URL(string: saved) { self.open(url) }
                 else { self.showWelcome() }
             }
