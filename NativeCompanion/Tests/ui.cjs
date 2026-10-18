@@ -58,8 +58,15 @@ const server=http.createServer((req,res)=>{
     if(phone){
      await page.evaluate(()=>{window.__LX_PLAYER_GETTERS__.setRoomPlaylist(window.__uiSongs,0);window.playSong(window.__uiSongs[0],0);});
      await page.waitForFunction(()=>!document.getElementById('view-player-detail').classList.contains('hidden'));
-     await page.waitForTimeout(300);assert.ok(await page.locator('#mobile-player-cover-container').isVisible());
+     await page.waitForTimeout(300);
      await page.screenshot({path:out+'/'+name+'-'+width+'-player.png'});
+     const player=await page.evaluate(()=>{
+      const cover=document.getElementById('mobile-player-cover-container'),chain=[];
+      for(let node=cover;node && chain.length<5;node=node.parentElement){const style=getComputedStyle(node),rect=node.getBoundingClientRect();chain.push({id:node.id,className:node.className,inline:node.getAttribute('style'),display:style.display,visibility:style.visibility,width:rect.width,height:rect.height,top:rect.top,left:rect.left});}
+      return {width:innerWidth,height:innerHeight,visualHeight:visualViewport?.height,active:document.activeElement?.id,phone:matchMedia('(max-width:767px), (max-width:1024px) and (pointer:coarse)').matches,short:matchMedia('(max-height:540px)').matches,body:document.body.className,chain};
+     });
+     fs.writeFileSync(out+'/'+name+'-'+width+'-player.json',JSON.stringify(player,null,2));
+     assert.ok(await page.locator('#mobile-player-cover-container').isVisible(),JSON.stringify(player));
      assert.equal(await page.evaluate(()=>document.querySelector('#audio-player').getAttribute('src')),null);
     }
     assert.deepEqual(errors,[],'Page JS errors');assert.deepEqual(remoteUI,[],'Packaged UI must not fetch scripts, styles or fonts');
