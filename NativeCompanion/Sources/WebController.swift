@@ -5,6 +5,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     let player = Player.shared
     var web: WKWebView!
     var address: URL?
+    var loadingBundledPage = false
+    var smokeReloadRequested = false
     var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
     var lastSong = ""
     override func viewDidLoad() {
@@ -78,6 +80,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         address = url; view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
         guard let file = Bundle.main.url(forResource: "WebUI", withExtension: "html"), let data = try? Data(contentsOf: file) else { alert("内置界面缺失，请重新安装完整安装包。"); return }
         let response = URLResponse(url: url, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8")
+        loadingBundledPage = true
         web.loadSimulatedRequest(URLRequest(url: url), response: response, responseData: data)
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
@@ -96,6 +99,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": address?.absoluteString ?? "", "bundledUI": true])
         case "uiReady":
             #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
+                smokeReloadRequested = true
+                web.evaluateJavaScript("window.location.reload()", completionHandler: nil)
+                done(); return
+            }
             if bool(value["bundled"]), bool(value["mobile"]), bool(value["themes"]), let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("BundledUIReady")) }
             #endif
             done()
@@ -187,7 +195,21 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
         if url.scheme == "about" || url.scheme == "blob" { decisionHandler(.allow); return }
-        if let address = address, url.scheme == address.scheme, url.host == address.host, url.port == address.port { decisionHandler(.allow) }
+        if let address = address, url.scheme == address.scheme, url.host == address.host, url.port == address.port {
+            let main = navigationAction.targetFrame?.isMainFrame != false
+            let reload = navigationAction.navigationType == .reload
+            let playerPage = url.path == address.path && navigationAction.navigationType != .backForward
+            if main, reload || playerPage {
+                if !reload, loadingBundledPage { loadingBundledPage = false }
+                else {
+                    // Logout and preference changes reload the page. Keep the installed UI version.
+                    decisionHandler(.cancel)
+                    DispatchQueue.main.async { self.open(address) }
+                    return
+                }
+            }
+            decisionHandler(.allow)
+        }
         else { decisionHandler(.cancel); if navigationAction.navigationType == .linkActivated { UIApplication.shared.open(url) } }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { alert("连接失败：\(error.localizedDescription)") }
