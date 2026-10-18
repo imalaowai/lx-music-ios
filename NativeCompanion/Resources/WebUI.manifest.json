@@ -1,7 +1,7 @@
 {
-  "version": "2.8.6",
-  "htmlSha256": "59405a98b2d8b95c32ae62becb6572b774896b74380ad2ce9c9d9c9c4e68825f",
-  "htmlBytes": 3837229,
+  "version": "2.8.6-native-1.2.0",
+  "htmlSha256": "054d88559489dcd8829b041d1573912c84262eead34649a08e4cf339e0e0539a",
+  "htmlBytes": 3521845,
   "assets": {
     "public/music/index.html": {
       "sha256": "199975b0db74822635a7632dbf7748b681a24f4d475fe40aa18aa0259323a511",
@@ -14,10 +14,6 @@
     "public/music/js/theme_studio.js": {
       "sha256": "cc0c5591806bbc87aae70b75a7ae1481d5b28f2e21c1b596ddddb1cc4fa5234f",
       "bytes": 9131
-    },
-    "public/music/assets/tailwindcss.js": {
-      "sha256": "176e894661aa9cdc9a5cba6c720044cbbf7b8bd80d1c9a142a7c24b1b6c50d15",
-      "bytes": 407279
     },
     "public/music/js/tailwind_setup.js": {
       "sha256": "b56dcd3565c8bdc1aafaaa073ad653d54a9f3fdd1a196023e6546e39cfb86b7a",
@@ -152,8 +148,8 @@
       "bytes": 1999
     },
     "public/music/js/room_social.js": {
-      "sha256": "9c1ab4f6ef23ed2a083ad3422fc91f395eaab8ba92e6dcc115a7ff7e33d68c72",
-      "bytes": 25550
+      "sha256": "87c888c35ad4d75b08afd31801fb204c063799a31256894340a71465c9dd9807",
+      "bytes": 26405
     },
     "public/music/js/common_ui.js": {
       "sha256": "71a29e5e64b752082009e7d4b96dec37fdde54f709611984b1298eb2c6b5e309",
@@ -164,8 +160,8 @@
       "bytes": 45841
     },
     "public/music/app.js": {
-      "sha256": "e6c18ffac35b2f80d4aa4d703d3c091c0ad0d14262ea5eb3a3639d8c15f28d34",
-      "bytes": 738866
+      "sha256": "e67686641127bd91649ddd7794bba80f9c1096f4528d50362f1cdd580603bc7d",
+      "bytes": 737998
     },
     "public/music/js/account-panel.js": {
       "sha256": "237768acb61ebde018fb69545cd62d7176539d626b035a4f9ee6d69e89864038",
@@ -176,8 +172,8 @@
       "bytes": 4142
     },
     "public/music/js/mobile-shell.js": {
-      "sha256": "cf46309858072a026fea35c2ed90d2207eb2d6d247458614db753fc6ec73dca5",
-      "bytes": 10944
+      "sha256": "dcab4c8bada772c8fedc42df1a223e25617f0b5ee3a23f9a84e2d5bb675293e5",
+      "bytes": 11025
     },
     "public/music/js/desktop_layout.js": {
       "sha256": "1b7897e0da1d8a38f3700ca156dfb462f33aede5c6effbdbeff6d1938203a9f2",
@@ -248,5 +244,7 @@
     "pwa_update.js",
     "queue_audio.js",
     "room_start.js"
-  ]
+  ],
+  "precompiledStyles": true,
+  "runtimeStyleCompiler": false
 }

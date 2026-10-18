@@ -19,7 +19,7 @@ final class CarScene: UIResponder, CPTemplateApplicationSceneDelegate, CPNowPlay
         let now = CPNowPlayingTemplate.shared; now.isUpNextButtonEnabled = true; now.upNextTitle = "播放队列"; now.add(self)
         let root = CPTabBarTemplate(templates: [queue, library, room])
         interfaceController.setRootTemplate(root, animated: false) { _, error in if let error = error { NSLog("CarPlay root failed: %@", error.localizedDescription) } }
-        for name in [Notification.Name.lxPlayback, .lxRoom, .lxLibrary] {
+        for name in [Notification.Name.lxPlayback, .lxRoom, .lxLibrary, .lxDownloads] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.refresh() })
         }
         refresh(force: true)
@@ -35,7 +35,8 @@ final class CarScene: UIResponder, CPTemplateApplicationSceneDelegate, CPNowPlay
         return item
     }
     func refresh(force: Bool = false) {
-        let signature = "\(player.index)|\(player.wanted)|\(player.failure)|\(player.queueRevision)|\(player.libraryRevision)|\(player.room.roomID)|\(player.room.connected)|\(player.room.participants.count)|\(player.room.controller)"
+        let finished = MusicLibrary.shared.songs().filter { text($0["status"]) == "finished" }
+        let signature = "\(player.index)|\(player.wanted)|\(player.failure)|\(player.queueRevision)|\(player.libraryRevision)|\(player.room.roomID)|\(player.room.connected)|\(player.room.participants.count)|\(player.room.controller)|\(finished.count)"
         guard force || signature != lastSignature else { return }; lastSignature = signature
         var items: [CPListItem] = []
         if player.current != nil { items.append(row("正在播放", player.current?.name) { [weak self] in self?.showNowPlaying() }) }
@@ -45,7 +46,8 @@ final class CarScene: UIResponder, CPTemplateApplicationSceneDelegate, CPNowPlay
         queueTemplate?.updateSections([CPListSection(items: items)])
         var lists = player.library.map { list in row(text(list["name"]), "\((list["list"] as? [Object])?.count ?? 0) 首") { [weak self] in self?.showList(list) } }
         lists.append(row("刷新歌单") { [weak self] in self?.player.refreshLibrary { self?.refresh(force: true) } })
-        if player.api.credentials == nil { lists = [row("请先登录", "在 iPhone 中连接服务器并登录账号")] }
+        if !finished.isEmpty { let local: Object = ["name": "已下载", "list": finished.compactMap { $0["song"] as? Object }]; lists.insert(row("已下载", "\(finished.count) 首 · 可离线播放") { [weak self] in self?.showList(local) }, at: 0) }
+        if lists.isEmpty { lists = [row("本机暂无歌单", "可以先在 iPhone 导入音乐，无需连接服务器")] }
         libraryTemplate?.updateSections([CPListSection(items: lists)])
         let room = player.room
         var roomItems: [CPListItem]

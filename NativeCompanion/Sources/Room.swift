@@ -22,17 +22,22 @@ final class RoomClient {
     var refreshing = false
     var outgoing: [(Object, Int)] = []
     var sending = false
+    var lastError = ""
+    var publishedSignature = ""
     var roomID: String { text(binding?["roomId"]) }
     var active: Bool { !roomID.isEmpty && enabled && syncTracks }
     var controller: Bool { !participantID.isEmpty && text(state["controllerId"]) == participantID }
     var api: API { player.api }
     init(player: Player) { self.player = player }
     func publish() {
+        let visible: Object = ["room": roomID, "connected": connected, "enabled": enabled, "sync": syncTracks, "members": participants, "participantId": participantID, "controller": text(state["controllerId"]), "paused": bool(state["paused"], true), "song": (state["song"] as? Object).map { Song(raw: $0).key } ?? "", "error": lastError]
+        let signature = (try? JSONSerialization.data(withJSONObject: visible, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        guard signature != publishedSignature else { return }; publishedSignature = signature
         player.onRoom?(snapshot())
         NotificationCenter.default.post(name: .lxRoom, object: self)
     }
     func snapshot() -> Object {
-        ["binding": binding as Any? ?? NSNull(), "state": state, "participants": participants, "participantId": participantID, "owner": owner, "connected": connected, "enabled": enabled, "syncOnTrack": syncTracks]
+        ["binding": binding as Any? ?? NSNull(), "state": state, "participants": participants, "participantId": participantID, "owner": owner, "connected": connected, "enabled": enabled, "syncOnTrack": syncTracks, "error": lastError]
     }
     func refresh() {
         guard api.credentials?.token.isEmpty == false, !refreshing else { return }
@@ -47,6 +52,7 @@ final class RoomClient {
             guard self.epoch == originalEpoch else { return }
             switch result {
             case .success(let value):
+                self.lastError = ""
                 let next = value["binding"] as? Object
                 let changed = self.roomID != text(next?["roomId"]) || text(self.binding?["password"]) != text(next?["password"])
                 if changed { self.disconnect(clear: true) }
@@ -54,7 +60,7 @@ final class RoomClient {
                 if self.active { if !self.connected { self.connect() } else { self.exchange(["type": "room:sync-request"]) } }
                 else { self.disconnect(clear: false) }
                 self.publish()
-            case .failure(let error): self.player.failure = error.localizedDescription; self.player.publish()
+            case .failure(let error): self.lastError = error.localizedDescription; self.publish()
             }
         }
     }
@@ -161,7 +167,7 @@ final class RoomClient {
             // Ordinary room snapshots never move an already playing device's clock.
             if reason == "seek" { player.seek(target(incoming), user: false) }
             if shouldPause, wantedBefore { player.pause(user: false) }
-            else if !shouldPause, !wantedBefore, ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
+            else if !shouldPause, !wantedBefore, !player.endGuard.handled, ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
         }
         player.publish(); publish()
     }
@@ -203,8 +209,22 @@ final class RoomClient {
         send(["type": "room:state", "state": ["reason": "progress", "origin": "auto", "userInitiated": false, "songKey": song.key, "currentTime": player.position, "duration": player.duration, "paused": false]])
     }
     func mediaReady() { guard active, let song = player.current else { return }; exchange(["type": "room:media-ready", "songKey": song.key, "duration": player.duration]) }
-    func ended() {
-        guard active, controller, let song = player.current else { return }
-        exchange(["type": "room:ended", "songKey": song.key, "currentTime": player.position, "duration": player.duration, "playbackRevision": number(state["playbackRevision"])])
+    func ended(attempt: Int = 0) {
+        guard active, let song = player.current else { player.finishTransition(); return }
+        let generation = player.generation, version = commandEpoch
+        let body: Object = ["type": "room:ended", "roomId": roomID, "songKey": song.key, "currentTime": max(player.position, player.duration), "duration": player.duration, "playbackRevision": number(state["playbackRevision"]), "immediateStart": true]
+        api.request("/api/room/playback", method: "POST", body: body) { [weak self] result in
+            guard let self = self, self.commandEpoch == version, self.player.generation == generation, self.active else { return }
+            if case .success(let response) = result {
+                if let id = response["participantId"] as? String { self.participantID = id }
+                if let incoming = response["state"] as? Object { self.apply(incoming) }
+                if self.player.generation != generation { return }
+                if !self.player.wanted { self.player.finishTransition(); return }
+            }
+            if attempt < 4 {
+                self.send(["type": "room:sync-request"])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in guard let self = self, self.player.generation == generation else { return }; self.ended(attempt: attempt + 1) }
+            } else { self.player.fail(ClientError("本首已播完，房间未返回下一首。请检查房间连接或点下一首。")) }
+        }
     }
 }

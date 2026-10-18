@@ -4,13 +4,15 @@
 Usage: python3 scripts/bundle_web.py /path/to/lx-music-sync-server
 The compressed, readable HTML is the versioned source artifact, not a remote loader.
 """
-import base64, hashlib, html, json, lzma, mimetypes, pathlib, re, sys
+import base64, hashlib, html, json, lzma, mimetypes, pathlib, re, subprocess, sys
 
 root = pathlib.Path(__file__).resolve().parents[1]
 source = pathlib.Path(sys.argv[1]).resolve()
 music = source/'public/music'
 entries = {}
 omitted = {'queue_audio.js','room_start.js','ios_audio_output.js','ios-background-audio.js','listen_room.js','pwa.js','pwa_update.js'}
+compiled_css = root/'build/native-css/tailwind.css'
+subprocess.run(['node', str(root/'Engine/build-css.cjs'), str(source), str(compiled_css)], check=True)
 
 def local(url, base):
     value = url.split('?',1)[0].split('#',1)[0]
@@ -40,6 +42,10 @@ def script(match):
     url=html.unescape(match.group(1))
     name=url.split('?',1)[0].split('/')[-1]
     if name in omitted: return '<!-- Native layer owns '+name+' -->'
+    if name == 'tailwindcss.js': return '<style data-source="native/precompiled-tailwind.css">'+compiled_css.read_text()+'</style>'
+    if name == 'tailwind_setup.js':
+        read(local(url,music))
+        return '<!-- Tailwind theme configuration compiled before packaging -->'
     path=local(url,music)
     code=read(path).decode('utf-8')
     if name=='config.js': code += '\nwindow.CONFIG.disableTelemetry=true;\n'
@@ -71,6 +77,6 @@ assert not re.search(r'<script\s+src=',content)
 assert 'navigator.serviceWorker.register(' not in content
 payload=content.encode('utf-8')
 (root/'Resources/WebUI.html.xz').write_bytes(lzma.compress(payload,preset=9))
-manifest={'version':'2.8.6','htmlSha256':hashlib.sha256(payload).hexdigest(),'htmlBytes':len(payload),'assets':entries,'excludedNativeOwners':sorted(omitted)}
+manifest={'version':'2.8.6-native-1.2.0','htmlSha256':hashlib.sha256(payload).hexdigest(),'htmlBytes':len(payload),'assets':entries,'excludedNativeOwners':sorted(omitted),'precompiledStyles':True,'runtimeStyleCompiler':False}
 (root/'Resources/WebUI.manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n')
 print(json.dumps({'assets':len(entries),'htmlBytes':len(payload),'compressedBytes':(root/'Resources/WebUI.html.xz').stat().st_size,'sha256':manifest['htmlSha256']}))

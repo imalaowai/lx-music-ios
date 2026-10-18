@@ -1,7 +1,8 @@
 import UIKit
 import WebKit
+import UniformTypeIdentifiers
 
-final class WebController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
+final class WebController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate, UIDocumentPickerDelegate {
     let player = Player.shared
     var web: WKWebView!
     var address: URL?
@@ -9,6 +10,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     var smokeReloadRequested = false
     var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
     var lastSong = ""
+    var pickerPurpose = ""
+    static let deviceOrigin = URL(string: "https://lx-device.invalid/")!
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
@@ -17,20 +20,29 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
         config.userContentController.add(self, name: "lxNative")
+        config.setURLSchemeHandler(MusicLibrary.shared, forURLScheme: "lx-local")
+        let bootstrap: Object = ["server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil]
+        if let value = script(bootstrap) { config.userContentController.addUserScript(WKUserScript(source: "window.__LX_NATIVE_BOOTSTRAP__=" + value + ";", injectionTime: .atDocumentStart, forMainFrameOnly: true)) }
         if let path = Bundle.main.url(forResource: "Bridge", withExtension: "js"), let script = try? String(contentsOf: path) {
             config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+        if let path = Bundle.main.url(forResource: "AppShell", withExtension: "js"), let shell = try? String(contentsOf: path), let cssPath = Bundle.main.url(forResource: "AppShell", withExtension: "css"), let css = try? String(contentsOf: cssPath), let encoded = script(css) {
+            config.userContentController.addUserScript(WKUserScript(source: "window.__LX_SHELL_CSS__=" + encoded + ";\n" + shell, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         }
         web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self; web.uiDelegate = self
         web.scrollView.delegate = self
         web.scrollView.bouncesZoom = false
+        web.scrollView.bounces = false
         web.scrollView.pinchGestureRecognizer?.isEnabled = false
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(web)
-        NSLayoutConstraint.activate([web.leadingAnchor.constraint(equalTo: view.leadingAnchor), web.trailingAnchor.constraint(equalTo: view.trailingAnchor), web.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), web.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        NSLayoutConstraint.activate([web.leadingAnchor.constraint(equalTo: view.leadingAnchor), web.trailingAnchor.constraint(equalTo: view.trailingAnchor), web.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), web.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)])
         player.onState = { [weak self] value in self?.emit("state", value) }
         player.onRoom = { [weak self] value in self?.emit("room", value) }
         player.onRevoked = { [weak self] in self?.web.evaluateJavaScript("window.LXBridge?.revoked()", completionHandler: nil) }
         player.onChat = { [weak self] type, value in self?.emitChat(type, value) }
+        MusicLibrary.shared.onChange = { [weak self] value in self?.emit("download", value) }
+        MusicLibrary.shared.restoreTasks()
         let rules: [Object] = ["listen_room", "queue_audio", "pwa_update", "ios-background-audio", "ios_audio_output", "room_start"].map { name in
             ["trigger": ["url-filter": ".*/js/" + name + "[.]js.*", "resource-type": ["script"]], "action": ["type": "block"]]
         }
@@ -52,7 +64,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 if ProcessInfo.processInfo.arguments.contains("-LXUISmoke") { self.open(URL(string: "https://lx-ui-check.invalid/")!); return }
                 #endif
                 if let saved = UserDefaults.standard.string(forKey: "lx.server"), let url = URL(string: saved) { self.open(url) }
-                else { self.showWelcome() }
+                else { self.open(Self.deviceOrigin) }
             }
         }
     }
@@ -66,9 +78,10 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     @objc func editAddress() {
         guard presentedViewController == nil else { return }
-        let dialog = UIAlertController(title: "音乐服务器", message: "填写完整播放器网页地址，支持自定义端口和路径。", preferredStyle: .alert)
-        dialog.addTextField { field in field.placeholder = "https://你的域名:端口/"; field.text = self.address?.absoluteString ?? UserDefaults.standard.string(forKey: "lx.server"); field.keyboardType = .URL; field.autocapitalizationType = .none; field.autocorrectionType = .no }
+        let dialog = UIAlertController(title: "连接同步服务器", message: "用于账号同步、一起听和网盘。公网地址请使用 HTTPS；局域网可使用 HTTP。本地功能无需连接。", preferredStyle: .alert)
+        dialog.addTextField { field in field.placeholder = "https://你的域名:端口/"; field.text = UserDefaults.standard.string(forKey: "lx.server"); field.keyboardType = .URL; field.autocapitalizationType = .none; field.autocorrectionType = .no }
         dialog.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if UserDefaults.standard.string(forKey: "lx.server") != nil { dialog.addAction(UIAlertAction(title: "断开服务器", style: .destructive) { [weak self] _ in UserDefaults.standard.removeObject(forKey: "lx.server"); self?.player.configure(nil); self?.open(Self.deviceOrigin) }) }
         dialog.addAction(UIAlertAction(title: "连接", style: .default) { [weak self, weak dialog] _ in
             guard let self = self, let url = URL(string: dialog?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil, url.password == nil else { self?.alert("地址无效，请填写 http:// 或 https:// 开头的网址"); return }
             if self.address?.absoluteString != url.absoluteString { self.player.configure(nil); self.cancelImport() }
@@ -84,6 +97,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         web.loadSimulatedRequest(URLRequest(url: url), response: response, responseData: data)
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) { if scrollView === web.scrollView, abs(scrollView.contentOffset.y) > 0.5 || abs(scrollView.contentOffset.x) > 0.5 { scrollView.setContentOffset(.zero, animated: false) } }
     func allowed(_ origin: WKSecurityOrigin) -> Bool {
         guard let url = address, origin.protocol == url.scheme, origin.host.lowercased() == url.host?.lowercased() else { return false }
         let expected = url.port ?? (url.scheme == "https" ? 443 : 80)
@@ -96,7 +110,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         switch op {
         case "editServer": done(); editAddress()
         case "appInfo":
-            done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": address?.absoluteString ?? "", "bundledUI": true])
+            done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil, "bundledUI": true, "localPlayback": true, "legacySourceFallback": !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")])
         case "uiReady":
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
@@ -104,7 +118,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 web.evaluateJavaScript("window.location.reload()", completionHandler: nil)
                 done(); return
             }
-            if bool(value["bundled"]), bool(value["mobile"]), bool(value["themes"]), let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("BundledUIReady")) }
+            if bool(value["bundled"]), bool(value["mobile"]), bool(value["themes"]), bool(value["localShell"]), let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("BundledUIReady")) }
+            if ProcessInfo.processInfo.arguments.contains("-LXPlaybackSmoke"), bool(value["localShell"]) { PlaybackSmoke.start() }
             #endif
             done()
         case "auth":
@@ -119,6 +134,45 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             }
             done()
         case "ready": player.onState?(player.snapshot()); player.onRoom?(player.room.snapshot()); player.room.refresh(); done()
+        case "musicApi":
+            let path = text(value["path"])
+            guard path.hasPrefix("/api/music/") || path.hasPrefix("/api/custom-source/") else { done(false, "不是本地音乐接口"); return }
+            LocalEngine.shared.call("api", ["path": path, "body": value["body"] as? Object ?? [:]]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
+        case "sources": LocalEngine.shared.call("sources") { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
+        case "sourcePreferences": UserDefaults.standard.set(!bool(value["legacySourceFallback"]), forKey: "lx.disableLegacySourceFallback"); player.api.sourceCache.removeAll(); done()
+        case "sourceRemove", "sourceEnable":
+            player.api.sourceCache.removeAll()
+            LocalEngine.shared.call(op == "sourceRemove" ? "remove" : "enable", ["id": text(value["sourceId"]), "enabled": bool(value["enabled"])]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
+        case "importSource": showPicker("source"); done()
+        case "importSourceURL":
+            guard let url = URL(string: text(value["url"])), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.user == nil, url.password == nil else { done(false, "请输入完整的音源网址"); return }
+            URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+                guard let self = self else { return }
+                guard error == nil, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode), let data = data, data.count <= 2_000_000, let code = String(data: data, encoding: .utf8) else { DispatchQueue.main.async { done(false, error?.localizedDescription ?? "无法下载音源，或文件超过 2 MB") }; return }
+                LocalEngine.shared.call("import", ["id": UUID().uuidString, "name": url.deletingPathExtension().lastPathComponent, "script": code]) { result in switch result { case .success(let sources): self.player.api.sourceCache.removeAll(); self.emit("sources", ["changed": true]); done(sources); case .failure(let error): done(false, error.localizedDescription) } }
+            }.resume()
+        case "serverSources":
+            guard let credentials = player.api.credentials, let url = player.api.url("/api/custom-source/list?username=" + credentials.username.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!) else { done(false, "请先连接同步服务器并登录"); return }
+            var request = URLRequest(url: url); request.setValue(credentials.token, forHTTPHeaderField: "x-user-token"); request.setValue(credentials.username, forHTTPHeaderField: "x-user-name")
+            player.api.session.dataTask(with: request) { data, response, error in
+                let value = data.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+                DispatchQueue.main.async { guard error == nil, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode), let value = value else { done(false, error?.localizedDescription ?? "无法读取服务器音源"); return }; done(value) }
+            }.resume()
+        case "importAudio": showPicker("audio"); done()
+        case "downloads": done(MusicLibrary.shared.songs())
+        case "download":
+            guard let raw = value["song"] as? Object else { done(false, "歌曲信息无效"); return }
+            MusicLibrary.shared.download(Song(raw: raw), quality: text(value["quality"]).isEmpty ? player.quality : text(value["quality"]), api: player.api) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
+        case "downloadAssets": do { done(try MusicLibrary.shared.assets(text(value["downloadId"]))) } catch { done(false, error.localizedDescription) }
+        case "downloadCancel": MusicLibrary.shared.cancel(text(value["downloadId"])); done()
+        case "downloadRemove":
+            do { try MusicLibrary.shared.remove(text(value["downloadId"])); done() } catch { done(false, error.localizedDescription) }
+        case "shareDownload":
+            do {
+                let files = try MusicLibrary.shared.shareFiles(text(value["downloadId"]))
+                let sheet = UIActivityViewController(activityItems: files, applicationActivities: nil); sheet.popoverPresentationController?.sourceView = view; sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 100, width: 1, height: 1)
+                present(sheet, animated: true); done()
+            } catch { done(false, error.localizedDescription) }
         case "preferences":
             player.quality = text(value["quality"]).isEmpty ? "flac" : text(value["quality"]); player.allowFallback = bool(value["allowFallback"], true)
             let previousMode = player.mode
@@ -175,6 +229,21 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         case "importCancel": cancelImport(); done()
         default: done(false, "App 不支持此操作")
         }
+    }
+    func showPicker(_ purpose: String) {
+        guard presentedViewController == nil else { return }; pickerPurpose = purpose
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: purpose == "source" ? [.javaScript, .plainText, .data] : [.audio, .plainText, .image, .data], asCopy: true)
+        picker.allowsMultipleSelection = purpose == "audio"; picker.delegate = self; present(picker, animated: true)
+    }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        let purpose = pickerPurpose; pickerPurpose = ""
+        if purpose == "source", let url = urls.first {
+            do {
+                guard url.pathExtension.lowercased() == "js", (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 2_000_000 else { throw ClientError("请选择不超过 2 MB 的洛雪 .js 音源脚本") }
+                let script = try String(contentsOf: url)
+                LocalEngine.shared.call("import", ["id": UUID().uuidString, "name": url.deletingPathExtension().lastPathComponent, "script": script]) { [weak self] result in switch result { case .success: self?.player.api.sourceCache.removeAll(); self?.emit("sources", ["changed": true]); case .failure(let error): self?.alert(error.localizedDescription) } }
+            } catch { alert(error.localizedDescription) }
+        } else if purpose == "audio" { MusicLibrary.shared.importFiles(urls) { [weak self] result in switch result { case .success(let count): self?.emit("sources", ["importedAudio": count]); case .failure(let error): self?.alert(error.localizedDescription) } } }
     }
     static func importDirectory() throws -> URL {
         let url = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("ImportedAudio", isDirectory: true)

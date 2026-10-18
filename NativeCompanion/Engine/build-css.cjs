@@ -1,0 +1,10 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),cp=require('node:child_process');
+const source=path.resolve(process.argv[2]),output=path.resolve(process.argv[3]),directory=path.dirname(output);
+fs.mkdirSync(directory,{recursive:true});
+const sandbox={tailwind:{}};vm.runInNewContext(fs.readFileSync(path.join(source,'public/music/js/tailwind_setup.js'),'utf8'),sandbox);
+const config=sandbox.tailwind.config;
+config.content=[path.join(source,'public/music/index.html'),path.join(source,'public/music/app.js'),path.join(source,'public/music/js/*.js'),path.join(__dirname,'../Resources/*.js')];
+config.safelist=['hidden','flex','block','grid','translate-x-full','translate-y-[110%]','-translate-x-full','scale-95','opacity-0','opacity-100'];
+const configFile=path.join(directory,'tailwind.config.cjs'),inputFile=path.join(directory,'tailwind.input.css');
+fs.writeFileSync(configFile,'module.exports='+JSON.stringify(config));fs.writeFileSync(inputFile,'@tailwind base;\n@tailwind components;\n@tailwind utilities;');
+cp.execFileSync(process.execPath,[require.resolve('tailwindcss/lib/cli.js'),'--config',configFile,'--input',inputFile,'--output',output,'--minify'],{stdio:'inherit'});

@@ -22,3 +22,18 @@ check(try! MediaAddress.direct("/api/openlist/stream?ticket=owned", base: base).
 do { _ = try MediaAddress.direct("javascript:alert(1)", base: base); fatalError("unsafe scheme accepted") } catch {}
 do { _ = try MediaAddress.direct("/api/music/download?url=javascript%3Aalert(1)", base: base); fatalError("unsafe nested source accepted") } catch {}
 print("Native queue ordering, room race handling and direct-media policy passed.")
+
+var ending = PlaybackEndGuard()
+ending.reset(3, now: 0)
+check(!ending.claim(2), "old item EOF cannot advance current track")
+check(ending.claim(3), "current item EOF advances once")
+check(!ending.claim(3), "duplicate EOF cannot skip the following track")
+ending.reset(4, now: 0)
+check(!ending.stalledAtEnd(position: 179.7, duration: 180, wanted: true, loading: false, seeking: false, playing: false, now: 1), "new position starts the stall deadline")
+check(!ending.stalledAtEnd(position: 179.7, duration: 180, wanted: true, loading: false, seeking: false, playing: false, now: 4.9), "tail is given time to finish")
+check(ending.stalledAtEnd(position: 179.7, duration: 180, wanted: true, loading: false, seeking: false, playing: false, now: 5.1), "missing EOF recovers a stalled last second")
+check(!ending.stalledAtEnd(position: 179.7, duration: 180, wanted: false, loading: false, seeking: false, playing: false, now: 10), "manual pause never advances")
+check(!ending.stalledAtEnd(position: 179.7, duration: 180, wanted: true, loading: false, seeking: true, playing: false, now: 20), "seek does not trigger EOF recovery")
+check(!ending.stalledAtEnd(position: 100, duration: 180, wanted: true, loading: false, seeking: false, playing: false, now: 30), "network stall in middle is not EOF")
+check(!ending.stalledAtEnd(position: 100, duration: 180, wanted: true, loading: false, seeking: false, playing: false, now: 40), "middle stall remains current track")
+print("EOF deduplication and missing-notification recovery passed.")

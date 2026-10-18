@@ -29,9 +29,13 @@ final class Player {
     var timelineRevision = 0
     var seeking = false
     var clock: Any?
-    var resolution: URLSessionDataTask?
+    var watchdog: Timer?
+    var endGuard = PlaybackEndGuard()
+    var nowPlayingSignature = ""
+    var nowPlayingAt = 0.0
+    var resolution: Cancellable?
     var transitionTask: UIBackgroundTaskIdentifier = .invalid
-    var prefetchTask: URLSessionDataTask?
+    var prefetchTask: Cancellable?
     var artworkTask: URLSessionDataTask?
     var artwork: MPMediaItemArtwork?
     var currentURL: URL?
@@ -49,12 +53,16 @@ final class Player {
         restoreQueue()
         audio.automaticallyWaitsToMinimizeStalling = false
         clock = audio.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in self?.tick() }
+        watchdog = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.endGuard.stalledAtEnd(position: self.position, duration: self.duration, wanted: self.wanted, loading: self.loading, seeking: self.seeking, playing: self.audio.timeControlStatus == .playing, now: ProcessInfo.processInfo.systemUptime) { self.finishNaturally() }
+        }
         playbackObservation = audio.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.publish(includeQueue: false) }
         }
         observers.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] n in
             guard let self = self, n.object as? AVPlayerItem === self.audio.currentItem else { return }
-            if self.room.active { self.room.ended() } else { self.move(automatic: true) }
+            self.finishNaturally()
         })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
             guard let self = self else { return }
@@ -114,6 +122,7 @@ final class Player {
         }
         queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
         timelineRevision += 1; seeking = false
+        endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()
         transitionTask = UIApplication.shared.beginBackgroundTask(withName: "LX Track Transition") { [weak self] in
             guard let self = self else { return }; self.generation += 1; self.resolution?.cancel(); self.fail(ClientError("后台播放链接请求超时，请恢复网络后播放"))
@@ -160,6 +169,7 @@ final class Player {
     }
     func play(user: Bool = true) {
         guard current != nil else { return }
+        if endGuard.handled, !room.active { select(queue, index: index, user: user); return }
         wanted = true; failure = ""
         if audio.currentItem == nil { select(queue, index: index, user: user, time: resumeTime); return }
         do { try activate(); audio.play(); if user { room.sendState(reason: "play") }; publish() } catch { fail(error) }
@@ -170,6 +180,7 @@ final class Player {
     func seek(_ time: Double, user: Bool = true) {
         let target = max(0, duration > 0 ? min(time, max(0, duration - 0.05)) : time)
         timelineRevision += 1; seeking = true
+        endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         let revision = timelineRevision, epoch = generation
         audio.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             DispatchQueue.main.async {
@@ -184,6 +195,18 @@ final class Player {
         guard let target = QueuePolicy.next(count: queue.count, index: index, mode: mode, previous: previous, automatic: automatic) else { pause(); return }
         select(queue, index: target)
     }
+    func finishNaturally() {
+        guard wanted, endGuard.claim(generation) else { return }
+        audio.pause()
+        if room.active {
+            finishTransition()
+            let epoch = generation
+            transitionTask = UIApplication.shared.beginBackgroundTask(withName: "LX Room End Transition") { [weak self] in
+                guard let self = self, self.generation == epoch else { return }; self.fail(ClientError("房间下一首响应超时，请恢复连接"))
+            }
+            room.ended(); publish(includeQueue: false)
+        } else { move(automatic: true) }
+    }
     func fail(_ error: Error) {
         finishTransition(); loading = false; wanted = false; audio.pause(); failure = error.localizedDescription; publish()
     }
@@ -193,13 +216,19 @@ final class Player {
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
     func snapshot(includeQueue: Bool = true) -> Object {
-        var value: Object = ["queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        var value: Object = ["queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {
-        updateNowPlaying(); onState?(snapshot(includeQueue: includeQueue)); NotificationCenter.default.post(name: .lxPlayback, object: self)
+        updateNowPlaying(); onState?(snapshot(includeQueue: includeQueue))
+        let signature = "\(generation)|\(wanted)|\(loading)|\(failure)|\(queueRevision)|\(audio.timeControlStatus.rawValue)"
+        if signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
     }
     func updateNowPlaying() {
+        let signature = "\(generation)|\(wanted)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(artwork != nil)|\(queueRevision)"
+        let now = ProcessInfo.processInfo.systemUptime
+        guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
+        nowPlayingSignature = signature; nowPlayingAt = now
         let c = MPRemoteCommandCenter.shared()
         c.nextTrackCommand.isEnabled = queue.count > 1; c.previousTrackCommand.isEnabled = queue.count > 1
         c.changePlaybackPositionCommand.isEnabled = duration > 0
@@ -210,7 +239,11 @@ final class Player {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
     func updateArtwork(_ song: Song) {
-        guard let base = api.base, let url = URL(string: text(song.raw["img"]), relativeTo: base), ["http", "https"].contains(url.scheme ?? "") else { return }
+        if let id = song.raw["offlineId"] as? String, let root = try? MusicLibrary.shared.folder(id), let image = UIImage(contentsOfFile: root.appendingPathComponent("封面.jpg").path) {
+            artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }; nowPlayingSignature = ""; updateNowPlaying(); return
+        }
+        let base = api.base ?? WebController.deviceOrigin
+        guard let url = URL(string: text(song.raw["img"]), relativeTo: base), ["http", "https"].contains(url.scheme ?? "") else { return }
         let epoch = generation
         artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data, data.count < 8_000_000, let image = UIImage(data: data) else { return }
@@ -221,13 +254,12 @@ final class Player {
         artworkTask?.resume()
     }
     func persistQueue() {
-        guard let credentials = api.credentials else { UserDefaults.standard.removeObject(forKey: "lx.queue"); return }
-        let object: Object = ["server": credentials.server, "username": credentials.username, "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]
+        let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]
         if let data = try? JSONSerialization.data(withJSONObject: object) { UserDefaults.standard.set(data, forKey: "lx.queue") }
     }
     func restoreQueue() {
         guard let data = UserDefaults.standard.data(forKey: "lx.queue"), let object = (try? JSONSerialization.jsonObject(with: data)) as? Object,
-              text(object["server"]) == api.credentials?.server, text(object["username"]) == api.credentials?.username else { return }
+              text(object["server"]) == (api.credentials?.server ?? ""), text(object["username"]) == (api.credentials?.username ?? "") else { return }
         queue = (object["queue"] as? [Object] ?? []).map { Song(raw: $0) }; index = Int(number(object["index"], -1)); mode = text(object["mode"]); quality = text(object["quality"]); resumeTime = number(object["position"])
         if let stored = UserDefaults.standard.data(forKey: "lx.library"), let lists = (try? JSONSerialization.jsonObject(with: stored)) as? [Object] { library = lists }
     }

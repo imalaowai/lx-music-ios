@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Generate a dependency-free Xcode project; no CocoaPods/React Native build."""
-import base64, hashlib, json, lzma, pathlib, subprocess, sys
+import base64, hashlib, json, lzma, pathlib, plistlib, subprocess, sys
 root = pathlib.Path(__file__).resolve().parents[1]
+ats = plistlib.loads((root/'Info.plist').read_bytes()).get('NSAppTransportSecurity', {})
+assert not any(value for key, value in ats.items() if key.startswith('NSAllowsArbitraryLoads')), 'Global ATS bypass is forbidden'
+assert set(ats.get('NSExceptionDomains', {})) <= {'kuwo.cn','kugou.com','migu.cn','qq.com','gtimg.cn','126.net','music.163.com'}, 'Unreviewed ATS exception domain'
+for domain in ats.get('NSExceptionDomains', {}).values():
+    assert set(domain) <= {'NSIncludesSubdomains', 'NSExceptionAllowsInsecureHTTPLoads'}, 'Do not weaken HTTPS validation'
+
 bundle = root/'Resources/WebUI.html.xz'
 if not bundle.is_file(): raise RuntimeError('Bundled web UI missing; run scripts/bundle_web.py SOURCE_ROOT first')
 web = lzma.decompress(bundle.read_bytes())
@@ -9,6 +15,10 @@ manifest = json.loads((root/'Resources/WebUI.manifest.json').read_text())
 assert hashlib.sha256(web).hexdigest() == manifest['htmlSha256'], 'Web UI checksum mismatch'
 (root/'generated').mkdir(exist_ok=True)
 (root/'generated/WebUI.html').write_bytes(web)
+engine = lzma.decompress((root/'Resources/LocalEngine.js.xz').read_bytes())
+engine_manifest = json.loads((root/'Resources/LocalEngine.manifest.json').read_text())
+assert hashlib.sha256(engine).hexdigest() == engine_manifest['sha256'], 'Local engine checksum mismatch'
+(root/'generated/LocalEngine.js').write_bytes(engine)
 def ident(value): return hashlib.sha256(value.encode()).hexdigest()[:24].upper()
 objects = {}
 def add(name, content): objects[ident(name)] = content; return ident(name)
@@ -36,7 +46,7 @@ for points,scale in [(20,1),(20,2),(29,1),(29,2),(40,1),(40,2),(76,1),(76,2),(83
 (assets/'marketing.png').write_bytes(seed.read_bytes())
 images.append({'idiom':'ios-marketing','size':'1024x1024','scale':'1x','filename':'marketing.png'})
 (assets/'Contents.json').write_text(json.dumps({'images':images,'info':{'version':1,'author':'xcode'}},indent=2))
-for rel,kind in [('Resources/Bridge.js','text'),('Resources/ThirdPartyNotices.txt','text'),('generated/WebUI.html','text.html'),('Resources/LaunchScreen.storyboard','file.storyboard'),('generated/Assets.xcassets','folder.assetcatalog')]:
+for rel,kind in [('Resources/Bridge.js','text'),('Resources/AppShell.js','text'),('Resources/AppShell.css','text.css'),('Resources/ThirdPartyNotices.txt','text'),('generated/LocalEngine.js','text'),('generated/WebUI.html','text.html'),('Resources/LaunchScreen.storyboard','file.storyboard'),('generated/Assets.xcassets','folder.assetcatalog')]:
     reference=add(rel,f'isa = PBXFileReference; lastKnownFileType = {kind}; path = {q(rel)}; sourceTree = "<group>";')
     resource_refs.append(reference);resource_builds.append(add('build-'+rel,f'isa = PBXBuildFile; fileRef = {reference};'))
 product=add('product','isa = PBXFileReference; explicitFileType = wrapper.application; path = LXCompanion.app; sourceTree = BUILT_PRODUCTS_DIR;')

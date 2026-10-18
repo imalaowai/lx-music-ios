@@ -3,6 +3,7 @@ import CarPlay
 
 @main final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool { _ = Player.shared; return true }
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) { MusicLibrary.shared.backgroundCompletion = completionHandler; MusicLibrary.shared.restoreTasks() }
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         let car = connectingSceneSession.role.rawValue == "CPTemplateApplicationSceneSessionRoleApplication"
         let config = UISceneConfiguration(name: car ? "CarPlay" : "Phone", sessionRole: connectingSceneSession.role)

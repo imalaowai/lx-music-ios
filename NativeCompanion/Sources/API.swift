@@ -63,7 +63,8 @@ final class API {
         return task
     }
     func cacheKey(_ song: Song, _ quality: String, _ allowFallback: Bool) -> String { "\(credentials?.server ?? "")|\(credentials?.username ?? "")|\(text(song.raw["source"]))|\(song.key)|\(quality)|\(allowFallback)" }
-    func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<(URL, String), Error>) -> Void) -> URLSessionDataTask? {
+    @discardableResult func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<(URL, String), Error>) -> Void) -> Cancellable? {
+        if let local = MusicLibrary.shared.localURL(song) { completion(.success((local, text(song.raw["quality"]).isEmpty ? local.pathExtension : text(song.raw["quality"])))); return nil }
         let key = cacheKey(song, quality, allowFallback)
         if let cached = sourceCache[key], Date().timeIntervalSince(cached.2) < 180 { completion(.success((cached.0, cached.1))); return nil }
         if song.raw["openlist"] is Object {
@@ -80,25 +81,40 @@ final class API {
         }
         if song.raw["deviceKey"] != nil { completion(.failure(ClientError("请先在手机页面中准备设备音乐，再锁屏或连接车机"))); return nil }
         if let direct = song.raw["url"] as? String, !direct.isEmpty, bool(song.raw["isLocal"]) || song.raw["openlist"] != nil || song.raw["deviceKey"] != nil {
-            guard let base = base else { completion(.failure(ClientError("服务器地址无效"))); return nil }
+            let base = base ?? URL(string: "https://lx-device.invalid/")!
             do {
                 let address = try MediaAddress.direct(direct, base: base)
                 if address.isFileURL {
                     let folder = try WebController.importDirectory().standardizedFileURL.path + "/"
-                    guard address.standardizedFileURL.path.hasPrefix(folder) else { throw ClientError("设备文件不在 App 导入目录中") }
+                    let downloads = try MusicLibrary.shared.directory().standardizedFileURL.path + "/"
+                    guard address.standardizedFileURL.path.hasPrefix(folder) || address.standardizedFileURL.path.hasPrefix(downloads) else { throw ClientError("设备文件不在 App 音乐库中") }
                 }
                 completion(.success((address, text(song.raw["quality"]))))
             } catch { completion(.failure(error)) }
             return nil
         }
-        return request("/api/music/url", method: "POST", body: ["songInfo": song.raw, "quality": quality, "allowQualityFallback": allowFallback, "enableAutoSwitchApiSource": true]) { [weak self] result in
+        return LocalEngine.shared.call("resolve", ["song": song.raw, "quality": quality, "allowFallback": allowFallback]) { [weak self] result in
             do {
-                let value = try result.get()
-                guard let base = self?.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
+                guard let value = try result.get() as? Object else { throw ClientError("音源没有返回播放地址") }
+                let base = self?.base ?? URL(string: "https://lx-device.invalid/")!
+                guard !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
                 let url = try MediaAddress.direct(text(value["url"]), base: base), actual = text(value["type"]).isEmpty ? quality : text(value["type"])
                 if (self?.sourceCache.count ?? 0) > 24 { self?.sourceCache.removeAll() }
                 self?.sourceCache[key] = (url, actual, Date())
                 completion(.success((url, actual)))
+            } catch {
+                if error.localizedDescription.hasPrefix("请在"), self?.credentials != nil, !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback") {
+                    self?.resolveOnServer(song, quality: quality, allowFallback: allowFallback, completion: completion)
+                } else { completion(.failure(error)) }
+            }
+        }
+    }
+    func resolveOnServer(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<(URL, String), Error>) -> Void) {
+        request("/api/music/url", method: "POST", body: ["songInfo": song.raw, "quality": quality, "allowQualityFallback": allowFallback, "enableAutoSwitchApiSource": true]) { [weak self] result in
+            do {
+                let value = try result.get()
+                guard let base = self?.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
+                completion(.success((try MediaAddress.direct(text(value["url"]), base: base), text(value["type"]).isEmpty ? quality : text(value["type"]))))
             } catch { completion(.failure(error)) }
         }
     }

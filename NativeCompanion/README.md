@@ -1,53 +1,59 @@
-# LX 原生播放与 CarPlay
+# LX 本机音乐与 CarPlay
 
-iOS 15.0+ 独立 Swift App，针对现有 LX Music Sync Server 2.8.4/2.8.5/2.8.6 播放器接口。1.1.0 将界面、脚本、样式、字体及固定图标内置到 IPA；账号、歌单、搜索和播放链接仍使用服务器接口。AVPlayer 负责音频，原生 URLSession/WebSocket 负责房间同步，CarPlay 使用系统音频模板。不会依赖网页在锁屏后继续执行 JavaScript。
+iOS 15.0+ 独立 Swift App。1.2.0 将完整界面、搜索/歌单 SDK、歌词和洛雪音源执行引擎内置到 IPA；AVPlayer 负责音频。首次打开可以直接使用本机音乐库，连接 LX Music Sync Server 是可选项。服务器用于账号同步、一起听和服务器配置的 OpenList 网盘。
 
-## 安装和连接
+## 安装与使用
 
-1. 在本分支的 **LX Native Web + CarPlay IPA** 成功构建中，下载 `LX-Native-CarPlay-iOS15-TrollStore` 制品，解压后取得 `LX-Native-CarPlay.ipa`。
-2. 使用 TrollStore 覆盖安装 IPA。首次启动填写现有播放器完整网址（包含端口和路径），用现有账号登录。之后服务器入口位于“我的 → 设置 → LX 音乐”，顶部不再显示原生导航、标题和刷新按钮。不需要升级 iOS 15.5。保留相同 bundle id，覆盖安装沿用原有配置。
-3. 在手机原有歌单中选择歌曲。锁屏、耳机、方向盘按钮均由原生媒体命令处理，上一首/下一首使用 track 命令，关闭短时快进/快退命令，进度条仍可拖动。
-4. 连接 CarPlay，在车机打开“LX 音乐”，可浏览播放队列和我的歌单、进入正在播放、控制当前一起听房间。创建/加入房间在手机进行；曾登录后，车机可以先于手机界面启动。
+1. 在本分支 **LX Native Web + CarPlay IPA** 的成功构建中下载 `LX-Native-CarPlay-iOS15-TrollStore` 制品，解压取得 IPA，使用 TrollStore 覆盖安装。沿用 `net.minyue.lxcompanion`，无需升级 iOS 15.5。
+2. 底部入口为 **首页 / 歌单 / 一起听 / 我的**。首页顶部搜索，下方为热搜、收藏与最新歌单；顶部网站导航已移除，账号、设置、音源、睡眠定时入口收进“我的”和播放选项。
+3. 在线播放前，在 **我的 → 音源管理** 导入自有的洛雪 `.js` 音源文件或链接。脚本仅保存在设备，由独立 JavaScriptCore 队列执行，不上传源码仓库。搜索、歌单、歌词由内置 SDK 直接请求平台，音源脚本解析播放地址，音频仍需联网获取。
+4. 旧账号已配置服务器音源时，未导入本地脚本可暂用旧服务器解析；“兼容旧服务器音源”可关闭。服务器通过链接导入的音源可以迁移；只上传过文件的音源需在手机重新选择原 `.js` 文件。
+5. **我的 → 已下载** 可导入设备音频，以及同名 `.lrc` 和封面图片。播放页选项可“保存离线”，下载完成后直接播放，读取已保存封面与歌词，可通过系统分享歌曲和附件。在线歌曲是否能保存歌词/封面取决于上游是否提供；界面明确显示已保存资源。
+6. **我的 → 账号与同步** 连接原服务器并登录，公网地址使用 HTTPS；局域网可使用 HTTP。一起听中点开创建/加入卡片后再填写，加入后进入聊天；上方显示成员头像，选项中查看全部成员或退出。内置 200 个常用 Unicode 表情，无需下载表情目录；不含第三方图片贴纸包。
+7. CarPlay 可浏览原生播放队列、歌单、已下载歌曲、正在播放和房间控制。创建/加入房间在手机操作。耳机和方向盘使用上一首/下一首命令；进度条可拖动。
 
-本包使用 `com.apple.developer.carplay-audio` entitlement，并经 ldid 伪签名，面向用户已有的 TrollStore 安装环境。普通 Apple ID 自签可能无法保留 CarPlay 权限；普通分发需 Apple 批准的权限及匹配的描述文件。安装后还需实际 iPhone/车机确认系统识别；编译与权限检查不能证明实车可用。
+## 性能和连续播放
 
-## 已实现
+- Tailwind 在构建时编译，安装版不启动运行时样式编译器。
+- 聊天默认渲染最近 60 条，可加载更早消息；复用未变化的消息节点，关闭聊天时不更新隐藏消息列表。下载进度仅更新现有行。
+- WKWebView 使用 iOS 15 键盘布局引导，内部聊天独立滚动；输入字号 16px，焦点不滚动整个页面。键盘弹起时收起底部导航、迷你播放栏和头像条，保留消息和输入区。
+- 默认减少背景模糊、发光和持续动画；设置可开启增强视觉效果。歌词用本地单调时钟补间，暂停/缓冲/拖动重新校准，高亮不改变行高。
+- 原生进度每 0.5 秒更新，锁屏元数据和 CarPlay 页面仅在有关状态变化时刷新。底部播放状态使用实际播放状态。
+- EOF 按当前媒体代次处理一次；缺失结束通知且末秒停滞 4 秒时恢复切歌。房间 EOF 在后台任务保护内请求服务器推进，必要时重试和重新同步。
 
-- 1.1.1 歌词采用本地单调时钟补间，原生进度仍每 0.5 秒校准；暂停、缓冲、拖动和切歌重新对齐。高亮用视觉缩放，不再动画改变字号和行高，避免滚动目标在切行时移动。普通进度快照不重复刷新播放按钮、状态和模式。
-- 1.1.0 内置完整界面；苹果、酷狗主题同时覆盖手机和电脑；LX 主题保留。手机点击歌曲进入封面歌词页，禁用 App 页面缩放。
+## 数据与网络边界
 
-- 手机网页搜索、歌单和房间界面；选择、暂停、切歌、进度和音量转交原生层。
-- 单一 AVPlayer 与后台 audio 模式；暂停保留当前媒体项；原生 Now Playing 封面、歌名、进度和媒体命令。
-- 原生队列及列表循环、顺序、随机、单曲循环；提前解析下一首地址，缓存三分钟，不提前下载整首音频。
-- 房间绑定、加入/离开、成员、时钟估计、状态回执、断线重连、控制端自动下一首。进度广播不会持续强拉正在播放设备的时间轴。
-- 手机场景与 CarPlay 场景各自管理生命周期；进度更新不重建车机根页面。
-- 登录令牌存在 Keychain；不读取网页登录密码；项目不包含服务器地址或账号。
+页面、字体、图标、音乐库、导入音源与下载文件都在手机。热搜、搜索、新歌单、未下载的音频和歌词仍需联网。无需同步服务器不等于所有在线内容都可断网获取。
 
-## 音频路径和边界
+音源引擎没有文件系统、Keychain 或同步令牌接口；脚本可访问网络、定时器、Buffer 和兼容的 crypto/zlib API。仅导入自己信任的脚本。不同脚本依赖的非标准 Node 模块可能不受支持。ATS 保持开启，仅对内置平台历史 HTTP 接口设置域名例外；其他音源接口需提供 HTTPS，不关闭证书校验。
 
-在线音源由 iPhone 直连解析得到的原始地址；历史 `/api/music/download?url=` 代理地址会还原为上游。不新增连续流、转码、服务器音频中转服务。现有 OpenList 的 `/api/openlist/stream` 是服务器既有授权播放路径，仍遵循原服务行为，可能经过服务器；本 App 不会将这一路径声称为网盘直连。
+在线音频直接读取解析得到的原始地址；历史 `/api/music/download?url=` 会还原为上游。现有 OpenList `/api/openlist/stream` 保留服务器授权路径，可能经过服务器。本 App 不新增连续流或转码服务。
 
-设备文件在首次选择时，把当前队列中设备音频复制进 App 导入目录（单文件上限 500 MB），完成后锁屏和车机才能独立访问，不需要网页保活。重复选择复用已导入文件；复制占用设备存储。设备文件不能作为房间共享音源，其他设备无法读取本机文件。
+设备文件不能作为跨设备房间音源。已下载的在线歌曲仍保留原平台标识，房间内其他设备使用自己的可用音源。下载使用原生后台 URLSession；强制结束 App 会停止播放，系统也可能延后或中断下载。
 
-原网页 Web Audio 音效、可视化不能作用于 AVPlayer，当前原生版不提供这些音效。来电/拔出耳机会按系统音频中断处理；从多任务界面强制关闭 App 会停止播放。原生播放需要音源本身可访问、格式可由 AVPlayer 解码，不承诺消除音源服务响应时间。
+原网页 Web Audio 音效不能作用于 AVPlayer。播放格式仍受系统解码能力和上游可用性限制。
 
-界面版本随 IPA 固定，不会从服务器加载另一套播放器脚本或注册网页 Service Worker。若后续服务器改变接口协议，需要升级 App。没有登录时，可从车机使用已保存的原生队列，但首次服务器配置和登录要在手机完成。
+## 完整源码与构建
 
-内置界面来源记录在 `Resources/WebUI.manifest.json`，可用 Python 标准库 `lzma.decompress` 解开 `Resources/WebUI.html.xz`，查看全部 HTML、JS、CSS 和每段 `data-source`；`scripts/bundle_web.py SERVER_SOURCE_ROOT` 可从服务器源码重建。`prepare.py` 校验 SHA256 后生成供 Xcode 打包的 WebUI.html。iOS 15 的 `loadSimulatedRequest` 保留服务器 origin，现有登录和同源 API 无需新增音频代理。
+`Sources/` 为原生源码，`Resources/AppShell.js`、`AppShell.css`、`Bridge.js` 为本机界面与桥接源码。`Resources/WebUI.html.xz` 是完整可读 HTML/JS/CSS 的压缩源文件，Python `lzma.decompress` 可直接查看每段 `data-source`；不是远程加载器。`Resources/WebUI.manifest.json` 记录每段来源和校验值。
 
-## 构建和验证
+`Engine/src/`、`build.cjs`、锁定的 `package-lock.json` 与 `vendor.tar.xz` 包含本机引擎和 SDK 源码。构建对酷我 JSON 辅助函数应用 iOS 15 正则兼容补丁；原始厂商代码及 LICENSE 保留在归档中。依赖许可证随 App 的 `ThirdPartyNotices.txt` 分发。仓库不包含用户音源、账号、下载音乐或私有服务器配置。
 
-GitHub Actions 使用 macOS/Xcode 生成独立工程、执行原生队列/房间竞态/地址策略检查和网页桥接检查、编译 arm64 真机 App、编译并启动模拟器手机场景、校验最终 CarPlay entitlement 和链接框架、打包 IPA 并生成 SHA256。源码不依赖原仓库的 React Native/CocoaPods 构建。
+正常构建直接校验并解压已提交资源，不依赖 npm、CocoaPods 或 React Native。GitHub Actions 执行桥接、引擎、Swift 队列/房间/EOF 单元检查、实际 JavaScriptCore + URLSession 测试、Chromium/WebKit 界面回归、arm64 真机构建，以及模拟器 UI 重载和 AVPlayer 连播 8 首离线音频（含封面/歌词/分享文件验证）。最后通过 ldid 伪签名、校验 CarPlay entitlement 并生成 IPA/SHA256。
 
-本地 macOS：
+macOS 构建：
 
 ```sh
 cd NativeCompanion
 python3 scripts/prepare.py
-node --test Tests/bridge.test.cjs
+node --test Tests/bridge.test.cjs Tests/engine.test.cjs
 xcrun swiftc Sources/Core.swift Tests/main.swift -o /tmp/lx-core-tests
 /tmp/lx-core-tests
+xcrun swiftc Sources/Core.swift Sources/LocalEngine.swift Tests/engine-native.swift -o /tmp/lx-engine-tests
+node Tests/engine-http.cjs /tmp/lx-engine-tests
 xcodebuild -project LXCompanion.xcodeproj -scheme LXCompanion -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 ```
 
-IPA 是针对 iOS 15.5/TrollStore 的候选版本。自动检查不涵盖物理锁屏、真实音源、长期后台房间或具体车型；这些不能标记为已验证。
+重新生成音源引擎：`cd Engine && npm ci && npm run build`。从服务器工作区重新生成基础界面：先安装 Engine 锁定依赖，再运行 `python3 scripts/bundle_web.py SERVER_SOURCE_ROOT`，最后 `prepare.py`。基础界面源码已随压缩 HTML 提交，日常 IPA 构建无需服务器源码。
+
+本包含 `com.apple.developer.carplay-audio`，面向已有 TrollStore 环境；普通分发需要 Apple 批准的权限及匹配描述文件。自动检查不能替代真实 iOS 15.5、长期锁屏、真实音源、多设备房间及具体车型的测试，也不代表已测得真机温度或帧率。

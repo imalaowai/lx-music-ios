@@ -25,6 +25,18 @@ enum QueuePolicy {
         return (target + count) % count
     }
 }
+struct PlaybackEndGuard {
+    var generation = -1
+    var handled = false
+    var position = 0.0
+    var movedAt = 0.0
+    mutating func reset(_ value: Int, now: Double) { generation = value; handled = false; position = 0; movedAt = now }
+    mutating func claim(_ value: Int) -> Bool { guard generation == value, !handled else { return false }; handled = true; return true }
+    mutating func stalledAtEnd(position value: Double, duration: Double, wanted: Bool, loading: Bool, seeking: Bool, playing: Bool, now: Double) -> Bool {
+        if abs(value - position) > 0.03 || !wanted || loading || seeking || playing { position = value; movedAt = now; return false }
+        return !handled && wanted && !loading && !seeking && duration > 2 && value >= duration - 0.65 && now - movedAt >= 4
+    }
+}
 struct RoomOrder {
     var revision = -1.0
     var pendingID = ""

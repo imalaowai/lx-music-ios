@@ -39,6 +39,22 @@
   });
   const warn = error => window.showError?.(error.message || String(error));
   const send = (op, values) => post(op, values).catch(warn);
+  window.LXNative = {request: post};
+  const originalFetch = window.fetch?.bind(window);
+  if (originalFetch) window.fetch = async function (input, options = {}) {
+    const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+    const local = /^\/api\/music\/(?:config|search|tipSearch|hotSearch|songList\/|leaderboard\/|lyric(?:$|\?)|pic(?:$|\?)|url(?:$|\?)|comment(?:$|\?))/.test(url.pathname) || url.pathname === '/api/custom-source/list';
+    if (url.origin === location.origin && local) {
+      try {
+        const body = typeof options.body === 'string' ? JSON.parse(options.body) : {};
+        const value = await post('musicApi', {path: url.pathname + url.search, body});
+        return new Response(JSON.stringify(value), {status: 200, headers: {'Content-Type': 'application/json'}});
+      } catch (error) { return new Response(JSON.stringify({error: error.message, message: error.message}), {status: 503, headers: {'Content-Type': 'application/json'}}); }
+    }
+    if (url.origin === location.origin && url.pathname.startsWith('/api/') && location.hostname === 'lx-device.invalid')
+      return new Response(JSON.stringify({success: false, message: '此功能需要连接同步服务器'}), {status: 503, headers: {'Content-Type': 'application/json'}});
+    return originalFetch(input, options);
+  };
   const key = song => String(song?.songmid || song?.mid || song?.id || `${song?.name || ''}-${song?.singer || song?.artist || ''}`);
   const stubSession = {metadata: null, playbackState: 'none', setActionHandler() {}, setPositionState() {}};
   try { Object.defineProperty(navigator, 'mediaSession', {value: stubSession, configurable: true}); } catch {}
@@ -77,10 +93,11 @@
       const changedSong = key(state.song) !== renderedSong;
       if (state.song?.name && (changedSong || renderedQuality !== state.quality)) { updatePlayerInfo(state.song, state.quality); renderedQuality = state.quality; }
       if (changedSong && state.song?.name) { renderedSong = key(state.song); try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {} }
-      if (renderedPlaying !== !state.paused) {updatePlayButton(!state.paused); renderedPlaying = !state.paused;}
-      const status = state.error || (state.loading ? '正在获取播放链接' : '');
-      const statusKey = JSON.stringify([status, state.paused]);
-      if (renderedStatus !== statusKey) {setPlayerStatus(status, !state.paused); renderedStatus = statusKey;}
+      const playing = state.playing === true;
+      if (renderedPlaying !== playing) {updatePlayButton(playing); renderedPlaying = playing;}
+      const status = state.error || (state.loading ? '正在获取播放链接' : state.ended && !state.paused ? '等待房间下一首' : !state.paused && !playing ? '正在缓冲' : '');
+      const statusKey = JSON.stringify([status, playing]);
+      if (renderedStatus !== statusKey) {setPlayerStatus(status, playing); renderedStatus = statusKey;}
       const audio = audioElement();
       if (audio) {
         audio.dispatchEvent(new Event('timeupdate'));
@@ -104,6 +121,7 @@
       if (state.error) document.getElementById('lx-native-state')?.replaceChildren(document.createTextNode(state.error));
     } catch (error) { console.warn('[LX Native] UI update', error); }
     finally { applying = false; }
+    window.dispatchEvent(new CustomEvent('lx-native-playback', {detail: state}));
   }
   function receiveRoom(state) {
     room = state;
@@ -118,10 +136,13 @@
       }
     }
     window.dispatchEvent(new CustomEvent('lx-room-members-change', {detail: {participants: room.participants || [], controllerId: room.state?.controllerId || '', owner: room.owner || '', roomId: room.binding?.roomId || ''}}));
+    window.dispatchEvent(new CustomEvent('lx-native-room', {detail: room}));
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
     state: receiveState, room: receiveRoom,
+    download(value) {window.dispatchEvent(new CustomEvent('lx-native-download', {detail: value}));},
+    sources(value) {window.dispatchEvent(new CustomEvent('lx-native-sources', {detail: value}));},
     chat(type, data) {window.dispatchEvent(new CustomEvent(type === 'room:chat-history' ? 'lx-room-chat-history' : 'lx-room-chat-update', {detail: {...data, roomId: room.binding?.roomId || ''}}));},
     revoked() {localStorage.removeItem('lx_user_token'); window.dispatchEvent(new CustomEvent('lx-auth-revoked'));}
   };
@@ -193,7 +214,7 @@
     const audio = audioElement();
     if (audio) {
       let deviceVolume = Number(audio.volume) || 1, deviceMuted = !!audio.muted;
-      const properties = {volume: {get: () => deviceVolume, set: value => {deviceVolume = Math.max(0, Math.min(1, Number(value))); if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, muted: {get: () => deviceMuted, set: value => {deviceMuted = !!value; if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, currentTime: {get: displayTime, set: value => {if (!applying) send('seek', {time: Number(value)});}}, duration: {get: () => playback.duration || NaN}, paused: {get: () => playback.paused !== false}, ended: {get: () => false}, readyState: {get: () => playback.duration > 0 ? 4 : 0}, seeking: {get: () => !!playback.seeking}};
+      const properties = {volume: {get: () => deviceVolume, set: value => {deviceVolume = Math.max(0, Math.min(1, Number(value))); if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, muted: {get: () => deviceMuted, set: value => {deviceMuted = !!value; if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, currentTime: {get: displayTime, set: value => {if (!applying) send('seek', {time: Number(value)});}}, duration: {get: () => playback.duration || NaN}, paused: {get: () => playback.paused !== false || playback.playing === false}, ended: {get: () => !!playback.ended}, readyState: {get: () => playback.duration > 0 ? 4 : 0}, seeking: {get: () => !!playback.seeking}};
       for (const [name, descriptor] of Object.entries(properties)) Object.defineProperty(audio, name, {...descriptor, configurable: true});
       Object.defineProperty(audio, 'src', {get: () => playback.song?.name ? 'lx-native://current' : '', set() {}, configurable: true});
       audio.load = () => {}; audio.play = () => post('play'); audio.pause = () => {if (!applying) send('pause');};
@@ -238,7 +259,7 @@
       if (document.visibilityState === 'visible') {foregroundSync = true; send('ready');}
       else {clock = {...clock, position: displayTime(), at: performance.now(), running: false, correction: 0};}
     });
-    setTimeout(() => send('uiReady', {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout}), 0);
+    setTimeout(() => send('uiReady', {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout, localShell: !!window.NativeShell}), 120);
     // Foreground UI state only; audio and room networking run natively.
     setInterval(() => {
       if (document.visibilityState !== 'visible') return;
@@ -248,7 +269,7 @@
       const lists = [{id: 'love', name: '我的收藏', list: data.loveList || []}, {id: 'default', name: '默认列表', list: data.defaultList || []}, ...(data.userList || [])];
       const serialized = JSON.stringify(lists);
       if (serialized !== listKey) {listKey = serialized; send('library', {lists});}
-    }, 2500);
+    }, 30000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();

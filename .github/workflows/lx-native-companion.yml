@@ -51,7 +51,9 @@ jobs:
           xcodebuild -version
           python3 scripts/prepare.py
           plutil -lint Info.plist CarPlay.entitlements LXCompanion.xcodeproj/project.pbxproj
-          node --test Tests/bridge.test.cjs
+          node --test Tests/bridge.test.cjs Tests/engine.test.cjs
+          xcrun swiftc Sources/Core.swift Sources/LocalEngine.swift Tests/engine-native.swift -o build/engine-native-tests
+          node Tests/engine-http.cjs build/engine-native-tests
           xcrun swiftc Sources/Core.swift Tests/main.swift -o build/core-tests
           build/core-tests
       - name: Build real arm64 iOS application
@@ -81,6 +83,14 @@ jobs:
           done
           test "$(cat "$CONTAINER/Library/Application Support/BundledUIReady")" = ready
           xcrun simctl io "$DEVICE" screenshot build/bundled-ui.png
+          xcrun simctl terminate "$DEVICE" net.minyue.lxcompanion
+          xcrun simctl launch "$DEVICE" net.minyue.lxcompanion -LXPlaybackSmoke | tee build/playback-smoke.log
+          for attempt in $(seq 1 35); do
+            if test -f "$CONTAINER/Library/Application Support/PlaybackSmokeReady"; then break; fi
+            sleep 2
+          done
+          cat "$CONTAINER/Library/Application Support/PlaybackSmokeReady"
+          test "$(cat "$CONTAINER/Library/Application Support/PlaybackSmokeReady")" = ready
       - name: Sign for TrollStore and verify CarPlay capability
         run: |
           set -euo pipefail
