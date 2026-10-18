@@ -10,6 +10,28 @@ concurrency:
   group: lx-native-companion-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  interface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check the actual bundled interface in Chromium and WebKit
+        working-directory: NativeCompanion
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare.py
+          npm install --prefix /tmp/lx-ui-review playwright@1.62.1
+          /tmp/lx-ui-review/node_modules/.bin/playwright install --with-deps chromium webkit
+          LX_PLAYWRIGHT=/tmp/lx-ui-review/node_modules/playwright node Tests/ui.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: LX-Interface-Review
+          path: NativeCompanion/build/ui-review/
+          if-no-files-found: ignore
   build:
     runs-on: macos-15
     timeout-minutes: 25
@@ -51,6 +73,14 @@ jobs:
           xcrun simctl io "$DEVICE" screenshot build/phone-launch.png
           cat "$CONTAINER/Library/Application Support/NativeBridgeError" 2>/dev/null || true
           test "$(cat "$CONTAINER/Library/Application Support/NativeBridgeReady")" = ready
+          xcrun simctl terminate "$DEVICE" net.minyue.lxcompanion
+          xcrun simctl launch "$DEVICE" net.minyue.lxcompanion -LXUISmoke | tee build/bundled-ui-launch.log
+          for attempt in $(seq 1 30); do
+            if test "$(cat "$CONTAINER/Library/Application Support/BundledUIReady" 2>/dev/null)" = ready; then break; fi
+            sleep 2
+          done
+          test "$(cat "$CONTAINER/Library/Application Support/BundledUIReady")" = ready
+          xcrun simctl io "$DEVICE" screenshot build/bundled-ui.png
       - name: Sign for TrollStore and verify CarPlay capability
         run: |
           set -euo pipefail
@@ -79,6 +109,7 @@ jobs:
             NativeCompanion/build/final-entitlements.plist
             NativeCompanion/build/frameworks.txt
             NativeCompanion/build/phone-launch.png
+            NativeCompanion/build/bundled-ui.png
           if-no-files-found: error
       - name: Upload build logs on failure
         if: failure()
@@ -88,4 +119,5 @@ jobs:
           path: |
             NativeCompanion/build/*.log
             NativeCompanion/build/phone-launch.png
+            NativeCompanion/build/bundled-ui.png
           if-no-files-found: ignore

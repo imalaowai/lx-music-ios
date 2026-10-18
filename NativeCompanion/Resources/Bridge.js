@@ -1,6 +1,9 @@
 (function () {
   'use strict';
   if (window.top !== window || !window.webkit?.messageHandlers?.lxNative) return;
+  if (document.documentElement) document.documentElement.dataset.nativeApp = 'true';
+  else document.addEventListener('DOMContentLoaded', () => {document.documentElement.dataset.nativeApp = 'true';}, {once: true});
+  // Installed pages own their version and never register a web service worker.
   const pending = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
   let renderedQueue = -1, renderedSong = '', renderedQuality = '', selection = 0;
@@ -130,7 +133,7 @@
     }
     if (request !== selection) return;
     await post('select', {queue, index: at, ...preferences(), ...(quality ? {quality} : {})});
-
+    window.MobileShell?.openOnPlay?.();
   }
   function syncQueue() {if (applying) return; const api = window.__LX_PLAYER_GETTERS__; if (api) send('queue', {queue: api.getCurrentPlaylist(), index: api.getCurrentIndex(), ...preferences()});}
   function membership(operation) {
@@ -160,7 +163,15 @@
     window.soundEffects && (window.soundEffects.init = () => {});
     document.getElementById('ios-audio-mode')?.remove();
     const settingsView = document.getElementById('view-settings');
-    if (settingsView) {const card = document.createElement('section'); card.className = 'media-settings-card'; const label = document.createElement('p'); label.id = 'lx-native-state'; label.textContent = 'App 原生播放 · 音源直连 · 支持 CarPlay'; card.append(label); settingsView.prepend(card);}
+    if (settingsView) {
+      const card = document.createElement('section'); card.className = 'media-settings-card lx-native-settings';
+      const title = document.createElement('h3'); title.textContent = 'LX 音乐'; card.append(title);
+      const label = document.createElement('p'); label.id = 'lx-native-state'; label.textContent = '内置界面 · 原生播放 · CarPlay'; card.append(label);
+      const address = document.createElement('p'); address.className = 'lx-server-address'; card.append(address);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'apple-secondary'; button.textContent = '更换音乐服务器'; button.onclick = () => send('editServer'); card.append(button);
+      const version = document.createElement('p'); version.className = 'lx-app-version'; card.append(version); settingsView.prepend(card);
+      post('appInfo').then(info => {address.textContent = info.server || ''; version.textContent = 'App ' + info.version + ' · 内置界面 ' + (window.CONFIG?.version || '');}).catch(warn);
+    }
     document.getElementById('listen-room-btn')?.addEventListener('click', () => modal(true));
     document.getElementById('listen-room-close')?.addEventListener('click', () => modal(false));
     document.getElementById('listen-room-modal')?.addEventListener('click', event => {if (event.target.id === 'listen-room-modal') modal(false);});
@@ -177,6 +188,7 @@
     window.updatePlayModeUI = function () {const result = originalMode?.apply(this, arguments); if (!applying) send('preferences', preferences()); return result;};
     syncAuth(); send('preferences', preferences()); send('ready');
     receiveState(playback); receiveRoom(room);
+    setTimeout(() => send('uiReady', {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout}), 0);
     // Foreground UI state only; audio and room networking run natively.
     setInterval(() => {
       if (document.visibilityState !== 'visible') return;

@@ -1,7 +1,7 @@
 import UIKit
 import WebKit
 
-final class WebController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
+final class WebController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
     let player = Player.shared
     var web: WKWebView!
     var address: URL?
@@ -9,7 +9,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     var lastSong = ""
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "LX 音乐"; view.backgroundColor = .systemBackground
+        view.backgroundColor = .systemBackground
+        navigationController?.setNavigationBarHidden(true, animated: false)
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
@@ -18,10 +19,12 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         web = WKWebView(frame: .zero, configuration: config); web.navigationDelegate = self; web.uiDelegate = self
+        web.scrollView.delegate = self
+        web.scrollView.bouncesZoom = false
+        web.scrollView.pinchGestureRecognizer?.isEnabled = false
+        web.scrollView.contentInsetAdjustmentBehavior = .never
         web.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(web)
         NSLayoutConstraint.activate([web.leadingAnchor.constraint(equalTo: view.leadingAnchor), web.trailingAnchor.constraint(equalTo: view.trailingAnchor), web.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), web.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
-        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "服务器", style: .plain, target: self, action: #selector(editAddress))
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .refresh, target: self, action: #selector(reload))
         player.onState = { [weak self] value in self?.emit("state", value) }
         player.onRoom = { [weak self] value in self?.emit("room", value) }
         player.onRevoked = { [weak self] in self?.web.evaluateJavaScript("window.LXBridge?.revoked()", completionHandler: nil) }
@@ -43,6 +46,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 // CI must verify actual WebKit initialization, not only process launch.
                 if let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("NativeBridgeReady")) }
                 #endif
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-LXUISmoke") { self.open(URL(string: "https://lx-ui-check.invalid/")!); return }
+                #endif
                 if let saved = UserDefaults.standard.string(forKey: "lx.server"), let url = URL(string: saved) { self.open(url) }
                 else { self.showWelcome() }
             }
@@ -50,9 +56,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); emit("state", player.snapshot()); emit("room", player.room.snapshot()) }
     func showWelcome() {
-        let label = UILabel(); label.text = "连接你的 LX 音乐服务器\n\n点击左上角“服务器”填写网页地址\n登录后，App 将接管播放和房间同步。"; label.numberOfLines = 0; label.textAlignment = .center; label.textColor = .secondaryLabel
+        let label = UILabel(); label.text = "欢迎使用 LX 音乐\n\n连接音乐服务器，即可使用你的歌单与房间\n界面内置于 App，支持后台播放与 CarPlay"; label.numberOfLines = 0; label.textAlignment = .center; label.textColor = .secondaryLabel
         label.frame = view.bounds.insetBy(dx: 24, dy: 100); label.autoresizingMask = [.flexibleWidth, .flexibleHeight]; label.tag = 212; view.addSubview(label)
-        editAddress()
+        let connect = UIButton(type: .system); connect.setTitle("连接音乐服务器", for: .normal); connect.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold); connect.addTarget(self, action: #selector(editAddress), for: .touchUpInside); connect.translatesAutoresizingMaskIntoConstraints = false; connect.tag = 213; view.addSubview(connect)
+        NSLayoutConstraint.activate([connect.centerXAnchor.constraint(equalTo: view.centerXAnchor), connect.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 115), connect.heightAnchor.constraint(equalToConstant: 48)])
+        DispatchQueue.main.async { self.editAddress() }
     }
     @objc func editAddress() {
         guard presentedViewController == nil else { return }
@@ -66,8 +74,13 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         })
         present(dialog, animated: true)
     }
-    func open(_ url: URL) { address = url; view.viewWithTag(212)?.removeFromSuperview(); web.load(URLRequest(url: url)) }
-    @objc func reload() { if let address = address { web.load(URLRequest(url: address)) } }
+    func open(_ url: URL) {
+        address = url; view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
+        guard let file = Bundle.main.url(forResource: "WebUI", withExtension: "html"), let data = try? Data(contentsOf: file) else { alert("内置界面缺失，请重新安装完整安装包。"); return }
+        let response = URLResponse(url: url, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8")
+        web.loadSimulatedRequest(URLRequest(url: url), response: response, responseData: data)
+    }
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
     func allowed(_ origin: WKSecurityOrigin) -> Bool {
         guard let url = address, origin.protocol == url.scheme, origin.host.lowercased() == url.host?.lowercased() else { return false }
         let expected = url.port ?? (url.scheme == "https" ? 443 : 80)
@@ -78,6 +91,14 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         let op = text(value["op"])
         func done(_ result: Any = true, _ error: String? = nil) { self.reply(id.intValue, result, error) }
         switch op {
+        case "editServer": done(); editAddress()
+        case "appInfo":
+            done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": address?.absoluteString ?? "", "bundledUI": true])
+        case "uiReady":
+            #if DEBUG
+            if bool(value["bundled"]), bool(value["mobile"]), bool(value["themes"]), let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("BundledUIReady")) }
+            #endif
+            done()
         case "auth":
             guard let address = address else { done(false, "服务器地址无效"); return }
             let username = text(value["username"]), token = text(value["token"])
@@ -170,7 +191,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         else { decisionHandler(.cancel); if navigationAction.navigationType == .linkActivated { UIApplication.shared.open(url) } }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { alert("连接失败：\(error.localizedDescription)") }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if view.window?.windowScene?.activationState == .foregroundActive { webView.reload() } }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if view.window?.windowScene?.activationState == .foregroundActive, let address = address { open(address) } }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let dialog = UIAlertController(title: "LX 音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() }); present(dialog, animated: true)
     }

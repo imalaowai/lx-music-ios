@@ -1,0 +1,252 @@
+{
+  "version": "2.8.6",
+  "htmlSha256": "2da8c41fcaa648c1c89c9c4e40e8c06a4eae6f7d84aa5adda50b64b6a35825e4",
+  "htmlBytes": 3836671,
+  "assets": {
+    "public/music/index.html": {
+      "sha256": "199975b0db74822635a7632dbf7748b681a24f4d475fe40aa18aa0259323a511",
+      "bytes": 469127
+    },
+    "public/js/config.js": {
+      "sha256": "f1b0535ad649285fcd23caec39bbe43f39a8e160e00455aaaf9f3dae01bd9243",
+      "bytes": 310
+    },
+    "public/music/js/theme_studio.js": {
+      "sha256": "cc0c5591806bbc87aae70b75a7ae1481d5b28f2e21c1b596ddddb1cc4fa5234f",
+      "bytes": 9131
+    },
+    "public/music/assets/tailwindcss.js": {
+      "sha256": "176e894661aa9cdc9a5cba6c720044cbbf7b8bd80d1c9a142a7c24b1b6c50d15",
+      "bytes": 407279
+    },
+    "public/music/js/tailwind_setup.js": {
+      "sha256": "b56dcd3565c8bdc1aafaaa073ad653d54a9f3fdd1a196023e6546e39cfb86b7a",
+      "bytes": 1265
+    },
+    "public/music/js/crypto-js.min.js": {
+      "sha256": "8e3b0117f4df4be452c0b6af5b8f0a0acf9d4ade23d08d55d7e312af22077762",
+      "bytes": 48316
+    },
+    "public/music/js/marked.min.js": {
+      "sha256": "1679f7ba03f87825eab828ffd1f81651425281d4b0c1d03042f522d7851f2327",
+      "bytes": 46667
+    },
+    "public/music/js/Sortable.min.js": {
+      "sha256": "ca68430703c4f5960e90735867c6e94d29b5a3de37107d8100e5a301007e9e6e",
+      "bytes": 44581
+    },
+    "public/js/notification-engine.js": {
+      "sha256": "f3d8cccb79365d6d461a575989cb03df22093674e8152acd6e7149ede606d934",
+      "bytes": 24316
+    },
+    "public/music/assets/pako.min.js": {
+      "sha256": "29cfa0542b9864b6640cfdcc8f15b184db6431b532db2702a3ce97e5f2a7fc1c",
+      "bytes": 45988
+    },
+    "public/music/js/NoSleep.min.js": {
+      "sha256": "887b763e53ecaeba7bdddcacb29f7ffaf9da8a3576c2cca7ea4a1ecd14ff731c",
+      "bytes": 16732
+    },
+    "public/music/js/log_viewer.js": {
+      "sha256": "ed9a8b98bd67ceff56c5cfee33b9f4f3e56e182c63c0ed39563f1090ab976854",
+      "bytes": 4242
+    },
+    "public/music/js/lyric-utils.js": {
+      "sha256": "0ea5fecd7cef6ed33f7321a39f8a21e2db89093fc0e92edfe069a8360c1a8d43",
+      "bytes": 1630
+    },
+    "public/music/js/lyric-parser.js": {
+      "sha256": "c41fa0200e3680349d44402d44cb2b05d1b2c30f2e02e11b404a8f6c1926418e",
+      "bytes": 12464
+    },
+    "public/music/js/quality.js": {
+      "sha256": "bd42d6398e7b11c8b2ad4ff88fd9ea76ce4959b38c69c291844c97912a8bbf74",
+      "bytes": 6158
+    },
+    "public/music/js/idb_store.js": {
+      "sha256": "9644c26a19a8b1801fdf3f91fbfe2d54269958b18b8e4a2aab776a9203838d41",
+      "bytes": 2936
+    },
+    "public/music/js/user_sync.js": {
+      "sha256": "c50b965e22e132d294f9f965ba4021ce4ab4bee41814c66243fe383e903de74d",
+      "bytes": 27474
+    },
+    "public/music/js/batch_pagination.js": {
+      "sha256": "69a20de804bb72262af7294e8948824f078640fd0dd5a53ebcd867b245bfff74",
+      "bytes": 20015
+    },
+    "public/music/js/single_song_ops.js": {
+      "sha256": "b952c06f92e023bdc8de61c823869d35087da12a7b86bf3d24d7abaaafa9602e",
+      "bytes": 27341
+    },
+    "public/music/js/theme_manager.js": {
+      "sha256": "805335da840d99d7e7fd1bec9aac66e48a03a6d41c8c53658b6420bd89057e0b",
+      "bytes": 5703
+    },
+    "public/music/js/list_search.js": {
+      "sha256": "0b44b0eb835cb7e4cd199f94dea78f7cfd87c8eca3d408e25a1b8f1cf1bcb192",
+      "bytes": 9608
+    },
+    "public/music/js/songlist_manager.js": {
+      "sha256": "e72edaafe5364e5fa423e11caa6ec4c3cd1aa43a9b2d6b2c042291773759e5f6",
+      "bytes": 47855
+    },
+    "public/music/assets/logo.svg": {
+      "sha256": "27a432e2d08b7e948931e9a06c12b48fabbc2b2408f20e7108059ee30867ca0a",
+      "bytes": 1013
+    },
+    "public/music/js/leaderboard_manager.js": {
+      "sha256": "52c40765469c27d5554e24c41b74030502261a7617813eb7f476e4f9d2c47b0e",
+      "bytes": 32806
+    },
+    "public/music/js/dislike_manager.js": {
+      "sha256": "8218b263f4a1b43d53f8ac54f0cff174736f491261f1defc0c7da5ac7d32c00b",
+      "bytes": 9374
+    },
+    "public/music/js/wave.js": {
+      "sha256": "11c9d42993a0d563f0cd44e22bdd1aaecb1545f18c37203e8173e8d1fd0175c7",
+      "bytes": 25419
+    },
+    "public/music/js/visualizer.js": {
+      "sha256": "8d46a663a013ae22d72963fe2f607e165baa4ec7af0e0389f4a19b4b25be1516",
+      "bytes": 13630
+    },
+    "public/music/js/lyric-card.js": {
+      "sha256": "6b2135baf8fa9ca1633918a82bffa25f1f806ad39994edfb4af78941f16e7891",
+      "bytes": 28200
+    },
+    "public/music/js/sound-effects.js": {
+      "sha256": "9509d0bbc8ae8b84510643a58029a765c5195f299110b6e4ec1327b66b01e3d2",
+      "bytes": 32655
+    },
+    "public/music/js/device_zip.js": {
+      "sha256": "b41afed25fde2da2dc158e81ac8c8cff7f2d251318a1b55fa89f497acf318e7d",
+      "bytes": 2084
+    },
+    "public/music/js/download_manager.js": {
+      "sha256": "ea22fc3d67948d07e50a5532b04fa421f77f343a61bf5728d83019012c79a88c",
+      "bytes": 15914
+    },
+    "public/music/js/download_options.js": {
+      "sha256": "42b83df5491411347d6183963232386531ebaef163e16581d34ed0d6d7b9501a",
+      "bytes": 3540
+    },
+    "public/music/js/device_library.js": {
+      "sha256": "507e89c0f3abd67341c2c087284e8c403a3a89385d5ddc6b66df7cf70f89dc4c",
+      "bytes": 51566
+    },
+    "public/music/js/share_hub.js": {
+      "sha256": "72f95eae18b06aed4d8bbd4063fb96647bfcf6ce42f8d1a39ede1d2718985a89",
+      "bytes": 13353
+    },
+    "public/music/js/library_hub.js": {
+      "sha256": "1387a31d5b4047ceb2755df6a424674f9279aa4fa113d6cc660fd56d14fe9935",
+      "bytes": 15286
+    },
+    "public/music/js/room_emojis.js": {
+      "sha256": "d0247795fed8d9110711bc367987e1043b2aac596719b95ddc362ac77984ba2b",
+      "bytes": 4376
+    },
+    "public/music/js/chat_scroll.js": {
+      "sha256": "cd304e7b031ecb607854610fe581b500edafdcbdd98ae4d41e6152cb9f6bf0d9",
+      "bytes": 1999
+    },
+    "public/music/js/room_social.js": {
+      "sha256": "9c1ab4f6ef23ed2a083ad3422fc91f395eaab8ba92e6dcc115a7ff7e33d68c72",
+      "bytes": 25550
+    },
+    "public/music/js/common_ui.js": {
+      "sha256": "71a29e5e64b752082009e7d4b96dec37fdde54f709611984b1298eb2c6b5e309",
+      "bytes": 3064
+    },
+    "public/music/js/sync_download.js": {
+      "sha256": "41df37cc978dcadde304cdb5b288ed2b2ae52755e14f8fbfd08a54bc16623533",
+      "bytes": 45841
+    },
+    "public/music/app.js": {
+      "sha256": "e6c18ffac35b2f80d4aa4d703d3c091c0ad0d14262ea5eb3a3639d8c15f28d34",
+      "bytes": 738866
+    },
+    "public/music/js/account-panel.js": {
+      "sha256": "237768acb61ebde018fb69545cd62d7176539d626b035a4f9ee6d69e89864038",
+      "bytes": 11137
+    },
+    "public/music/js/apple-shell.js": {
+      "sha256": "49c45fae48d394c120c64c87a28b4f8518eb666fba748c42e0f779cc9ca04bcd",
+      "bytes": 4142
+    },
+    "public/music/js/mobile-shell.js": {
+      "sha256": "c29c021a6d1008ebc895263802490a0999062b1bb10fb9c2241aebc2ed78b3dc",
+      "bytes": 10386
+    },
+    "public/music/js/desktop_layout.js": {
+      "sha256": "1b7897e0da1d8a38f3700ca156dfb462f33aede5c6effbdbeff6d1938203a9f2",
+      "bytes": 8409
+    },
+    "public/music/css/theme_variables.css": {
+      "sha256": "0d6b33f0803f88b89017da56077bb4dc2eb4542cd7f2215054d9847f3315e0b9",
+      "bytes": 7990
+    },
+    "public/music/assets/fontawesome/css/all.min.css": {
+      "sha256": "1edb1725a9ea8ca4dcf2f5508cee183218aa1685e47c1b23056717f754f58ebf",
+      "bytes": 102025
+    },
+    "public/music/assets/fontawesome/webfonts/fa-brands-400.woff2": {
+      "sha256": "748332090c4b8e20f95d0ff59f0be20fa9c889359d3b36d4b886d73376054207",
+      "bytes": 108020
+    },
+    "public/music/assets/fontawesome/webfonts/fa-regular-400.woff2": {
+      "sha256": "8e7e5ea1b15f62ab14dbd41768e8fbcd21cc859a4ea5da812457ee714299fb35",
+      "bytes": 24948
+    },
+    "public/music/assets/fontawesome/webfonts/fa-solid-900.woff2": {
+      "sha256": "7152a6933ee3d690ec2af3d09da9d701723d16aa3410a6d80f28ff8866f3b880",
+      "bytes": 150124
+    },
+    "public/music/css/app.css": {
+      "sha256": "23daa7173f95219e23a7c681c3708b1cb71726ec1b93fea0a8559cea1425ebf1",
+      "bytes": 32258
+    },
+    "public/music/css/apple.css": {
+      "sha256": "cfdfbbe21dc2f471bba13a4aaf1fac45ce9499cfa53423aecc34d0f5ff46b6ac",
+      "bytes": 38974
+    },
+    "public/music/css/room-chat.css": {
+      "sha256": "045b28e6f7bc660fcc9fe81aadd13364080382a6627570f65b3cef684e96e13b",
+      "bytes": 14318
+    },
+    "public/music/css/mobile.css": {
+      "sha256": "d7737b26fd1248702cf21cdbe3b54617c7846a12b808f5edc2f978e4956213a4",
+      "bytes": 18538
+    },
+    "public/music/css/desktop_layout.css": {
+      "sha256": "40a39fa3b081de0cdca8d9a6288239cd14027c46fdec31ea7b74809532fdc89f",
+      "bytes": 13611
+    },
+    "public/music/css/content_layout.css": {
+      "sha256": "55384755ef3e2eed0d36c3b0d5f36bfc9e808d0ed0441218375b7ed7c3fe5f70",
+      "bytes": 4003
+    },
+    "public/music/css/theme_studio.css": {
+      "sha256": "a661239ee4bcda7edad0127ad7b7509539b9f1e6d05ce8d1f736e92a1bc5a1a8",
+      "bytes": 9318
+    },
+    "public/music/css/app_refinement.css": {
+      "sha256": "169a19ff4c2fe8004bf329d56c78314cbac5838214799fdedf1ab783f869b844",
+      "bytes": 14608
+    },
+    "public/music/assets/icons/apple-touch-icon.png": {
+      "sha256": "7e7924cc0fce08285b924e1b890f7ad1ad05b9b3366334623757e4660f49fb3c",
+      "bytes": 3509
+    }
+  },
+  "excludedNativeOwners": [
+    "ios-background-audio.js",
+    "ios_audio_output.js",
+    "listen_room.js",
+    "pwa.js",
+    "pwa_update.js",
+    "queue_audio.js",
+    "room_start.js"
+  ]
+}

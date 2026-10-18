@@ -1,0 +1,71 @@
+// Integration review of the actual packaged page, including both browser engines.
+const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),assert=require('node:assert/strict');
+const {chromium,webkit,devices}=require(process.env.LX_PLAYWRIGHT || 'playwright');
+const root=path.resolve(__dirname,'..'),out=path.join(root,'build/ui-review');fs.mkdirSync(out,{recursive:true});
+const html=fs.readFileSync(root+'/generated/WebUI.html'),bridge=fs.readFileSync(root+'/Resources/Bridge.js','utf8');
+const server=http.createServer((req,res)=>{
+ if(req.url==='/'){res.setHeader('Content-Type','text/html');res.end(html);return;}
+ res.setHeader('Content-Type','application/json');
+ if(req.url.startsWith('/api/custom-source/list')){res.end('[]');return;}
+ res.end(JSON.stringify(req.url.includes('/api/music/config')?{'player.enableAuth':false}: {success:true,data:{defaultList:[],loveList:[],userList:[]},list:[],tasks:[],enabled:false}));
+});
+(async()=>{
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port,reports=[];
+ const engines=process.env.LX_CHROMIUM?[[chromium,'chromium']]:[[chromium,'chromium'],[webkit,'webkit']];
+ for(const [engine,name] of engines){
+  const browser=await engine.launch({headless:true,...(process.env.LX_CHROMIUM?{executablePath:process.env.LX_CHROMIUM}:{}),args:name==='chromium'?['--no-sandbox','--no-zygote','--disable-dev-shm-usage']:[]});
+  try{
+   for(const width of [1440,430,375]){
+    const phone=width<700,context=await browser.newContext({...phone?devices['iPhone 13 Pro Max']:{},viewport:{width,height:phone?(width===375?667:932):950},serviceWorkers:'block'});
+    await context.addInitScript(()=>{
+     localStorage.setItem('lx_desktop_layout','apple');localStorage.setItem('lx_sync_mode','local');
+     localStorage.setItem('lx_theme_profiles',JSON.stringify({apple:{colour:'rose'},kugou:{colour:'blue'}}));
+     localStorage.setItem('lx_settings',JSON.stringify({autoResume:false,keepScreenAwake:false}));
+     window.__nativeCommands=[];
+     window.webkit={messageHandlers:{lxNative:{postMessage(message){
+      window.__nativeCommands.push(message);
+      queueMicrotask(()=>{
+       window.LXBridge.reply(message.id,message.op==='appInfo'?{version:'1.1.0',server:location.origin,bundledUI:true}:true,null);
+       if(message.op==='select')window.LXBridge.state({queueRevision:10,queue:message.queue,index:message.index,song:message.queue[message.index],paused:false,playing:true,position:12,duration:180,mode:'list'});
+      });
+     }}}};
+    });
+    await context.addInitScript({content:bridge});
+    const page=await context.newPage(),errors=[],remoteUI=[];page.on('pageerror',e=>errors.push(e.stack));
+    page.on('request',r=>{if(['script','stylesheet','font'].includes(r.resourceType()) && /^https?:/.test(r.url()))remoteUI.push(r.url());});
+    await page.route('https://**/*',r=>r.abort());
+    await page.goto(base,{waitUntil:'load'});await page.waitForFunction(()=>window.MobileShell && window.DesktopLayout && window.LibraryHub);
+    await page.waitForTimeout(200);
+    if(process.env.LX_TEST_FONT_CSS){await page.addStyleTag({content:fs.readFileSync(process.env.LX_TEST_FONT_CSS,'utf8')});await page.evaluate(()=>document.fonts.ready);}
+    await page.evaluate(()=>{
+     const colours=[['#e98375','#8e3b54'],['#5e9db0','#254e75'],['#a191bf','#5a446d'],['#d1b57a','#81613b'],['#759688','#355449'],['#808aaf','#373c60']];
+     const titles=['黄昏的慢镜头','周末去看海','夜色里的独白','那些年的旋律','晴天散步计划','专注这一刻'];
+     const art=i=>'data:image/svg+xml;base64,'+btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${colours[i][0]}"/><stop offset="1" stop-color="${colours[i][1]}"/></linearGradient></defs><path fill="url(#g)" d="M0 0h500v500H0z"/><circle cx="340" cy="150" r="110" fill="#fff" opacity=".12"/><path d="M0 420Q120 180 270 350T550 270V500H0" fill="#fff" opacity=".12"/><text x="42" y="75" fill="#fff" opacity=".8" font-size="20" font-family="Arial" letter-spacing="5">LX COLLECTION</text><text x="42" y="415" fill="#fff" font-size="54" font-family="Arial">0${i+1}</text></svg>`);
+     window.__uiSongs=titles.map((name,i)=>({id:'ui-'+i,name,singer:'LX Music',source:'wy',img:art(i),pic:art(i)}));
+     currentListData={defaultList:[window.__uiSongs[0]],loveList:[],userList:titles.map((name,i)=>({id:'collection-'+i,name,list:window.__uiSongs.slice(0,i+1),cover:art(i)}))};
+    });
+    for(const theme of ['apple','kugou','lx','apple']){
+     await page.evaluate(theme=>{window.DesktopLayout.select(theme);window.LibraryHub.show();},theme);
+     await page.waitForTimeout(120);
+     const layout=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,theme:document.documentElement.dataset.appTheme,players:document.querySelectorAll('#audio-player').length,footers:document.querySelectorAll('#player-footer').length,install:getComputedStyle(document.querySelector('#pwa-install-btn')).display}));
+     assert.ok(layout.scroll<=layout.width,JSON.stringify(layout));assert.equal(layout.players,1);assert.equal(layout.footers,1);assert.equal(layout.install,'none');assert.equal(layout.theme,theme);
+     await page.screenshot({path:out+'/'+name+'-'+width+'-'+theme+'.png'});
+     reports.push({browser:name,width,theme,layout});
+    }
+    await page.evaluate(()=>window.switchTab('settings'));await page.waitForTimeout(100);
+    assert.ok(await page.locator('#desktop-layout-settings').isVisible());assert.ok(await page.getByText('更换音乐服务器',{exact:true}).isVisible());
+    await page.screenshot({path:out+'/'+name+'-'+width+'-settings.png'});
+    if(phone){
+     await page.evaluate(()=>{window.__LX_PLAYER_GETTERS__.setRoomPlaylist(window.__uiSongs,0);window.playSong(window.__uiSongs[0],0);});
+     await page.waitForFunction(()=>!document.getElementById('view-player-detail').classList.contains('hidden'));
+     await page.waitForTimeout(300);assert.ok(await page.locator('#mobile-player-cover-container').isVisible());
+     await page.screenshot({path:out+'/'+name+'-'+width+'-player.png'});
+     assert.equal(await page.evaluate(()=>document.querySelector('#audio-player').getAttribute('src')),null);
+    }
+    assert.deepEqual(errors,[],'Page JS errors');assert.deepEqual(remoteUI,[],'Packaged UI must not fetch scripts, styles or fonts');
+    await context.close();
+   }
+  }finally{await browser.close();}
+ }
+ fs.writeFileSync(out+'/report.json',JSON.stringify(reports,null,2));console.log('PASS: '+reports.length+' layout checks, '+engines.length+' browser engine(s), native playback selection, no remote UI dependencies.');
+})().catch(e=>{console.error(e);process.exitCode=1}).finally(()=>server.close());

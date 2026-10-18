@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Generate a dependency-free Xcode project; no CocoaPods/React Native build."""
-import base64, hashlib, json, pathlib, subprocess, sys
+import base64, hashlib, json, lzma, pathlib, subprocess, sys
 root = pathlib.Path(__file__).resolve().parents[1]
+bundle = root/'Resources/WebUI.html.xz'
+if not bundle.is_file(): raise RuntimeError('Bundled web UI missing; run scripts/bundle_web.py SOURCE_ROOT first')
+web = lzma.decompress(bundle.read_bytes())
+manifest = json.loads((root/'Resources/WebUI.manifest.json').read_text())
+assert hashlib.sha256(web).hexdigest() == manifest['htmlSha256'], 'Web UI checksum mismatch'
+(root/'generated').mkdir(exist_ok=True)
+(root/'generated/WebUI.html').write_bytes(web)
 def ident(value): return hashlib.sha256(value.encode()).hexdigest()[:24].upper()
 objects = {}
 def add(name, content): objects[ident(name)] = content; return ident(name)
@@ -29,7 +36,7 @@ for points,scale in [(20,1),(20,2),(29,1),(29,2),(40,1),(40,2),(76,1),(76,2),(83
 (assets/'marketing.png').write_bytes(seed.read_bytes())
 images.append({'idiom':'ios-marketing','size':'1024x1024','scale':'1x','filename':'marketing.png'})
 (assets/'Contents.json').write_text(json.dumps({'images':images,'info':{'version':1,'author':'xcode'}},indent=2))
-for rel,kind in [('Resources/Bridge.js','text'),('Resources/LaunchScreen.storyboard','file.storyboard'),('generated/Assets.xcassets','folder.assetcatalog')]:
+for rel,kind in [('Resources/Bridge.js','text'),('Resources/ThirdPartyNotices.txt','text'),('generated/WebUI.html','text.html'),('Resources/LaunchScreen.storyboard','file.storyboard'),('generated/Assets.xcassets','folder.assetcatalog')]:
     reference=add(rel,f'isa = PBXFileReference; lastKnownFileType = {kind}; path = {q(rel)}; sourceTree = "<group>";')
     resource_refs.append(reference);resource_builds.append(add('build-'+rel,f'isa = PBXBuildFile; fileRef = {reference};'))
 product=add('product','isa = PBXFileReference; explicitFileType = wrapper.application; path = LXCompanion.app; sourceTree = BUILT_PRODUCTS_DIR;')
