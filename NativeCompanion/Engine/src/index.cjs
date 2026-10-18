@@ -34,6 +34,7 @@ async function resolveSong(song,quality='flac',fallback=true){
 }
 globalThis.__localResolve=(source,song,type)=>resolveSong({...song,source},type,true);
 function sourceFor(query){const source=query.source||'kw';if(!providers[source])throw new Error('此平台暂不可用');return providers[source];}
+const unwrap=value=>value?.promise||value;
 async function route(input){
  const url=new URL(input.path,'https://local.invalid/'),path=url.pathname,q=Object.fromEntries(url.searchParams),body=input.body||{},source=sourceFor(q);
  switch(path){
@@ -48,10 +49,14 @@ async function route(input){
   case '/api/music/songList/userPlaylist':return source.userPlaylist.getList(q.uid,Number(q.page)||1);
   case '/api/music/leaderboard/boards':return source.leaderboard.getBoards();
   case '/api/music/leaderboard/list':return source.leaderboard.getList(q.bangid,Number(q.page)||1);
-  case '/api/music/lyric':return source.getLyric({...q,...body.songInfo});
-  case '/api/music/pic':return {url:await source.getPic({...q,...body.songInfo})};
+  case '/api/music/artistDetail':return source.extendDetail.getArtistDetail(q.id);
+  case '/api/music/artistAlbums':return source.extendDetail.getArtistAlbums(q.id,Number(q.page)||1);
+  case '/api/music/artistSongs':{const songs=[];for(let page=1;page<=20;page++){const result=await source.extendDetail.getArtistSongs(q.id,page,100,q.order||'hot');songs.push(...result.list||[]);if((result.list||[]).length<100||result.total>0&&songs.length>=result.total)break;}return songs;}
+  case '/api/music/albumSongs':return source.extendDetail.getAlbumSongs(q.id);
+  case '/api/music/lyric':{const song={...q,...body.songInfo};song.songmid=String(song.songmid||song.songId||song.id||'').replace(new RegExp('^'+(song.source||q.source)+'_'),'');return unwrap(source.getLyric(song));}
+  case '/api/music/pic':return {url:await unwrap(source.getPic({...q,...body.songInfo}))};
   case '/api/music/url':return resolveSong(body.songInfo,body.quality,body.allowQualityFallback!==false);
-  case '/api/music/comment':return sourceFor(body.songInfo).comment.getComment(body.songInfo,body.page||1,body.limit||20);
+  case '/api/music/comment':return sourceFor(body.songInfo).comment[body.type==='hot'?'getHotComment':'getComment'](body.songInfo,body.page||1,body.limit||20);
   case '/api/custom-source/list':return listSources();
   default:throw new Error('此功能需要连接同步服务器');
  }

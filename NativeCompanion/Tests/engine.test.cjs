@@ -3,6 +3,7 @@ function engine(){
  const calls=[],pending=new Map();let sequence=0,context;
  const http=(id,json)=>{const request=JSON.parse(json);calls.push(request);let body={ok:true,url:'https://audio.invalid/song.mp3'};
   if(request.url.includes('search.kuwo.cn'))body={TOTAL:'1',abslist:[{MUSICRID:'MUSIC_123',SONGNAME:'测试歌曲',ARTIST:'歌手',ALBUM:'专辑',DURATION:'180',N_MINFO:'level:standard,bitrate:128,format:mp3,size:3.2Mb',SONGID:'123'}]};
+  if(request.url.includes('/song/lyric'))body={code:200,lrc:{lyric:'[00:00.00]本机歌词'},tlyric:{lyric:'[00:00.00]Local lyrics'}};
   const payload=Buffer.from(JSON.stringify(body));queueMicrotask(()=>context.__nativeReply(id,JSON.stringify({statusCode:200,headers:{'content-type':'application/json'},base64:payload.toString('base64'),text:payload.toString()}),''));
  };
  context={__nativeRandom:n=>crypto.randomBytes(n).toString('base64'),__nativeHTTP:http,__nativeCancel(){},__nativeTimer:(id,delay)=>{const timer=setTimeout(()=>context.__runTimer(id),delay);timer.unref();},__nativeURL:(value,base)=>{const u=new URL(value,base||undefined);return JSON.stringify({origin:u.origin,protocol:u.protocol,host:u.host,hostname:u.hostname,port:u.port,pathname:u.pathname,search:u.search,hash:u.hash});},__nativeComplete:(id,json,error)=>{const item=pending.get(id);if(!item)return;pending.delete(id);clearTimeout(item.timer);error?item.reject(new Error(error)):item.resolve(JSON.parse(json));},console};
@@ -32,6 +33,12 @@ test('Invalid source and unsupported URL schemes fail explicitly',async()=>{
  const e=engine();await assert.rejects(e.run('import',{id:'invalid',script:'lx.send("inited",{sources:{}});'}),/未注册/);
  await e.run('import',{id:'unsafe',script:'lx.on("request",()=>"file:///private/data");lx.send("inited",{sources:{kw:{qualitys:["128k"]}}});'});
  await assert.rejects(e.run('resolve',{song:{source:'kw'},quality:'128k'}),/有效的播放地址/);
+});
+
+test('Provider lyric requests return their resolved content for display and offline saving',async()=>{
+ const e=engine(),lyric=await e.run('api',{path:'/api/music/lyric?source=wy&songmid=wy_123'});
+ assert.equal(lyric.lyric,'[00:00.00]本机歌词');assert.equal(lyric.tlyric,'[00:00.00]Local lyrics');assert.equal(lyric.promise,undefined);
+ assert.ok(e.calls.some(call=>call.url.includes('/song/lyric')));
 });
 
 test('The iOS 15 bundle contains no unsupported lookbehind expression',()=>{const source=fs.readFileSync(path.join(__dirname,'../generated/LocalEngine.js'),'utf8');assert.ok(!source.includes('(?<=')&&!source.includes('(?<!'));});

@@ -49,7 +49,7 @@ const server=http.createServer((req,res)=>{
     });
     await context.addInitScript({content:bridge});
     await context.addInitScript({content:'window.__LX_SHELL_CSS__='+JSON.stringify(shellCSS)+';document.addEventListener("DOMContentLoaded",()=>{'+shell+'});'});
-    const page=await context.newPage(),errors=[],remoteUI=[];page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.stack));
+    const page=await context.newPage(),errors=[],remoteUI=[];page.setDefaultTimeout(10000);page.on('pageerror',e=>{errors.push({name:e.name,message:e.message,stack:e.stack});fs.writeFileSync(out+'/'+name+'-'+width+'-errors.json',JSON.stringify(errors,null,2));});
     page.on('request',r=>{if(['script','stylesheet','font'].includes(r.resourceType()) && /^https?:/.test(r.url()))remoteUI.push(r.url());});
     await page.route('https://**/*',r=>r.abort());
     await page.goto(base,{waitUntil:'load'});await page.waitForFunction(()=>window.MobileShell && window.DesktopLayout && window.LibraryHub && window.NativeShell);

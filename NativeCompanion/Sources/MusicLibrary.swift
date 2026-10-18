@@ -94,6 +94,14 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
             }
         }
         let picture = text(raw["img"]).isEmpty ? text(raw["picUrl"]) : text(raw["img"])
+        if picture.isEmpty, !source.isEmpty, source != "local" {
+            LocalEngine.shared.call("api", ["path": "/api/music/pic?source=" + source, "body": ["songInfo": raw]]) { [weak self] result in
+                guard let self = self, self.records.contains(where: {text($0["id"]) == id}), case .success(let value) = result, let object = value as? Object else { return }
+                self.cacheCover(id, from: text(object["url"]))
+            }
+        } else { cacheCover(id, from: picture) }
+    }
+    func cacheCover(_ id: String, from picture: String) {
         guard let url = URL(string: picture), ["http", "https"].contains(url.scheme ?? "") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let self = self, let data = data, data.count < 8_000_000 else { return }

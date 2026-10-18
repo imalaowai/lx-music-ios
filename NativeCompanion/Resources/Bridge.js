@@ -43,7 +43,7 @@
   const originalFetch = window.fetch?.bind(window);
   if (originalFetch) window.fetch = async function (input, options = {}) {
     const url = new URL(typeof input === 'string' ? input : input.url, location.href);
-    const local = /^\/api\/music\/(?:config|search|tipSearch|hotSearch|songList\/|leaderboard\/|lyric(?:$|\?)|pic(?:$|\?)|url(?:$|\?)|comment(?:$|\?))/.test(url.pathname) || url.pathname === '/api/custom-source/list';
+    const local = /^\/api\/music\/(?:config|search|tipSearch|hotSearch|artistDetail|artistAlbums|artistSongs|albumSongs|songList\/|leaderboard\/|lyric(?:$|\?)|pic(?:$|\?)|url(?:$|\?)|comment(?:$|\?))/.test(url.pathname) || url.pathname === '/api/custom-source/list';
     if (url.origin === location.origin && local) {
       try {
         const body = typeof options.body === 'string' ? JSON.parse(options.body) : {};
