@@ -1,14 +1,14 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{EventEmitter}=require('node:events');
 function fixture(){
-  const messages=[],listeners={},intervals=[],renders={queue:0,metadata:0};let htmlPlays=0;let context;
+  const messages=[],listeners={},intervals=[],renders={queue:0,metadata:0};let htmlPlays=0;let context;let ready;const initialized=new Promise(resolve=>ready=resolve);
   class Media extends EventEmitter {constructor(){super();this.id='audio-player';}play(){htmlPlays++;return Promise.resolve();}pause(){}load(){}dispatchEvent(e){this.emit(e.type,e);}addEventListener(n,f){this.on(n,f);}}
   class Storage{constructor(){this.map=new Map();}getItem(k){return this.map.get(k)??null;}setItem(k,v){this.map.set(k,String(v));}removeItem(k){this.map.delete(k);}clear(){this.map.clear();}}
   const storage=new Storage();storage.setItem('lx_sync_user','fixture');storage.setItem('lx_user_token','private-token');
   const audio=new Media(),queue=[{id:'a',name:'A',source:'wy'},{id:'b',name:'B',source:'wy'}];
   const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
   const window={};window.top=window;window.window=window;
-  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>window.LXBridge.reply(value.id,true,null));}}}};
+  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{window.LXBridge.reply(value.id,true,null);if(value.op==='uiReady')ready();});}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
@@ -19,7 +19,7 @@ function fixture(){
   vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../Resources/Bridge.js'),'utf8'),context);
   listeners.DOMContentLoaded();
   context.currentPlaylist=queue.slice();context.currentIndex=0;
-  return {window,context,audio,messages,intervals,storage,renders,htmlPlays:()=>htmlPlays,settle:()=>new Promise(setImmediate)};
+  return {window,context,audio,messages,intervals,storage,renders,htmlPlays:()=>htmlPlays,settle:async()=>{await initialized;await new Promise(setImmediate);}};
 }
 test('Page selections transfer a complete queue; playback never starts HTML audio',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;

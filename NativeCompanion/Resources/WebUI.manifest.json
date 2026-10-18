@@ -1,14 +1,14 @@
 {
   "version": "2.8.6",
-  "htmlSha256": "2da8c41fcaa648c1c89c9c4e40e8c06a4eae6f7d84aa5adda50b64b6a35825e4",
-  "htmlBytes": 3836671,
+  "htmlSha256": "59405a98b2d8b95c32ae62becb6572b774896b74380ad2ce9c9d9c9c4e68825f",
+  "htmlBytes": 3837229,
   "assets": {
     "public/music/index.html": {
       "sha256": "199975b0db74822635a7632dbf7748b681a24f4d475fe40aa18aa0259323a511",
       "bytes": 469127
     },
     "public/js/config.js": {
-      "sha256": "f1b0535ad649285fcd23caec39bbe43f39a8e160e00455aaaf9f3dae01bd9243",
+      "sha256": "4c02ab886e13a51924f78a9b4b0b0dffc5adad201afb81a2911b7f61030e5501",
       "bytes": 310
     },
     "public/music/js/theme_studio.js": {
@@ -176,8 +176,8 @@
       "bytes": 4142
     },
     "public/music/js/mobile-shell.js": {
-      "sha256": "c29c021a6d1008ebc895263802490a0999062b1bb10fb9c2241aebc2ed78b3dc",
-      "bytes": 10386
+      "sha256": "cf46309858072a026fea35c2ed90d2207eb2d6d247458614db753fc6ec73dca5",
+      "bytes": 10944
     },
     "public/music/js/desktop_layout.js": {
       "sha256": "1b7897e0da1d8a38f3700ca156dfb462f33aede5c6effbdbeff6d1938203a9f2",
