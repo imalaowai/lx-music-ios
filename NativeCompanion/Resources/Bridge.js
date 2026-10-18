@@ -6,7 +6,30 @@
   // Installed pages own their version and never register a web service worker.
   const pending = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
+  // Native time is authoritative; interpolate locally so karaoke does not step at 2 Hz.
+  // Never extrapolate indefinitely if the app stops sending foreground snapshots.
+  let clock = {position: 0, at: performance.now(), running: false, rate: 1, correction: 0};
+  let foregroundSync = false;
+  function displayTime(now = performance.now()) {
+    const elapsed = clock.running ? Math.max(0, Math.min(1.25, (now - clock.at) / 1000)) : 0;
+    const value = clock.position + elapsed * clock.rate + clock.correction * Math.min(1, elapsed / 0.5);
+    return Math.max(0, playback.duration > 0 ? Math.min(playback.duration, value) : value);
+  }
+  function anchorClock(state, previous) {
+    const now = performance.now(), projected = displayTime(now);
+    const position = Math.max(0, Number(state.position) || 0);
+    const running = state.playing === true && !state.paused && !state.loading && !state.seeking;
+    const continuous = running && clock.running && !foregroundSync &&
+      key(state.song) === key(previous.song) && state.timelineRevision === previous.timelineRevision;
+    const correction = position - projected;
+    const smooth = continuous && Math.abs(correction) < 0.15;
+    clock = {position: smooth ? projected : position, at: now, running,
+      rate: Number(state.playbackRate) > 0 ? Number(state.playbackRate) : 1,
+      correction: smooth ? correction : 0};
+    foregroundSync = false;
+  }
   let renderedQueue = -1, renderedSong = '', renderedQuality = '', selection = 0;
+  let renderedPlaying = null, renderedStatus = null, renderedMode = null;
   let room = {binding: null, state: {}, participants: [], connected: false, enabled: true, syncOnTrack: true};
   const post = (op, values = {}) => new Promise((resolve, reject) => {
     const id = ++sequence;
@@ -41,6 +64,7 @@
   function audioElement() { return document.getElementById('audio-player'); }
   function receiveState(state) {
     const previous = playback; playback = {...playback, ...state}; state = playback;
+    anchorClock(state, previous);
     if (!installed) return;
     applying = true;
     try {
@@ -53,18 +77,29 @@
       const changedSong = key(state.song) !== renderedSong;
       if (state.song?.name && (changedSong || renderedQuality !== state.quality)) { updatePlayerInfo(state.song, state.quality); renderedQuality = state.quality; }
       if (changedSong && state.song?.name) { renderedSong = key(state.song); try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {} }
-      updatePlayButton(!state.paused);
-      setPlayerStatus(state.error || (state.loading ? '正在获取播放链接' : ''), !state.paused);
+      if (renderedPlaying !== !state.paused) {updatePlayButton(!state.paused); renderedPlaying = !state.paused;}
+      const status = state.error || (state.loading ? '正在获取播放链接' : '');
+      const statusKey = JSON.stringify([status, state.paused]);
+      if (renderedStatus !== statusKey) {setPlayerStatus(status, !state.paused); renderedStatus = statusKey;}
       const audio = audioElement();
       if (audio) {
         audio.dispatchEvent(new Event('timeupdate'));
         // Lyrics follow native playback; do not dispatch HTML play/pause recovery handlers.
         if (typeof lyricPlayer !== 'undefined' && lyricPlayer) {
-          if (state.paused) lyricPlayer.pause();
-          else if (state.playing && (!previous.playing || changedSong)) lyricPlayer.play(state.position * 1000);
+          if (!clock.running) {
+            lyricPlayer.pause();
+            if (!state.seeking && (previous.seeking || state.timelineRevision !== previous.timelineRevision) && typeof syncLyricByLineNum === 'function')
+              syncLyricByLineNum(lyricPlayer._findCurLineNum(displayTime() * 1000));
+          }
+          else {
+            const time = displayTime() * 1000;
+            const drift = typeof lyricPlayer._currentTime === 'function' ? Math.abs(lyricPlayer._currentTime() - time) : 0;
+            if (!previous.playing || previous.seeking || changedSong || state.timelineRevision !== previous.timelineRevision || drift > 150)
+              lyricPlayer.play(time);
+          }
         }
       }
-      if (typeof updatePlayModeUI === 'function') updatePlayModeUI();
+      if (renderedMode !== state.mode && typeof updatePlayModeUI === 'function') {updatePlayModeUI(); renderedMode = state.mode;}
       if (typeof renderQueue === 'function' && (renderedQueue !== state.queueRevision || changedSong || previous.index !== state.index)) {renderQueue(); renderedQueue = state.queueRevision;}
       if (state.error) document.getElementById('lx-native-state')?.replaceChildren(document.createTextNode(state.error));
     } catch (error) { console.warn('[LX Native] UI update', error); }
@@ -144,10 +179,21 @@
   function install() {
     if (installed || !window.__LX_PLAYER_GETTERS__) return;
     installed = true;
+    // A font-size transition changes every following line's position while scrolling.
+    // Keep line metrics stable; animate only the visual emphasis.
+    if (document.head) {
+      const style = document.createElement('style'); style.id = 'lx-native-lyrics';
+      style.textContent = `html[data-native-app] .lyric-line {
+        font-size: var(--lyric-font-size, 1.25rem); font-weight: 700;
+        transition: opacity .32s ease, color .32s ease, transform .4s ease;
+      }
+      html[data-native-app] .lyric-line.active {font-size: var(--lyric-font-size, 1.25rem); font-weight: 700; transform: scale(1.06);}`;
+      document.head.append(style);
+    }
     const audio = audioElement();
     if (audio) {
       let deviceVolume = Number(audio.volume) || 1, deviceMuted = !!audio.muted;
-      const properties = {volume: {get: () => deviceVolume, set: value => {deviceVolume = Math.max(0, Math.min(1, Number(value))); if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, muted: {get: () => deviceMuted, set: value => {deviceMuted = !!value; if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, currentTime: {get: () => playback.position || 0, set: value => {if (!applying) send('seek', {time: Number(value)});}}, duration: {get: () => playback.duration || NaN}, paused: {get: () => playback.paused !== false}, ended: {get: () => false}, readyState: {get: () => playback.duration > 0 ? 4 : 0}, seeking: {get: () => false}};
+      const properties = {volume: {get: () => deviceVolume, set: value => {deviceVolume = Math.max(0, Math.min(1, Number(value))); if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, muted: {get: () => deviceMuted, set: value => {deviceMuted = !!value; if (!applying) send('volume', {volume: deviceVolume, muted: deviceMuted});}}, currentTime: {get: displayTime, set: value => {if (!applying) send('seek', {time: Number(value)});}}, duration: {get: () => playback.duration || NaN}, paused: {get: () => playback.paused !== false}, ended: {get: () => false}, readyState: {get: () => playback.duration > 0 ? 4 : 0}, seeking: {get: () => !!playback.seeking}};
       for (const [name, descriptor] of Object.entries(properties)) Object.defineProperty(audio, name, {...descriptor, configurable: true});
       Object.defineProperty(audio, 'src', {get: () => playback.song?.name ? 'lx-native://current' : '', set() {}, configurable: true});
       audio.load = () => {}; audio.play = () => post('play'); audio.pause = () => {if (!applying) send('pause');};
@@ -188,6 +234,10 @@
     window.updatePlayModeUI = function () {const result = originalMode?.apply(this, arguments); if (!applying) send('preferences', preferences()); return result;};
     syncAuth(); send('preferences', preferences()); send('ready');
     receiveState(playback); receiveRoom(room);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {foregroundSync = true; send('ready');}
+      else {clock = {...clock, position: displayTime(), at: performance.now(), running: false, correction: 0};}
+    });
     setTimeout(() => send('uiReady', {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout}), 0);
     // Foreground UI state only; audio and room networking run natively.
     setInterval(() => {

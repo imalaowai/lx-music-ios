@@ -25,7 +25,7 @@ const server=http.createServer((req,res)=>{
      window.webkit={messageHandlers:{lxNative:{postMessage(message){
       window.__nativeCommands.push(message);
       queueMicrotask(()=>{
-       window.LXBridge.reply(message.id,message.op==='appInfo'?{version:'1.1.0',server:location.origin,bundledUI:true}:true,null);
+       window.LXBridge.reply(message.id,message.op==='appInfo'?{version:'1.1.1',server:location.origin,bundledUI:true}:true,null);
        if(message.op==='select')window.LXBridge.state({queueRevision:10,queue:message.queue,index:message.index,song:message.queue[message.index],paused:false,playing:true,position:12,duration:180,mode:'list'});
       });
      }}}};
@@ -68,6 +68,33 @@ const server=http.createServer((req,res)=>{
      fs.writeFileSync(out+'/'+name+'-'+width+'-player.json',JSON.stringify(player,null,2));
      assert.ok(await page.locator('#mobile-player-cover-container').isVisible(),JSON.stringify(player));
      assert.equal(await page.evaluate(()=>document.querySelector('#audio-player').getAttribute('src')),null);
+     if(width===375){
+      const lyric=await page.evaluate(async()=>{
+       initLyricPlayer();
+       lyricPlayer.setLyric('[00:12.00]<0,5000,0>连续流动的歌词\n[00:18.00]下一行保持稳定\n[00:24.00]慢慢唱完这一首');
+       window.LXBridge.state({position:12,paused:false,playing:true,seeking:false,timelineRevision:2});
+       const line=document.querySelector('.lyric-line'),next=line.nextElementSibling;
+       const metric=()=>({height:line.offsetHeight,next:next.offsetTop,font:getComputedStyle(line).fontSize});
+       const before=metric(),frames=[];
+       for(let i=0;i<24;i++){
+        await new Promise(requestAnimationFrame);
+        frames.push({time:audio.currentTime,progress:parseFloat(line.querySelector('.word-item').style.getPropertyValue('--word-progress'))||0});
+       }
+       const active=metric();
+       window.LXBridge.state({paused:true,playing:false,position:audio.currentTime});
+       const paused=audio.currentTime;await new Promise(r=>setTimeout(r,80));
+       const afterPause=audio.currentTime;
+       line.classList.remove('active');await new Promise(r=>setTimeout(r,450));
+       const inactive=metric();
+       return {before,active,inactive,frames,paused,afterPause};
+      });
+      assert.deepEqual(lyric.before,lyric.active,'Highlight must not change line metrics');
+      assert.deepEqual(lyric.active,lyric.inactive,'Removing highlight must not shift following lines');
+      assert.ok(new Set(lyric.frames.map(f=>f.progress.toFixed(2))).size>=12,'Karaoke must advance between native snapshots: '+JSON.stringify(lyric));
+      assert.equal(lyric.paused,lyric.afterPause,'Paused lyric time must stay fixed');
+      fs.writeFileSync(out+'/'+name+'-lyrics.json',JSON.stringify(lyric,null,2));
+      await page.screenshot({path:out+'/'+name+'-lyrics.png'});
+     }
     }
     assert.deepEqual(errors,[],'Page JS errors');assert.deepEqual(remoteUI,[],'Packaged UI must not fetch scripts, styles or fonts');
     await context.close();

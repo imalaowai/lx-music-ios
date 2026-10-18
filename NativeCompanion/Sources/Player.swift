@@ -25,6 +25,9 @@ final class Player {
     var onChat: ((String, Object) -> Void)?
     var observers: [NSObjectProtocol] = []
     var statusObservation: NSKeyValueObservation?
+    var playbackObservation: NSKeyValueObservation?
+    var timelineRevision = 0
+    var seeking = false
     var clock: Any?
     var resolution: URLSessionDataTask?
     var transitionTask: UIBackgroundTaskIdentifier = .invalid
@@ -46,6 +49,9 @@ final class Player {
         restoreQueue()
         audio.automaticallyWaitsToMinimizeStalling = false
         clock = audio.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] _ in self?.tick() }
+        playbackObservation = audio.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.publish(includeQueue: false) }
+        }
         observers.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] n in
             guard let self = self, n.object as? AVPlayerItem === self.audio.currentItem else { return }
             if self.room.active { self.room.ended() } else { self.move(automatic: true) }
@@ -107,6 +113,7 @@ final class Player {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
         queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
+        timelineRevision += 1; seeking = false
         finishTransition()
         transitionTask = UIApplication.shared.beginBackgroundTask(withName: "LX Track Transition") { [weak self] in
             guard let self = self else { return }; self.generation += 1; self.resolution?.cancel(); self.fail(ClientError("后台播放链接请求超时，请恢复网络后播放"))
@@ -162,7 +169,14 @@ final class Player {
     }
     func seek(_ time: Double, user: Bool = true) {
         let target = max(0, duration > 0 ? min(time, max(0, duration - 0.05)) : time)
-        audio.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        timelineRevision += 1; seeking = true
+        let revision = timelineRevision, epoch = generation
+        audio.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self = self, self.timelineRevision == revision, self.generation == epoch else { return }
+                self.seeking = false; self.publish(includeQueue: false)
+            }
+        }
         if user { room.sendState(reason: "seek", position: target) }; publish()
     }
     func move(previous: Bool = false, automatic: Bool = false) {
@@ -179,7 +193,7 @@ final class Player {
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
     func snapshot(includeQueue: Bool = true) -> Object {
-        var value: Object = ["queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.rate > 0, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        var value: Object = ["queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {
