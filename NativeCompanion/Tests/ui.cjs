@@ -72,11 +72,16 @@ const server=http.createServer((req,res)=>{
       const lyric=await page.evaluate(async()=>{
        initLyricPlayer();
        lyricPlayer.setLyric('[00:12.00]<0,5000,0>连续流动的歌词\n[00:18.00]下一行保持稳定\n[00:24.00]慢慢唱完这一首');
+       // Exercise real rendering with deterministic media time. Slow CI frames must
+       // not turn this check into a missing-snapshot test (covered by bridge tests).
+       const originalNow=Object.getOwnPropertyDescriptor(performance,'now');let now=performance.now();
+       Object.defineProperty(performance,'now',{configurable:true,value:()=>now});
        window.LXBridge.state({position:12,paused:false,playing:true,seeking:false,timelineRevision:2});
        const line=document.querySelector('.lyric-line'),next=line.nextElementSibling;
        const metric=()=>({height:line.offsetHeight,next:next.offsetTop,font:getComputedStyle(line).fontSize});
        const before=metric(),frames=[];
        for(let i=0;i<24;i++){
+        now+=16;
         await new Promise(requestAnimationFrame);
         frames.push({time:audio.currentTime,progress:parseFloat(line.querySelector('.word-item').style.getPropertyValue('--word-progress'))||0});
        }
@@ -86,6 +91,7 @@ const server=http.createServer((req,res)=>{
        const afterPause=audio.currentTime;
        line.classList.remove('active');await new Promise(r=>setTimeout(r,450));
        const inactive=metric();
+       if(originalNow)Object.defineProperty(performance,'now',originalNow);else delete performance.now;
        return {before,active,inactive,frames,paused,afterPause};
       });
       assert.deepEqual(lyric.before,lyric.active,'Highlight must not change line metrics');
