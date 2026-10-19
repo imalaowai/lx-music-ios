@@ -4,7 +4,7 @@
 package.py REFERENCE_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
 All original immutable resources and executable sections are verified, byte for byte.
 """
-import hashlib, io, json, os, pathlib, plistlib, struct, subprocess, sys, tempfile, zipfile
+import copy, hashlib, io, json, os, pathlib, plistlib, struct, subprocess, sys, tempfile, zipfile
 
 REFERENCE_SHA = 'ca6e8331816d69f42e41a22bdb10a3efc18df66b58b0a4e1cda4a900e2e1eb9e'
 DYLIB = '@executable_path/Frameworks/LXFullCarPlay.dylib'
@@ -85,7 +85,9 @@ def package(reference,components,signer,output):
             if name.startswith('assets/') and not name.endswith('/') and prefix+name not in old_names:new_files[prefix+name]=additions.read(name)
         output=pathlib.Path(output);output.parent.mkdir(parents=True,exist_ok=True)
         with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as result:
-            for entry in original.infolist():result.writestr(entry,replacements.get(entry.filename,original.read(entry.filename)))
+            # writestr updates ZipInfo.header_offset. Keep the input archive's
+            # entries intact so later byte-for-byte verification reads its real offsets.
+            for entry in original.infolist():result.writestr(copy.copy(entry),replacements.get(entry.filename,original.read(entry.filename)))
             for name,data in new_files.items():result.writestr(name,data)
         preserved=[]
         with zipfile.ZipFile(output) as result:
