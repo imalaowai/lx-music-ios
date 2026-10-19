@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: lx-full-reference-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   signing-tool:
     runs-on: ubuntu-latest
