@@ -1,0 +1,91 @@
+name: LX Full Reference Native Components
+on:
+  push:
+    branches: [codex/native-web-carplay]
+    paths: ['FullReference/**', '.github/workflows/lx-full-reference.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signing-tool:
+    runs-on: ubuntu-latest
+    container: debian:bookworm-slim
+    timeout-minutes: 15
+    steps:
+      - name: Build reproducible Linux packaging signer
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates build-essential pkg-config libplist-dev libssl-dev
+          git clone https://github.com/ProcursusTeam/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          git checkout af86971
+          make -j2 VERSION=2.1.5-procursus7
+          mkdir -p /tmp/signing-tool
+          cp ldid /tmp/signing-tool/
+          cp /usr/lib/x86_64-linux-gnu/libplist-2.0.so.3 /tmp/signing-tool/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LX-Full-Packaging-Signer
+          path: /tmp/signing-tool/
+  full-native:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install complete original client dependencies
+        run: |
+          git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+          git config --global --add url.https://github.com/.insteadOf git@github.com:
+          npm ci
+      - name: Test native cached library and startup selections
+        run: |
+          set -euo pipefail
+          mkdir -p build/full
+          clang -fobjc-arc -fblocks -framework Foundation -I FullReference/Sources FullReference/Sources/LXFullLibrary.m FullReference/Tests/library.m -o build/full/library-tests
+          build/full/library-tests
+      - name: Bundle the complete original React Native application
+        run: |
+          set -euo pipefail
+          node node_modules/react-native/cli.js bundle --platform ios --dev false --entry-file index.js --bundle-output build/full/main.js --assets-dest build/full --reset-cache
+          node_modules/react-native/sdks/hermesc/osx-bin/hermesc -O -emit-binary -out build/full/main.jsbundle build/full/main.js
+          python3 - <<'PY'
+          import pathlib,struct,hashlib,json
+          p=pathlib.Path('build/full/main.jsbundle');b=p.read_bytes()
+          assert struct.unpack_from('<I',b,8)[0]==96,'Reference Hermes bytecode version must match'
+          assert p.stat().st_size>3000000,'Refuse an incomplete application bundle'
+          pathlib.Path('build/full/components.json').write_text(json.dumps({'source':'full React Native application','hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest()}))
+          PY
+      - name: Compile additive CarPlay module without replacing the original playback core
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          dest=pathlib.Path('build/full/include/React');dest.mkdir(parents=True,exist_ok=True)
+          for p in pathlib.Path('node_modules/react-native/React').rglob('*.h'):
+            target=dest/p.name
+            if not target.exists():target.symlink_to(p.resolve())
+          PY
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun clang -dynamiclib -arch arm64 -isysroot "$SDK" -miphoneos-version-min=13.4 -fobjc-arc -fblocks -Wall -Werror=return-type -I build/full/include -I FullReference/Sources FullReference/Sources/LXFullLibrary.m FullReference/Sources/LXFullCarPlay.m -framework Foundation -framework UIKit -framework CarPlay -framework MediaPlayer -Wl,-undefined,dynamic_lookup -install_name @executable_path/Frameworks/LXFullCarPlay.dylib -o build/full/LXFullCarPlay.dylib
+          codesign --force --sign - build/full/LXFullCarPlay.dylib
+          otool -L build/full/LXFullCarPlay.dylib
+          nm -g build/full/LXFullCarPlay.dylib | grep RCTRegisterModule
+      - name: Prepare additive components archive
+        run: |
+          set -euo pipefail
+          mkdir -p build/full-delivery
+          cp build/full/main.jsbundle build/full/LXFullCarPlay.dylib build/full/components.json build/full-delivery/
+          cp -R build/full/assets build/full-delivery/
+          cp FullReference/README.md build/full-delivery/
+          cd build/full-delivery
+          shasum -a 256 main.jsbundle LXFullCarPlay.dylib > SHA256SUMS
+          zip -qry ../LX-Full-Native-Components.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LX-Full-Native-Components
+          path: build/LX-Full-Native-Components.zip
+          if-no-files-found: error
