@@ -41,6 +41,7 @@ const server=http.createServer((req,res)=>{
         else value=[];
        }
        if(message.op==='musicApi'&&message.path.includes('/hotSearch')&&!window.__hotReleased){(window.__pendingHot||=[]).push(()=>window.LXBridge.reply(message.id,value,null));window.__releaseHot=()=>{window.__hotReleased=true;for(const resolve of window.__pendingHot.splice(0))resolve();};return;}
+       if(message.op==='musicApi'&&message.path.includes('/songList/list')&&window.__catalogFailAllWY&&message.path.includes('source=wy')){window.LXBridge.reply(message.id,false,'Fixture WY outage');return;}
        if(message.op==='musicApi'&&message.path.includes('/songList/list')&&window.__catalogFail&&message.path.includes('sortId=new')){window.LXBridge.reply(message.id,false,'Fixture primary provider failure');return;}
        window.LXBridge.reply(message.id,value,null);
        if(message.op==='roomMembership')window.LXBridge.room(message.operation==='leave'?{binding:null,participants:[],state:{},connected:false}:window.__mockRoom);
@@ -75,6 +76,9 @@ const server=http.createServer((req,res)=>{
      await page.waitForFunction(()=>window.NativeShell.state.feed.listOrder==='hot'&&document.querySelectorAll('#native-home-posters button').length===4);
      assert.ok(await page.getByText('推荐歌单',{exact:true}).isVisible());
      assert.ok(await page.evaluate(()=>window.__nativeCommands.some(c=>c.op==='musicApi'&&c.path.includes('sortId=hot'))),'A failed list request must retry despite a successful cached hot-search result');
+     await page.evaluate(()=>{window.__catalogFailAllWY=true;window.NativeShell.state.feed.lists=[];window.NativeShell.state.listsAt=0;window.NativeShell.go('home');});
+     await page.waitForFunction(()=>document.querySelectorAll('#native-home-posters button').length===4&&window.__nativeCommands.some(c=>c.op==='musicApi'&&c.path.includes('source=kg')));
+     await page.evaluate(()=>{window.__catalogFailAllWY=false;window.__catalogFail=false;});
     }
     await page.screenshot({path:out+'/'+name+'-'+width+'-home.png'});
     await page.locator('[data-native-page=mine]').click();

@@ -77,7 +77,7 @@ let feedCacheLoaded = false;
 function feedItems(value, kind) {
  const rows = Array.isArray(value) ? value : kind === 'lists' ? value?.list || value?.playlists || value?.data?.list || value?.data?.playlists : value?.list || value?.data?.list || value?.data;
  if(!Array.isArray(rows))return [];
- return kind === 'lists' ? rows.filter(item=>item && item.id != null && (item.name || item.title)).map(item=>({...item,source:item.source||'wy',img:item.img||item.pic||item.cover||item.picUrl||item.coverImgUrl||''})) : rows.filter(item=>typeof item==='string'||item&&(item.name||item.keyword||item.word||item.searchWord));
+ return kind === 'lists' ? rows.filter(item=>item && item.id != null && (item.name || item.title)).map(item=>({...item,source:item.source||value?.source||'',img:item.img||item.pic||item.cover||item.picUrl||item.coverImgUrl||''})) : rows.filter(item=>typeof item==='string'||item&&(item.name||item.keyword||item.word||item.searchWord));
 }
 function saveFeed() {try {localStorage.setItem('lx_native_home_feed',JSON.stringify({feed:state.feed,listsAt:state.listsAt||0,hotAt:state.hotAt||0,at:Math.max(state.listsAt||0,state.hotAt||0)}));} catch {}}
 function renderFeed(){
@@ -89,7 +89,7 @@ function renderFeed(){
  }
  const listSignature=JSON.stringify([feed?.lists,!feed?.lists?.length&&!!feedTasks.lists]);
  if(posters.dataset.signature!==listSignature){posters.dataset.signature=listSignature;posters.replaceChildren();
-  for(const item of (feed?.lists||[]).slice(0,8)){const button=document.createElement('button');button.className='native-poster';button.innerHTML=`<span class="native-poster-art">${image(item.img)}</span><strong>${esc(item.name||item.title)}</strong><small>${esc(item.author||item.creator?.nickname||'网易云音乐')}</small>`;button.onclick=()=>{go('songlist');window.SongListManager?.openDetail?.(item.id,item.source||'wy');};posters.append(button);}
+  for(const item of (feed?.lists||[]).slice(0,8)){const button=document.createElement('button');button.className='native-poster';button.innerHTML=`<span class="native-poster-art">${image(item.img)}</span><strong>${esc(item.name||item.title)}</strong><small>${esc(item.author||item.creator?.nickname||({wy:'网易云音乐',kg:'酷狗音乐',tx:'QQ音乐',kw:'酷我音乐',mg:'咪咕音乐'})[item.source]||'音乐歌单')}</small>`;button.onclick=()=>{go('songlist');window.SongListManager?.openDetail?.(item.id,item.source||'wy');};posters.append(button);}
   if(!posters.children.length)posters.innerHTML='<p class="native-note">'+(feedTasks.lists?'正在加载推荐歌单…':'推荐歌单暂时不可用，点击刷新重试。')+'</p>';
  }
  $('native-home-playlists-title').textContent=feed?.listOrder==='hot'?'推荐歌单':'最新歌单';
@@ -104,13 +104,16 @@ function loadFeed(force=false){
   const field=kind==='lists'?'listsAt':'hotAt';if(!force&&state.feed[kind]?.length&&Date.now()-(state[field]||0)<900000)return Promise.resolve();
   feedTasks[kind]=Promise.resolve().then(async()=>{
    for(const [path,order]of paths){try{
-    const response=await fetch(path+(force?'&_refresh='+Date.now():''));if(!response.ok)throw Error('暂不可用');const items=feedItems(await response.json(),kind);if(!items.length)throw Error('暂无内容');
+    const response=await fetch(path+(force?'&_refresh='+Date.now():''));if(!response.ok)throw Error('暂不可用');let items=feedItems(await response.json(),kind);if(kind==='lists'){const source=new URL(path,location.href).searchParams.get('source');items=items.map(item=>({...item,source:item.source||source}));}if(!items.length)throw Error('暂无内容');
     state.feed[kind]=items;state[field]=Date.now();if(kind==='lists')state.feed.listOrder=order;saveFeed();renderFeed();return;
    }catch{}}
   }).finally(()=>{feedTasks[kind]=null;renderFeed();});
   return feedTasks[kind];
  };
- const lists=loadPart('lists',[['/api/music/songList/list?source=wy&sortId=new&page=1','new'],['/api/music/songList/list?source=wy&sortId=hot&page=1','hot']]);
+ const selected=localStorage.getItem('songlist-source')||'wy',sorts={wy:['new','hot'],kg:['7','5'],tx:['2','5'],kw:['new','hot'],mg:['15127315','15127315']};
+ const sources=[selected,'wy','kg'].filter((source,index,all)=>sorts[source]&&all.indexOf(source)===index);
+ const paths=sources.flatMap((source,index)=>(index===0?sorts[source]:sorts[source].slice(0,1)).map((sort,i)=>['/api/music/songList/list?source='+source+'&sortId='+sort+'&page=1',i===0&&source!=='mg'?'new':'hot']));
+ const lists=loadPart('lists',paths);
  const hot=loadPart('hot',[['/api/music/hotSearch?source=mg','hot']]);
  renderFeed();return Promise.allSettled([lists,hot]);
 }

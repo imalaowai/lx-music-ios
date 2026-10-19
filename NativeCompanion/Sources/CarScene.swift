@@ -80,7 +80,7 @@ final class CarScene: UIResponder, CPTemplateApplicationSceneDelegate, CPNowPlay
     @objc(templateApplicationScene:didDisconnectInterfaceController:)
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didDisconnectInterfaceController controller: CPInterfaceController) { releaseConnection() }
     @objc(templateApplicationScene:didDisconnectInterfaceController:fromWindow:)
-    func templateApplicationScene(_ scene: CPTemplateApplicationScene, didDisconnectInterfaceController controller: CPInterfaceController, from window: CPWindow) { releaseConnection() }
+    func templateApplicationScene(_ scene: CPTemplateApplicationScene, didDisconnect controller: CPInterfaceController, from window: CPWindow) { releaseConnection() }
     func releaseConnection() {
         connectionGeneration += 1
         for item in observers { NotificationCenter.default.removeObserver(item) }; observers = []
