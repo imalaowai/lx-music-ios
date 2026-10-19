@@ -3,6 +3,7 @@ function engine(){
  const calls=[],pending=new Map();let sequence=0,context;
  const http=(id,json)=>{const request=JSON.parse(json);calls.push(request);let body={ok:true,url:'https://audio.invalid/song.mp3'};
   if(request.url.includes('search.kuwo.cn'))body={TOTAL:'1',abslist:[{MUSICRID:'MUSIC_123',SONGNAME:'测试歌曲',ARTIST:'歌手',ALBUM:'专辑',DURATION:'180',N_MINFO:'level:standard,bitrate:128,format:mp3,size:3.2Mb',SONGID:'123'}]};
+  if(request.url.includes('/playlist/list'))body={code:200,total:1,playlists:[{id:123,name:'真实 SDK 歌单',creator:{nickname:'Creator'},coverImgUrl:'https://image.invalid/cover.jpg',trackCount:10,playCount:100}]};
   if(request.url.includes('/song/lyric'))body={code:200,lrc:{lyric:'[00:00.00]本机歌词'},tlyric:{lyric:'[00:00.00]Local lyrics'}};
   const payload=Buffer.from(JSON.stringify(body));queueMicrotask(()=>context.__nativeReply(id,JSON.stringify({statusCode:200,headers:{'content-type':'application/json'},base64:payload.toString('base64'),text:payload.toString()}),''));
  };
@@ -42,3 +43,8 @@ test('Provider lyric requests return their resolved content for display and offl
 });
 
 test('The iOS 15 bundle contains no unsupported lookbehind expression',()=>{const source=fs.readFileSync(path.join(__dirname,'../generated/LocalEngine.js'),'utf8');assert.ok(!source.includes('(?<=')&&!source.includes('(?<!'));});
+
+test('Home and catalogue requests do not cancel each other in the provider SDK',async()=>{
+ const e=engine();const results=await Promise.all([e.run('api',{path:'/api/music/songList/list?source=wy&sortId=new&page=1'}),e.run('api',{path:'/api/music/songList/list?source=wy&sortId=hot&page=1'})]);
+ assert.equal(results[0].list[0].name,'真实 SDK 歌单');assert.equal(results[1].list[0].id,'123');assert.equal(e.calls.length,2);
+});

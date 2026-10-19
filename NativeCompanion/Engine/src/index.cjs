@@ -43,7 +43,7 @@ async function route(input){
   case '/api/music/tipSearch':return source.tipSearch?await source.tipSearch.search(q.name):[];
   case '/api/music/hotSearch':return source.hotSearch?await source.hotSearch.getList():[];
   case '/api/music/songList/tags':return {...await source.songList.getTags(),sortList:source.songList.sortList};
-  case '/api/music/songList/list':return source.songList.getList(q.sortId||'new',q.tagId||'',Number(q.page)||1);
+  case '/api/music/songList/list':{const catalog={...source.songList,_requestObj_list:null};return catalog.getList(q.sortId||'new',q.tagId||'',Number(q.page)||1);}
   case '/api/music/songList/detail':return source.songList.getListDetail(q.id,Number(q.page)||1);
   case '/api/music/songList/search':return source.songList.search(q.text||q.name,Number(q.page)||1);
   case '/api/music/songList/userPlaylist':return source.userPlaylist.getList(q.uid,Number(q.page)||1);
@@ -71,6 +71,6 @@ globalThis.__engineRun=(id,operation,payload)=>{
   if(operation==='resolve')return resolveSong(input.song,input.quality,input.allowFallback!==false);
   const key=input.path+'|'+JSON.stringify(input.body||{}),ttl=/hotSearch|songList\/list|leaderboard\/boards/.test(input.path)?300000:0;
   const cached=cache.get(key);if(ttl&&cached&&Date.now()-cached.at<ttl)return cached.value;
-  const value=await route(input);if(ttl){if(cache.size>20)cache.clear();cache.set(key,{at:Date.now(),value});}return value;
+  const value=await route(input);if(ttl&&(!/hotSearch|songList\/list/.test(input.path)||(Array.isArray(value)?value.length:value?.list?.length))){if(cache.size>20)cache.clear();cache.set(key,{at:Date.now(),value});}return value;
  }).then(result=>__nativeComplete(id,JSON.stringify(result??null),''),error=>__nativeComplete(id,'null',error?.message||String(error)));
 };

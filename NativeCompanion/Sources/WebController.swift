@@ -110,7 +110,13 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         switch op {
         case "editServer": done(); editAddress()
         case "appInfo":
-            done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil, "bundledUI": true, "localPlayback": true, "legacySourceFallback": !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")])
+            done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil, "bundledUI": true, "localPlayback": true, "carplay": CarScene.diagnostic, "legacySourceFallback": !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")])
+        case "carplayStatus": done(CarScene.diagnostic)
+        case "shareCarPlayDiagnostic":
+            let data = try? JSONSerialization.data(withJSONObject: ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "", "iOS": UIDevice.current.systemVersion, "carplay": CarScene.diagnostic], options: [.prettyPrinted, .sortedKeys])
+            guard let data = data else { done(false, "无法生成连接诊断"); return }
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("LX-CarPlay-connection.json")
+            do { try data.write(to: file, options: .atomic); let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil); sheet.popoverPresentationController?.sourceView = view; sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 100, width: 1, height: 1); present(sheet, animated: true); done() } catch { done(false, error.localizedDescription) }
         case "uiReady":
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
@@ -119,6 +125,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 done(); return
             }
             if bool(value["bundled"]), bool(value["mobile"]), bool(value["themes"]), bool(value["localShell"]), let support = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data("ready".utf8).write(to: support.appendingPathComponent("BundledUIReady")) }
+            if ProcessInfo.processInfo.arguments.contains("-LXCarPlaySmoke"), bool(value["localShell"]) { CarPlaySmoke.start() }
             if ProcessInfo.processInfo.arguments.contains("-LXPlaybackSmoke"), bool(value["localShell"]) { PlaybackSmoke.start() }
             #endif
             done()

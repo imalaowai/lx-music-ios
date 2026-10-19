@@ -1,4 +1,4 @@
-LX Native Companion 1.2.0
+LX Native Companion 1.2.1
 Web UI changes: built-in distribution, theme refinement and app navigation.
 
 Web interface — Apache 2.0

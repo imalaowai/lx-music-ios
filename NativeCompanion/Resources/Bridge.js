@@ -4,7 +4,7 @@
   if (document.documentElement) document.documentElement.dataset.nativeApp = 'true';
   else document.addEventListener('DOMContentLoaded', () => {document.documentElement.dataset.nativeApp = 'true';}, {once: true});
   // Installed pages own their version and never register a web service worker.
-  const pending = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
+  const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
   // Native time is authoritative; interpolate locally so karaoke does not step at 2 Hz.
   // Never extrapolate indefinitely if the app stops sending foreground snapshots.
@@ -17,8 +17,10 @@
   }
   function anchorClock(state, previous) {
     const now = performance.now(), projected = displayTime(now);
-    const position = Math.max(0, Number(state.position) || 0);
+    let position = Math.max(0, Number(state.position) || 0);
     const running = state.playing === true && !state.paused && !state.loading && !state.seeking;
+    const transport = (Date.now() - Number(state.sampledAt)) / 1000;
+    if (running && Number.isFinite(transport) && transport >= 0 && transport <= 1.25) position += transport * (Number(state.playbackRate) > 0 ? Number(state.playbackRate) : 1);
     const continuous = running && clock.running && !foregroundSync &&
       key(state.song) === key(previous.song) && state.timelineRevision === previous.timelineRevision;
     const correction = position - projected;
@@ -39,7 +41,17 @@
   });
   const warn = error => window.showError?.(error.message || String(error));
   const send = (op, values) => post(op, values).catch(warn);
-  window.LXNative = {request: post};
+  let lyricOffsets = {};
+  try {lyricOffsets = JSON.parse(localStorage.getItem('lx_native_lyric_offsets_v1')) || {};} catch {}
+  const lyricOffset = () => Number(lyricOffsets[key(playback.song)]) || 0;
+  function alignLyrics() {
+    if (typeof lyricPlayer === 'undefined' || !lyricPlayer) return;
+    const time = (displayTime() + lyricOffset() / 1000) * 1000 + (Number(lyricPlayer.tags?.offset) || 0) + (Number(lyricPlayer.offset) || 0);
+    if (clock.running) lyricPlayer.play(displayTime() * 1000);
+    else {lyricPlayer.pause(); if (typeof syncLyricByLineNum === 'function') syncLyricByLineNum(lyricPlayer.lines?.length && time < lyricPlayer.lines[0].time ? -1 : lyricPlayer._findCurLineNum(time));}
+  }
+  window.LXNative = {request: post, lyricTime: () => displayTime() + lyricOffset() / 1000, getLyricOffset: lyricOffset,
+    setLyricOffset(value) {const offset = Math.round(Math.max(-10000, Math.min(10000, Number(value) || 0)));lyricOffsets[key(playback.song)] = offset;const entries = Object.entries(lyricOffsets).slice(-200);lyricOffsets = Object.fromEntries(entries);localStorage.setItem('lx_native_lyric_offsets_v1', JSON.stringify(lyricOffsets));alignLyrics();return offset;}};
   const originalFetch = window.fetch?.bind(window);
   if (originalFetch) window.fetch = async function (input, options = {}) {
     const url = new URL(typeof input === 'string' ? input : input.url, location.href);
@@ -47,7 +59,11 @@
     if (url.origin === location.origin && local) {
       try {
         const body = typeof options.body === 'string' ? JSON.parse(options.body) : {};
-        const value = await post('musicApi', {path: url.pathname + url.search, body});
+        const cacheable = (!options.method || options.method.toUpperCase() === 'GET') && /songList\/|hotSearch|leaderboard\/boards/.test(url.pathname);
+        const readKey = url.pathname + url.search;
+        let task = cacheable ? musicReads.get(readKey) : null;
+        if (!task) {task = post('musicApi', {path: readKey, body});if (cacheable) {musicReads.set(readKey, task);task.then(() => musicReads.delete(readKey), () => musicReads.delete(readKey));}}
+        const value = await task;
         return new Response(JSON.stringify(value), {status: 200, headers: {'Content-Type': 'application/json'}});
       } catch (error) { return new Response(JSON.stringify({error: error.message, message: error.message}), {status: 503, headers: {'Content-Type': 'application/json'}}); }
     }
@@ -55,7 +71,7 @@
       return new Response(JSON.stringify({success: false, message: '此功能需要连接同步服务器'}), {status: 503, headers: {'Content-Type': 'application/json'}});
     return originalFetch(input, options);
   };
-  const key = song => String(song?.songmid || song?.mid || song?.id || `${song?.name || ''}-${song?.singer || song?.artist || ''}`);
+  const key = song => (song?.source || song?.meta?.source || '') + ':' + String(song?.songmid || song?.meta?.songmid || song?.meta?.songId || song?.mid || song?.id || `${song?.name || ''}-${song?.singer || song?.artist || ''}`);
   const stubSession = {metadata: null, playbackState: 'none', setActionHandler() {}, setPositionState() {}};
   try { Object.defineProperty(navigator, 'mediaSession', {value: stubSession, configurable: true}); } catch {}
   // Block the HTML audio engine before the page restores any old playback.
@@ -79,6 +95,7 @@
   window.iOSBackgroundAudio = {usesNativePlayback: () => true, isIOS: () => true, init() {}, prepare() {}, ensureAnchorPlaying() {}, mediaUrl: value => value, play: () => post('play')};
   function audioElement() { return document.getElementById('audio-player'); }
   function receiveState(state) {
+    if (Number.isFinite(state.sampledAt) && Number.isFinite(playback.sampledAt) && state.sampledAt < playback.sampledAt) return;
     const previous = playback; playback = {...playback, ...state}; state = playback;
     anchorClock(state, previous);
     if (!installed) return;
@@ -106,11 +123,12 @@
           if (!clock.running) {
             lyricPlayer.pause();
             if (!state.seeking && (previous.seeking || state.timelineRevision !== previous.timelineRevision) && typeof syncLyricByLineNum === 'function')
-              syncLyricByLineNum(lyricPlayer._findCurLineNum(displayTime() * 1000));
+              alignLyrics();
           }
           else {
             const time = displayTime() * 1000;
-            const drift = typeof lyricPlayer._currentTime === 'function' ? Math.abs(lyricPlayer._currentTime() - time) : 0;
+            const lyricTime = (displayTime() + lyricOffset() / 1000) * 1000 + (Number(lyricPlayer.tags?.offset) || 0) + (Number(lyricPlayer.offset) || 0);
+            const drift = typeof lyricPlayer._currentTime === 'function' ? Math.abs(lyricPlayer._currentTime() - lyricTime) : 0;
             if (!previous.playing || previous.seeking || changedSong || state.timelineRevision !== previous.timelineRevision || drift > 150)
               lyricPlayer.play(time);
           }

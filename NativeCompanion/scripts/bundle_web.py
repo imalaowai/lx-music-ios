@@ -77,6 +77,6 @@ assert not re.search(r'<script\s+src=',content)
 assert 'navigator.serviceWorker.register(' not in content
 payload=content.encode('utf-8')
 (root/'Resources/WebUI.html.xz').write_bytes(lzma.compress(payload,preset=9))
-manifest={'version':'2.8.6-native-1.2.0','htmlSha256':hashlib.sha256(payload).hexdigest(),'htmlBytes':len(payload),'assets':entries,'excludedNativeOwners':sorted(omitted),'precompiledStyles':True,'runtimeStyleCompiler':False}
+manifest={'version':'2.8.6-native-1.2.1','htmlSha256':hashlib.sha256(payload).hexdigest(),'htmlBytes':len(payload),'assets':entries,'excludedNativeOwners':sorted(omitted),'precompiledStyles':True,'runtimeStyleCompiler':False}
 (root/'Resources/WebUI.manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n')
 print(json.dumps({'assets':len(entries),'htmlBytes':len(payload),'compressedBytes':(root/'Resources/WebUI.html.xz').stat().st_size,'sha256':manifest['htmlSha256']}))

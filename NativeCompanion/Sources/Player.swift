@@ -216,7 +216,7 @@ final class Player {
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
     func snapshot(includeQueue: Bool = true) -> Object {
-        var value: Object = ["queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {

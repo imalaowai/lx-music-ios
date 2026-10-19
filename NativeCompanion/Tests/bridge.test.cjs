@@ -13,7 +13,7 @@ function fixture(){
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
   window.updatePlayModeUI=()=>{};window.dispatchEvent=()=>{};window.showError=e=>{throw Error(String(e));};
-  context={window,document,performance:{now:()=>now},navigator:{mediaSession:{}},Storage,localStorage:storage,HTMLMediaElement:Media,Event:class{constructor(type){this.type=type;}},CustomEvent:class{constructor(type,value){this.type=type;this.detail=value?.detail;}},setTimeout,clearTimeout,setInterval:f=>intervals.push(f),queueMicrotask,Promise,console,Map,
+  context={window,document,Date:{now:()=>1700000000000+now},performance:{now:()=>now},navigator:{mediaSession:{}},Storage,localStorage:storage,HTMLMediaElement:Media,Event:class{constructor(type){this.type=type;}},CustomEvent:class{constructor(type,value){this.type=type;this.detail=value?.detail;}},setTimeout,clearTimeout,setInterval:f=>intervals.push(f),queueMicrotask,Promise,console,Map,
     settings:{preferredQuality:'flac'},playMode:'list',currentPlaylist:queue,currentIndex:0,currentPlayingSong:null,requestedRoomSong:null,roomAudioSongKey:'',currentQuality:null,playbackProgressReady:false,shouldAutoRecoverPlayback:false,currentLoadingSongId:null,
     updatePlayerInfo(){renders.metadata++;},updatePlayButton(){renders.button++;},setPlayerStatus(){renders.status++;},renderQueue(){renders.queue++;},fetchLyric(){},savePlayHistory(){}};
   vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../Resources/Bridge.js'),'utf8'),context);
@@ -100,4 +100,22 @@ test('Lyrics re-anchor after a seek or stall, but steady snapshots do not restar
   f.window.LXBridge.state({paused:true,playing:false,seeking:true,timelineRevision:3});
   f.window.LXBridge.state({seeking:false,position:90});assert.equal(calls.at(-1),'line:90');
   f.window.LXBridge.state({song:{id:'b',name:'B'},position:0,paused:false,playing:true,timelineRevision:4});assert.equal(calls.at(-1),0);
+});
+
+test('Native sampling latency is compensated and older snapshots cannot rewind lyrics',async()=>{
+ const f=fixture();await f.settle();f.advance(200);
+ f.window.LXBridge.state({song:{id:'a',source:'wy',name:'A'},paused:false,playing:true,position:10,duration:180,timelineRevision:1,sampledAt:1700000000000});
+ assert.equal(f.audio.currentTime,10.2);f.advance(300);
+ f.window.LXBridge.state({position:10.5,sampledAt:1700000000500});assert.equal(f.audio.currentTime,10.5);
+ f.window.LXBridge.state({position:1,sampledAt:1700000000400});assert.equal(f.audio.currentTime,10.5);
+ f.window.LXBridge.state({paused:true,playing:false,position:10.5,sampledAt:1700000000500});f.advance(1000);assert.equal(f.audio.currentTime,10.5);
+});
+test('Per-song lyric calibration never seeks audio and separates identical IDs from different providers',async()=>{
+ const f=fixture();await f.settle();f.messages.length=0;
+ f.window.LXBridge.state({song:{id:'same',source:'wy',name:'A'},paused:true,playing:false,position:12,duration:180});
+ f.window.LXNative.setLyricOffset(500);assert.equal(f.audio.currentTime,12);assert.equal(f.window.LXNative.lyricTime(),12.5);
+ const before=f.renders.metadata;f.window.LXBridge.state({song:{id:'same',source:'kw',name:'B'},position:12});assert.equal(f.window.LXNative.getLyricOffset(),0);assert.equal(f.renders.metadata,before+1);
+ f.window.LXBridge.state({song:{id:'same',source:'wy',name:'A'},position:12});assert.equal(f.window.LXNative.getLyricOffset(),500);
+ f.window.LXBridge.state({position:0});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
+ assert.equal(f.messages.some(m=>m.op==='seek'),false);
 });

@@ -22,6 +22,6 @@ const plugin={name:'native-host',setup(build){
  await require('esbuild').build({absWorkingDir:root,entryPoints:[path.join(root,'src/index.cjs')],bundle:true,platform:'browser',target:'safari15',format:'iife',minify:true,legalComments:'eof',tsconfigRaw:{},inject:[path.join(root,'src/inject.cjs')],alias:aliases,outfile:path.join(root,'../generated/LocalEngine.js'),plugins:[plugin]});
  const file=path.join(root,'../generated/LocalEngine.js'),data=fs.readFileSync(file);
  cp.execFileSync('python3',['-c','import sys,lzma;open(sys.argv[2],"wb").write(lzma.compress(open(sys.argv[1],"rb").read(),preset=9))',file,path.join(root,'../Resources/LocalEngine.js.xz')]);
- fs.writeFileSync(path.join(root,'../Resources/LocalEngine.manifest.json'),JSON.stringify({version:'1.2.0',sha256:crypto.createHash('sha256').update(data).digest('hex'),bytes:data.length},null,2)+'\n');
+ fs.writeFileSync(path.join(root,'../Resources/LocalEngine.manifest.json'),JSON.stringify({version:'1.2.1',sha256:crypto.createHash('sha256').update(data).digest('hex'),bytes:data.length},null,2)+'\n');
  console.log('Local engine bundled: '+data.length+' bytes');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -40,6 +40,8 @@ const server=http.createServer((req,res)=>{
         else if(message.path.includes('/lyric'))value={lyric:'[00:00.00]测试歌词'};
         else value=[];
        }
+       if(message.op==='musicApi'&&message.path.includes('/hotSearch')&&!window.__hotReleased){(window.__pendingHot||=[]).push(()=>window.LXBridge.reply(message.id,value,null));window.__releaseHot=()=>{window.__hotReleased=true;for(const resolve of window.__pendingHot.splice(0))resolve();};return;}
+       if(message.op==='musicApi'&&message.path.includes('/songList/list')&&window.__catalogFail&&message.path.includes('sortId=new')){window.LXBridge.reply(message.id,false,'Fixture primary provider failure');return;}
        window.LXBridge.reply(message.id,value,null);
        if(message.op==='roomMembership')window.LXBridge.room(message.operation==='leave'?{binding:null,participants:[],state:{},connected:false}:window.__mockRoom);
        if(message.op==='roomRefresh')window.LXBridge.room(window.__mockRoom);
@@ -65,8 +67,15 @@ const server=http.createServer((req,res)=>{
     assert.deepEqual(await page.locator('#mobile-bottom-nav button').allTextContents(),['首页','歌单','一起听','我的']);
     assert.ok(await page.locator('#view-native-home').isVisible());
     assert.equal(await page.locator('header.h-16').isVisible(),false,'Top capsule header removed');
-    await page.waitForFunction(()=>document.querySelectorAll('#native-home-hot button').length===4);
-    assert.equal(await page.locator('#native-home-posters button').count(),4);
+    await page.waitForFunction(()=>document.querySelectorAll('#native-home-posters button').length===4);
+    assert.equal(await page.locator('#native-home-hot button').count(),0,'A pending hot-search request must not block playlist cards');
+    await page.evaluate(()=>window.__releaseHot());await page.waitForFunction(()=>document.querySelectorAll('#native-home-hot button').length===4);
+    if(width===375){
+     await page.evaluate(()=>{window.__catalogFail=true;window.NativeShell.state.feed.lists=[];window.NativeShell.state.listsAt=0;window.NativeShell.go('home');});
+     await page.waitForFunction(()=>window.NativeShell.state.feed.listOrder==='hot'&&document.querySelectorAll('#native-home-posters button').length===4);
+     assert.ok(await page.getByText('推荐歌单',{exact:true}).isVisible());
+     assert.ok(await page.evaluate(()=>window.__nativeCommands.some(c=>c.op==='musicApi'&&c.path.includes('sortId=hot'))),'A failed list request must retry despite a successful cached hot-search result');
+    }
     await page.screenshot({path:out+'/'+name+'-'+width+'-home.png'});
     await page.locator('[data-native-page=mine]').click();
     for(const text of ['我的收藏','我的歌单','本地 / 网盘','设置','已下载'])assert.ok(await page.locator('#native-mine-grid').getByText(text,{exact:true}).isVisible());

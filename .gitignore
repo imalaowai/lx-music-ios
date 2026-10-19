@@ -67,3 +67,4 @@ buck-out/
 # testing
 /coverage
 NativeCompanion/Engine/vendor/
+NativeCompanion/Engine/node_modules
