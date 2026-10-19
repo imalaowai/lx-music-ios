@@ -1,7 +1,7 @@
 {
   "version": "2.8.6-native-1.2.1",
-  "htmlSha256": "b12e90730613c74ad6a35b440e795b6578bb564ee7a328d2982c6eaea3742998",
-  "htmlBytes": 3522457,
+  "htmlSha256": "9cdae31b79e88a942b806a080b985c6136c139d1702973cdd0ff8ebf67228304",
+  "htmlBytes": 3522968,
   "assets": {
     "public/music/index.html": {
       "sha256": "199975b0db74822635a7632dbf7748b681a24f4d475fe40aa18aa0259323a511",
@@ -104,8 +104,8 @@
       "bytes": 25419
     },
     "public/music/js/visualizer.js": {
-      "sha256": "8d46a663a013ae22d72963fe2f607e165baa4ec7af0e0389f4a19b4b25be1516",
-      "bytes": 13630
+      "sha256": "a5d3e228dafcbac85d3a40e8fc4fae21099c9d2fd08364d06654436a18922e30",
+      "bytes": 13808
     },
     "public/music/js/lyric-card.js": {
       "sha256": "6b2135baf8fa9ca1633918a82bffa25f1f806ad39994edfb4af78941f16e7891",
@@ -168,8 +168,8 @@
       "bytes": 11137
     },
     "public/music/js/apple-shell.js": {
-      "sha256": "49c45fae48d394c120c64c87a28b4f8518eb666fba748c42e0f779cc9ca04bcd",
-      "bytes": 4142
+      "sha256": "12ff912f0f50d23c012dc4e97920559cca13a85fbf731a8e43627cc265f70aa3",
+      "bytes": 4475
     },
     "public/music/js/mobile-shell.js": {
       "sha256": "dcab4c8bada772c8fedc42df1a223e25617f0b5ee3a23f9a84e2d5bb675293e5",
