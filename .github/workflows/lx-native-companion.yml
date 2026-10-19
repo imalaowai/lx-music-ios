@@ -85,10 +85,16 @@ jobs:
           xcrun simctl io "$DEVICE" screenshot build/bundled-ui.png
           xcrun simctl terminate "$DEVICE" net.minyue.lxcompanion
           xcrun simctl launch "$DEVICE" net.minyue.lxcompanion -LXPlaybackSmoke | tee build/playback-smoke.log
-          for attempt in $(seq 1 35); do
+          for attempt in $(seq 1 90); do
             if test -f "$CONTAINER/Library/Application Support/PlaybackSmokeReady"; then break; fi
             sleep 2
           done
+          cat "$CONTAINER/Library/Application Support/PlaybackSmokeProgress" || true
+          if ! test -f "$CONTAINER/Library/Application Support/PlaybackSmokeReady"; then
+            xcrun simctl spawn "$DEVICE" launchctl list | grep net.minyue.lxcompanion || true
+            xcrun simctl io "$DEVICE" screenshot build/playback-timeout.png || true
+            xcrun simctl spawn "$DEVICE" log show --last 2m --style compact --predicate 'process == "LXCompanion"' > build/playback-diagnostic.log || true
+          fi
           cat "$CONTAINER/Library/Application Support/PlaybackSmokeReady"
           test "$(cat "$CONTAINER/Library/Application Support/PlaybackSmokeReady")" = ready
           xcrun simctl terminate "$DEVICE" net.minyue.lxcompanion
@@ -138,4 +144,5 @@ jobs:
             NativeCompanion/build/*.log
             NativeCompanion/build/phone-launch.png
             NativeCompanion/build/bundled-ui.png
+            NativeCompanion/build/playback-timeout.png
           if-no-files-found: ignore

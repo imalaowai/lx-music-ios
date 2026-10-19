@@ -7,7 +7,12 @@ import Foundation
 enum PlaybackSmoke {
     static var started = false
     static var timer: Timer?
+    static func progress(_ value: String) {
+        NSLog("Playback smoke: %@", value)
+        if let root = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) { try? Data(value.utf8).write(to: root.appendingPathComponent("PlaybackSmokeProgress"), options: .atomic) }
+    }
     static func result(_ value: String) {
+        progress(value)
         timer?.invalidate(); timer = nil
         if let root = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) {
             try? Data(value.utf8).write(to: root.appendingPathComponent("PlaybackSmokeReady"), options: .atomic)
@@ -15,6 +20,7 @@ enum PlaybackSmoke {
     }
     static func start() {
         guard !started else { return }; started = true
+        progress("creating offline fixtures")
         do {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("LXPlaybackSmoke", isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -34,15 +40,18 @@ enum PlaybackSmoke {
             let cover = root.appendingPathComponent("Track-0.jpg")
             let image = UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { context in UIColor.systemPink.setFill(); context.fill(CGRect(x: 0, y: 0, width: 40, height: 40)) }
             try image.jpegData(compressionQuality: 0.8)!.write(to: cover); urls.append(cover)
+            progress("importing eight audio files and sidecars")
             MusicLibrary.shared.importFiles(urls) { value in
                 do {
                     guard try value.get() == 8 else { throw ClientError("Offline import count mismatch") }
+                    progress("offline import completed")
                     let rows = MusicLibrary.shared.songs().filter { text(($0["song"] as? Object)?["name"]).hasPrefix("Track-") }
                     let songs = rows.compactMap { $0["song"] as? Object }.sorted { text($0["name"]) < text($1["name"]) }.map { Song(raw: $0) }
                     guard songs.count == 8, let first = songs.first else { throw ClientError("Offline list mismatch") }
                     let id = text(first.raw["offlineId"])
                     guard text(try MusicLibrary.shared.assets(id)["lyric"]).contains("Offline fixture"), try MusicLibrary.shared.shareFiles(id).count == 3 else { throw ClientError("Offline cover, lyrics or share files missing") }
                     let player = Player.shared; player.mode = "order"; player.select(songs, index: 0, user: false)
+                    progress("checking eight AVPlayer EOF transitions")
                     var visited = Set<Int>()
                     let deadline = Date().addingTimeInterval(50)
                     timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in

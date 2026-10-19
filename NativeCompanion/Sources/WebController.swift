@@ -68,7 +68,17 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             }
         }
     }
-    override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); emit("state", player.snapshot()); emit("room", player.room.snapshot()) }
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated); emit("state", player.snapshot()); emit("room", player.room.snapshot())
+        #if DEBUG
+        // Native regressions do not depend on a third WebKit process becoming ready.
+        // The separate UI launch above already verifies the real bundled page/reload.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if ProcessInfo.processInfo.arguments.contains("-LXPlaybackSmoke") { PlaybackSmoke.start() }
+            if ProcessInfo.processInfo.arguments.contains("-LXCarPlaySmoke") { CarPlaySmoke.start() }
+        }
+        #endif
+    }
     func showWelcome() {
         let label = UILabel(); label.text = "欢迎使用 LX 音乐\n\n连接音乐服务器，即可使用你的歌单与房间\n界面内置于 App，支持后台播放与 CarPlay"; label.numberOfLines = 0; label.textAlignment = .center; label.textColor = .secondaryLabel
         label.frame = view.bounds.insetBy(dx: 24, dy: 100); label.autoresizingMask = [.flexibleWidth, .flexibleHeight]; label.tag = 212; view.addSubview(label)
