@@ -42,9 +42,11 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         records[index].merge(values) { _, value in value }; if save { persist() }; changed(id)
     }
     func localURL(_ song: Song) -> URL? {
+        let offlineID = text(song.raw["offlineId"])
         let row = records.first { row in
             guard text(row["status"]) == "finished", let raw = row["song"] as? Object else { return false }
-            return text(song.raw["offlineId"]) == text(row["id"]) || (Song(raw: raw).key == song.key && text(raw["source"]) == text(song.raw["source"]))
+            if !offlineID.isEmpty { return offlineID == text(row["id"]) }
+            return Song(raw: raw).key == song.key && text(raw["source"]) == text(song.raw["source"])
         }
         guard let row = row, let root = try? folder(text(row["id"])) else { return nil }
         let filename = text(row["filename"])

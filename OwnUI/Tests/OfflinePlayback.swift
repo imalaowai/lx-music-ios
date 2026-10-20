@@ -12,7 +12,10 @@ enum OfflinePlayback {
             let file = try library.folder(id).appendingPathComponent("离线 歌曲.flac")
             try Data(contentsOf: Bundle.main.url(forResource: "local-audio", withExtension: "flac")!).write(to: file)
             library.records = [["id":id,"status":"finished","filename":file.lastPathComponent,"quality":"flac","song":["id":"offline-test","name":"离线歌曲","source":"wy","deviceKey":"old-web-file","url":"file:///old-sandbox/missing.flac"]]]
-            let raw = library.songs()[0]["song"] as! Object, song = Song(raw: raw)
+            // A stale duplicate must never win over the explicitly selected download ID.
+            var stale = library.records[0];stale["id"] = "2F7FEAC9-C61A-4C47-8D3A-501D8DE22B06";stale["filename"] = "missing.flac"
+            library.records.insert(stale, at:0)
+            let raw = library.songs()[1]["song"] as! Object, song = Song(raw: raw)
             precondition(raw["deviceKey"] == nil && raw["url"] == nil)
             let url = library.localURL(song)!
             let shared = try library.shareFiles(id);precondition(url == file && shared.contains(file))

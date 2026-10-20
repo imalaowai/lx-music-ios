@@ -31,6 +31,7 @@ jobs:
           path: NativeCompanion/build/ui-review/
           if-no-files-found: ignore
   native:
+    needs: interface
     runs-on: macos-15
     timeout-minutes: 25
     steps:
