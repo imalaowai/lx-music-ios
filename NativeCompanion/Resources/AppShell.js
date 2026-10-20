@@ -22,7 +22,7 @@ function syncNavigation(){
 function closeChat(){if(window.RoomSocial?.state?.open)window.RoomSocial.close();document.body.classList.remove('native-chat-keyboard');}
 function back(){const previous=state.history.pop();go(previous?.page||state.area||'home',false,previous?.area);}
 function go(target,remember=true,area){
- state.interacted=true;if(state.page==='room'&&target!=='room')closeChat();closeSheet();
+ state.interacted=state.interacted||remember;if(state.page==='room'&&target!=='room')closeChat();closeSheet();
  if(remember&&target!==state.page){if(['home','mine','room','playlists'].includes(target))state.history=[];else state.history.push({page:state.page,area:state.area});}
  const previousArea=area||state.area;state.page=target;state.area=['home','search','songlist','leaderboard'].includes(target)?'home':target==='playlists'?'playlists':target==='room'?'room':['favorites','downloads','sources','settings','localmusic'].includes(target)?previousArea:'mine';
  switching=true;
@@ -98,7 +98,7 @@ function renderDownloads(){
  if(!rows.length){box.innerHTML='<div class="native-empty">还没有已下载歌曲<br>播放页可保存音乐，也可导入设备文件。<br>同名 .lrc 和封面图片可与音频一起导入。</div>';return;}
  for(const item of rows){const song=item.song||{},rowNode=existing.get(item.id)||document.createElement('article');existing.delete(item.id);const contentSignature=JSON.stringify([item.status,item.error,item.hasCover,item.hasLyric,item.quality,song.name,song.singer]);if(rowNode.dataset.contentSignature===contentSignature){const bar=rowNode.querySelector('.native-download-progress i');if(bar)bar.style.width=Math.max(0,Math.min(100,Number(item.progress)||0))+'%';const label=rowNode.querySelector('small');if(label&&item.status==='downloading')label.textContent='下载中 '+Math.round(item.progress||0)+'%';continue;}rowNode.dataset.contentSignature=contentSignature;rowNode.className='native-download';rowNode.dataset.downloadId=item.id;const ready=item.status==='finished',status=ready?[song.singer||song.artist||'本机音乐',item.quality?.toUpperCase(),item.hasLyric?'歌词':'',item.hasCover?'封面':''].filter(Boolean).join(' · '):item.status==='assets'?'歌词 / 封面附件':item.status==='error'?item.error:item.status==='resolving'?'正在解析音源…':`下载中 ${Math.round(item.progress||0)}%`;
   rowNode.innerHTML=`${image(item.hasCover?'lx-local://cover/'+item.id:artwork(song),'native-download-cover')||'<span class="native-download-cover"></span>'}<button type="button" class="native-download-play"><strong>${esc(song.name||'音乐')}</strong><small>${esc(status)}</small>${!ready&&!['error','assets'].includes(item.status)?`<span class="native-download-progress"><i style="width:${Math.max(0,Math.min(100,Number(item.progress)||0))}%"></i></span>`:''}</button><button type="button" class="native-download-more" aria-label="${esc(song.name)}的选项">•••</button>`;
-  rowNode.querySelector('.native-download-play').onclick=()=>{if(ready)perform(()=>playDownload(item.id));};rowNode.querySelector('.native-download-more').onclick=()=>downloadOptions(item);if(!rowNode.parentNode)box.append(rowNode);
+  rowNode.querySelector('.native-download-cover').onclick=()=>{if(ready)perform(()=>playDownload(item.id));};rowNode.querySelector('.native-download-play').onclick=()=>{if(ready)perform(()=>playDownload(item.id));};rowNode.querySelector('.native-download-more').onclick=()=>downloadOptions(item);if(!rowNode.parentNode)box.append(rowNode);
  }
  for(const node of existing.values())node.remove();if(rows.length)box.querySelector('.native-empty')?.remove();
 }

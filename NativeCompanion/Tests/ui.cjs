@@ -67,6 +67,11 @@ const server=http.createServer((req,res)=>{
      currentListData={defaultList:[window.__uiSongs[0]],loveList:[],userList:titles.map((name,i)=>({id:'collection-'+i,name,list:window.__uiSongs.slice(0,i+1),cover:art(i)}))};
     });
     assert.deepEqual(await page.locator('#mobile-bottom-nav button').allTextContents(),['首页','我的歌单','一起听','我的']);
+    if(!await page.locator('#view-native-home').isVisible()){
+     await page.screenshot({path:out+'/'+name+'-'+width+'-initial-failure.png'});
+     const diagnostic=await page.evaluate(()=>({state:window.NativeShell.state,shown:[...document.querySelectorAll('[id^=view-]')].filter(n=>n.getClientRects().length).map(n=>({id:n.id,hidden:n.hidden,classes:n.className})),home:document.getElementById('view-native-home').outerHTML.slice(0,1500)}));
+     fs.writeFileSync(out+'/initial-failure.json',JSON.stringify(diagnostic,null,2));console.log(JSON.stringify(diagnostic));
+    }
     assert.ok(await page.locator('#view-native-home').isVisible());
     assert.equal(await page.locator('header.h-16').isVisible(),false,'Top capsule header removed');
     await page.waitForFunction(()=>document.querySelectorAll('#songlist-container > [onclick]').length===4);

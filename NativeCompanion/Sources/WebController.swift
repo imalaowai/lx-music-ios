@@ -86,7 +86,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         #endif
     }
     func showWelcome() {
-        let label = UILabel(); label.text = "欢迎使用 LX 音乐\n\n连接音乐服务器，即可使用你的歌单与房间\n界面内置于 App，支持后台播放与 CarPlay"; label.numberOfLines = 0; label.textAlignment = .center; label.textColor = .secondaryLabel
+        let label = UILabel(); label.text = "欢迎使用 栖页音乐\n\n连接音乐服务器，即可使用你的歌单与房间\n界面内置于 App，支持后台播放与 CarPlay"; label.numberOfLines = 0; label.textAlignment = .center; label.textColor = .secondaryLabel
         label.frame = view.bounds.insetBy(dx: 24, dy: 100); label.autoresizingMask = [.flexibleWidth, .flexibleHeight]; label.tag = 212; view.addSubview(label)
         let connect = UIButton(type: .system); connect.setTitle("连接音乐服务器", for: .normal); connect.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold); connect.addTarget(self, action: #selector(editAddress), for: .touchUpInside); connect.translatesAutoresizingMaskIntoConstraints = false; connect.tag = 213; view.addSubview(connect)
         NSLayoutConstraint.activate([connect.centerXAnchor.constraint(equalTo: view.centerXAnchor), connect.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 115), connect.heightAnchor.constraint(equalToConstant: 48)])
@@ -293,7 +293,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         web.evaluateJavaScript("window.LXBridge?.\(method)(\(data))", completionHandler: nil)
     }
     func emitChat(_ type: String, _ value: Object) { guard let a = script(type), let b = script(value) else { return }; web.evaluateJavaScript("window.LXBridge?.chat(\(a),\(b))", completionHandler: nil) }
-    func alert(_ message: String) { guard presentedViewController == nil else { return }; let dialog = UIAlertController(title: "LX 音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default)); present(dialog, animated: true) }
+    func alert(_ message: String) { guard presentedViewController == nil else { return }; let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default)); present(dialog, animated: true) }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
         if url.scheme == "about" || url.scheme == "blob" { decisionHandler(.allow); return }
@@ -317,9 +317,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { alert("连接失败：\(error.localizedDescription)") }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if view.window?.windowScene?.activationState == .foregroundActive, let address = address { open(address) } }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        let dialog = UIAlertController(title: "LX 音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() }); present(dialog, animated: true)
+        let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() }); present(dialog, animated: true)
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        let dialog = UIAlertController(title: "LX 音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(false) }); dialog.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(true) }); present(dialog, animated: true)
+        let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(false) }); dialog.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(true) }); present(dialog, animated: true)
     }
 }

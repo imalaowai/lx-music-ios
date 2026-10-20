@@ -109,7 +109,7 @@ static void LXBuildRoot(id delegate, SEL selector) {
     CPInterfaceController *controller = [delegate valueForKey:@"interfaceController"];
     if (!controller) { LXPhase = @"参考连接尚未提供控制器"; return; }
     @try {
-        LXHome = [[CPListTemplate alloc] initWithTitle:@"LX 音乐" sections:@[]];
+        LXHome = [[CPListTemplate alloc] initWithTitle:@"栖页音乐" sections:@[]];
         LXLists = [[CPListTemplate alloc] initWithTitle:@"我的歌单" sections:@[]];
         LXRecent = [[CPListTemplate alloc] initWithTitle:@"最近播放" sections:@[]];
         LXHome.tabTitle = @"播放"; LXHome.tabImage = [UIImage systemImageNamed:@"play.circle"];
