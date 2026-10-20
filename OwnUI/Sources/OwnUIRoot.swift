@@ -35,6 +35,11 @@ enum CarScene {
 @objc(LXOwnIntegration) final class OwnIntegration:NSObject {
     private static var tokens:[NSObjectProtocol]=[]
     private static var active=false
+    private static var publishing:DispatchWorkItem?
+    private static var lastLibrary:Data?
+    @objc static func handleBackgroundDownload(_ completion:@escaping ()->Void) {
+        activate();MusicLibrary.shared.backgroundCompletion=completion;MusicLibrary.shared.restoreTasks()
+    }
     @objc static func activate() {
         guard !active else { return }; active=true
         let player=Player.shared
@@ -61,15 +66,24 @@ enum CarScene {
         return [["id":"__own_queue","name":"当前播放队列","list":player.queue.map(\.raw)],["id":"__own_downloaded","name":"已下载","list":downloads]]+player.library
     }
     static func publish() {
+        publishing?.cancel()
+        let work=DispatchWorkItem { publishNow() };publishing=work
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.35,execute:work)
+    }
+    private static func publishNow() {
+        publishing=nil
         let lists=rawLists().map { list -> Object in
             let songs=(list["list"] as? [Object] ?? []).map { raw -> Object in let song=Song(raw:raw); return ["id":song.key,"name":song.name,"singer":song.artist] }
             return ["id":text(list["id"]),"name":text(list["name"]),"musics":songs]
         }
-        NotificationCenter.default.post(name:Notification.Name("LXOwnLibrary"),object:nil,userInfo:["version":3,"updatedAt":Date().timeIntervalSince1970*1000,"lists":lists,"recent":[]])
+        let snapshot:Object=["version":3,"lists":lists,"recent":[]]
+        guard let data=try? JSONSerialization.data(withJSONObject:snapshot,options:.sortedKeys),data != lastLibrary else { return };lastLibrary=data
+        NotificationCenter.default.post(name:Notification.Name("LXOwnLibrary"),object:nil,userInfo:snapshot)
     }
     static func uiReady(_ value:Object) {
         guard bool(value["bundled"]),bool(value["localShell"]),bool(value["mobile"]),bool(value["themes"]) else { return }
-        let report:Object=["phoneUI":"own-local-ui","pages":["home","playlists","room-chat","mine","downloads"],"build":Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") ?? "","ready":true]
+        guard value["navigation"] as? [String]==["首页","歌单","一起听","我的"],bool(value["roomChat"]),bool(value["mine"]),bool(value["downloads"]) else { return }
+        let report:Object=["phoneUI":"own-local-ui","navigation":value["navigation"] ?? [],"roomChat":true,"mine":true,"downloads":true,"build":Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") ?? "","ready":true]
         if let folder=FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first,let data=try? JSONSerialization.data(withJSONObject:report,options:.prettyPrinted) { try? data.write(to:folder.appendingPathComponent("LX-OwnUI-Ready.json"),options:.atomic) }
     }
 }

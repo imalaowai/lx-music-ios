@@ -1,12 +1,32 @@
 #import <React/RCTEventEmitter.h>
 #import <React/RCTViewManager.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 #import "LXFullLibrary.h"
 
 @interface LXOwnUIBridge : RCTEventEmitter <RCTBridgeModule>
 @property(nonatomic) BOOL listening;
 @property(nonatomic, strong) NSMutableArray *pending;
 @end
+
+static IMP LXOwnPreviousBackgroundDownload;
+static void LXOwnBackgroundDownload(id owner,SEL selector,id application,NSString *identifier,void (^completion)(void)) {
+    if ([identifier isEqualToString:@"net.minyue.lxcompanion.downloads"]) {
+        Class integration=NSClassFromString(@"LXOwnIntegration");
+        SEL action=NSSelectorFromString(@"handleBackgroundDownload:");
+        if ([integration respondsToSelector:action]) { ((void (*)(id,SEL,id))objc_msgSend)(integration,action,completion); return; }
+    }
+    if (LXOwnPreviousBackgroundDownload) ((void (*)(id,SEL,id,id,id))LXOwnPreviousBackgroundDownload)(owner,selector,application,identifier,completion);
+    else if (completion) completion();
+}
+__attribute__((constructor)) static void LXOwnInstallBackgroundDownload(void) {
+    Class app=NSClassFromString(@"AppDelegate");
+    SEL selector=NSSelectorFromString(@"application:handleEventsForBackgroundURLSession:completionHandler:");
+    Method method=class_getInstanceMethod(app,selector);
+    if (method) LXOwnPreviousBackgroundDownload=method_setImplementation(method,(IMP)LXOwnBackgroundDownload);
+    else if (app) class_addMethod(app,selector,(IMP)LXOwnBackgroundDownload,"v@:@@@?");
+}
 @implementation LXOwnUIBridge
 RCT_EXPORT_MODULE();
 + (BOOL)requiresMainQueueSetup { return YES; }

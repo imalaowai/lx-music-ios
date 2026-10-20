@@ -151,6 +151,7 @@ final class Player {
     }
     func seek(_ time: Double, user: Bool = true) {
         let target = max(0, duration > 0 ? min(time, max(0, duration - 0.05)) : time)
+        if audio.currentItem == nil { resumeTime=target; if user { room.sendState(reason:"seek",position:target) };publish();return }
         timelineRevision += 1; seeking = true
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         let revision = timelineRevision, epoch = generation
