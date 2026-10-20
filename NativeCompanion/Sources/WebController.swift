@@ -129,8 +129,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             do { try data.write(to: file, options: .atomic); let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil); sheet.popoverPresentationController?.sourceView = view; sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 100, width: 1, height: 1); present(sheet, animated: true); done() } catch { done(false, error.localizedDescription) }
         case "uiReady":
             #if LX_OWN_UI
-            OwnIntegration.uiReady(value)
-            #endif
+            done(OwnIntegration.uiReady(value))
+            #else
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
                 smokeReloadRequested = true
@@ -142,6 +142,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             if ProcessInfo.processInfo.arguments.contains("-LXPlaybackSmoke"), bool(value["localShell"]) { PlaybackSmoke.start() }
             #endif
             done()
+            #endif
         case "auth":
             guard let address = address else { done(false, "服务器地址无效"); return }
             let username = text(value["username"]), token = text(value["token"])

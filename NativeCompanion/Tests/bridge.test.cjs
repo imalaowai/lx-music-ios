@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{EventEmitter}=require('node:events');
-function fixture(){
+function fixture({readyFailures=0}={}){
   const messages=[],listeners={},intervals=[],renders={queue:0,metadata:0,button:0,status:0};let htmlPlays=0;let context;let now=0;let ready;const initialized=new Promise(resolve=>ready=resolve);
   class Media extends EventEmitter {constructor(){super();this.id='audio-player';}play(){htmlPlays++;return Promise.resolve();}pause(){}load(){}dispatchEvent(e){this.emit(e.type,e);}addEventListener(n,f){this.on(n,f);}}
   class Storage{constructor(){this.map=new Map();}getItem(k){return this.map.get(k)??null;}setItem(k,v){this.map.set(k,String(v));}removeItem(k){this.map.delete(k);}clear(){this.map.clear();}}
@@ -8,7 +8,7 @@ function fixture(){
   const audio=new Media(),queue=[{id:'a',name:'A',source:'wy'},{id:'b',name:'B',source:'wy'}];
   const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',querySelectorAll:()=>[],getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
   const window={};window.top=window;window.window=window;
-  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{window.LXBridge.reply(value.id,true,null);if(value.op==='uiReady')ready();});}}}};
+  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}window.LXBridge.reply(value.id,true,null);if(value.op==='uiReady')ready();});}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
@@ -27,6 +27,9 @@ test('Page selections transfer a complete queue; playback never starts HTML audi
   const selected=f.messages.find(x=>x.op==='select');assert.equal(selected.index,1);assert.equal(selected.queue.length,2);assert.equal(selected.quality,'flac');
   await f.window.playNext();await f.window.playPrev();await f.window.togglePlay(true);
   assert.deepEqual(f.messages.filter(x=>['next','previous','pause'].includes(x.op)).map(x=>x.op),['next','previous','pause']);assert.equal(f.htmlPlays(),0);
+});
+test('A not-ready native UI response is retried until the phone root acknowledges initialization',async()=>{
+  const f=fixture({readyFailures:1});await f.settle();assert.equal(f.messages.filter(x=>x.op==='uiReady').length,2);
 });
 test('Native remote state updates UI without echoing play, pause, seek or room commands',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;

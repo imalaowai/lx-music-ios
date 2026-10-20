@@ -67,4 +67,6 @@ jobs:
           path: |
             build/own-ui/own-phone-launch.png
             build/own-ui/own-phone-ready.json
+            build/own-ui/own-phone-handshake.json
+            build/own-ui/own-phone-runtime.log
           if-no-files-found: ignore

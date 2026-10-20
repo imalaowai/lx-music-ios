@@ -277,8 +277,12 @@
       if (document.visibilityState === 'visible') {foregroundSync = true; send('ready');}
       else {clock = {...clock, position: displayTime(), at: performance.now(), running: false, correction: 0};}
     });
-    setTimeout(() => send('uiReady', {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout, localShell: !!window.NativeShell,
-      navigation: [...document.querySelectorAll('#mobile-bottom-nav button')].map(button=>button.textContent.trim()),roomChat:!!document.getElementById('view-native-room')&&!!document.getElementById('room-chat-input'),mine:!!document.getElementById('native-mine-grid'),downloads:!!document.getElementById('view-native-downloads')}), 120);
+    const reportUIReady = async(attempt = 0) => {
+      const proof = {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout, localShell: !!window.NativeShell,
+        navigation: [...document.querySelectorAll('#mobile-bottom-nav button')].map(button=>button.textContent.trim()),roomChat:!!document.getElementById('view-native-room')&&!!document.getElementById('room-chat-input'),mine:!!document.getElementById('native-mine-grid'),downloads:!!document.getElementById('view-native-downloads')};
+      try {if (await post('uiReady', proof) === false && attempt < 40) setTimeout(() => reportUIReady(attempt + 1), 250);} catch (error) {warn(error);}
+    };
+    setTimeout(reportUIReady, 120);
     // Foreground UI state only; audio and room networking run natively.
     setInterval(() => {
       if (document.visibilityState !== 'visible') return;

@@ -28,6 +28,13 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 xcrun simctl io "$DEVICE_ID" screenshot build/own-ui/own-phone-launch.png
+if test -f "$CONTAINER_DIR/Documents/LX-OwnUI-Handshake.json"; then
+  cat "$CONTAINER_DIR/Documents/LX-OwnUI-Handshake.json"
+  cp "$CONTAINER_DIR/Documents/LX-OwnUI-Handshake.json" build/own-ui/own-phone-handshake.json
+fi
+if ! test -f "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json"; then
+  xcrun simctl spawn "$DEVICE_ID" log show --last 2m --style compact --predicate 'process == "LXOwnHost"' > build/own-ui/own-phone-runtime.log || true
+fi
 cat "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json"
 cp "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json" build/own-ui/own-phone-ready.json
 python3 - <<'PY'
