@@ -109,6 +109,8 @@ const server=http.createServer((req,res)=>{
     await page.locator('#room-emoji-grid button').first().click();
     assert.equal(await page.evaluate(()=>document.activeElement.id==='room-chat-input'),false,'Choosing emoji must not focus keyboard');
     assert.ok(await page.locator('#room-emoji-panel').isVisible());
+    await page.screenshot({path:out+'/'+name+'-'+width+'-emoji.png'});
+    const chatGeometry=await page.evaluate(()=>Object.fromEntries(['view-native-room','room-chat-modal','room-chat-input','room-chat-send','mobile-bottom-nav'].map(id=>{const n=document.getElementById(id),r=n.getBoundingClientRect();return [id,{top:r.top,bottom:r.bottom,height:r.height,display:getComputedStyle(n).display}]})));fs.writeFileSync(out+'/'+name+'-'+width+'-chat-geometry.json',JSON.stringify(chatGeometry,null,2));
     await page.locator('#room-chat-send').click();assert.ok(await page.locator('#room-emoji-panel').isVisible(),'Send must retain emoji panel');
     assert.equal(await page.evaluate(()=>document.activeElement.id==='room-chat-input'),false);
     await page.locator('#room-emoji-close').click();assert.ok(await page.locator('#room-chat-input').evaluate(n=>n===document.activeElement));

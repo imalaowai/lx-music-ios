@@ -155,3 +155,8 @@ body.native-shell .download-options-overlay{z-index:10100!important;background:#
 body.native-shell .download-options-card{background:var(--bg-panel,#fff)!important;color:var(--text-main,#213b37)}
 
 body.native-shell #view-native-room{transition:padding-bottom var(--native-keyboard-duration,.25s) ease!important}
+/* Anchor the thread/composer inside the flex allocation, including the emoji pane. */
+body.native-shell #view-native-room>#room-chat-modal{flex:1 1 0%;height:0!important;align-self:stretch}
+body.native-shell #view-native-room>#room-chat-modal:not([hidden]){display:block!important}
+body.native-shell #view-native-room>#room-chat-modal[hidden],body.native-shell .native-room-members[hidden]{display:none!important}
+body.native-shell #room-chat-modal .room-chat-window{position:absolute!important;inset:0!important;height:auto!important;max-height:none!important;transform:none!important}
