@@ -14,7 +14,7 @@ const artwork=song=>{const raw=song?.meta?{...song.meta,...song}:song||{};return
 function image(url,className=''){return url?`<img class="${className}" src="${esc(url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`:'';}
 function page(id,html){const node=document.createElement('section');node.id='view-native-'+id;node.className='native-page';node.hidden=true;node.innerHTML=html;container.append(node);return node;}
 function hidePages(){for(const node of container.children)if(node.id?.startsWith('view-')){if(node.classList.contains('native-page'))node.hidden=true;else node.classList.add('hidden');}}
-function showOwn(id){hidePages();$('view-native-'+id).hidden=false;$('view-native-'+id).classList.remove('hidden');}
+function showOwn(id){hidePages();if(id==='home')$('view-songlist')?.classList.remove('hidden');$('view-native-'+id).hidden=false;$('view-native-'+id).classList.remove('hidden');}
 function syncNavigation(){
  for(const button of document.querySelectorAll('#mobile-bottom-nav [data-native-page]')){const active=button.dataset.nativePage===state.area;button.classList.toggle('is-active',active);button.setAttribute('aria-current',active?'page':'false');}
  $('mobile-library-tabs')?.setAttribute('hidden','');
