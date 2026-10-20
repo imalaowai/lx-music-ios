@@ -85,7 +85,7 @@ enum CarScene {
         try? FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
         if let diagnostic=try? JSONSerialization.data(withJSONObject:value,options:.prettyPrinted) { try? diagnostic.write(to:folder.appendingPathComponent("LX-OwnUI-Handshake.json"),options:.atomic) }
         guard bool(value["bundled"]),bool(value["localShell"]) else { return false }
-        guard value["navigation"] as? [String]==["首页","歌单","一起听","我的"],bool(value["roomChat"]),bool(value["mine"]),bool(value["downloads"]) else { return false }
+        guard value["navigation"] as? [String]==["首页","我的歌单","一起听","我的"],bool(value["roomChat"]),bool(value["mine"]),bool(value["downloads"]) else { return false }
         let report:Object=["phoneUI":"own-local-ui","navigation":value["navigation"] ?? [],"roomChat":true,"mine":true,"downloads":true,"build":Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") ?? "","ready":true]
         do { let data=try JSONSerialization.data(withJSONObject:report,options:.prettyPrinted);try data.write(to:folder.appendingPathComponent("LX-OwnUI-Ready.json"),options:.atomic);return true } catch { return false }
     }

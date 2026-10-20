@@ -159,6 +159,7 @@
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
     state: receiveState, room: receiveRoom,
+    keyboard(value) {window.dispatchEvent(new CustomEvent('lx-native-keyboard', {detail:value}));},
     download(value) {window.dispatchEvent(new CustomEvent('lx-native-download', {detail: value}));},
     sources(value) {window.dispatchEvent(new CustomEvent('lx-native-sources', {detail: value}));},
     chat(type, data) {window.dispatchEvent(new CustomEvent(type === 'room:chat-history' ? 'lx-room-chat-history' : 'lx-room-chat-update', {detail: {...data, roomId: room.binding?.roomId || ''}}));},
@@ -250,7 +251,7 @@
     const settingsView = document.getElementById('view-settings');
     if (settingsView) {
       const card = document.createElement('section'); card.className = 'media-settings-card lx-native-settings';
-      const title = document.createElement('h3'); title.textContent = 'LX 音乐'; card.append(title);
+      const title = document.createElement('h3'); title.textContent = '栖页音乐'; card.append(title);
       const label = document.createElement('p'); label.id = 'lx-native-state'; label.textContent = '内置界面 · 原生播放 · CarPlay'; card.append(label);
       const address = document.createElement('p'); address.className = 'lx-server-address'; card.append(address);
       const button = document.createElement('button'); button.type = 'button'; button.className = 'apple-secondary'; button.textContent = '更换音乐服务器'; button.onclick = () => send('editServer'); card.append(button);
@@ -279,7 +280,7 @@
     });
     const reportUIReady = async(attempt = 0) => {
       const proof = {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout, localShell: !!window.NativeShell,
-        navigation: [...document.querySelectorAll('#mobile-bottom-nav button')].map(button=>button.textContent.trim()),roomChat:!!document.getElementById('view-native-room')&&!!document.getElementById('room-chat-input'),mine:!!document.getElementById('native-mine-grid'),downloads:!!document.getElementById('view-native-downloads')};
+        navigation: [...document.querySelectorAll('#mobile-bottom-nav button')].map(button=>(button.querySelector('span')||button).textContent.trim()),roomChat:!!document.getElementById('view-native-room')&&!!document.getElementById('room-chat-input'),mine:!!document.getElementById('native-mine-grid'),downloads:!!document.getElementById('view-native-downloads')};
       try {if (await post('uiReady', proof) === false && attempt < 40) setTimeout(() => reportUIReady(attempt + 1), 250);} catch (error) {warn(error);}
     };
     setTimeout(reportUIReady, 120);

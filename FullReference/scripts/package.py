@@ -79,12 +79,23 @@ def package(reference,components,signer,output):
         new_sections=sections(signed)
         for name,(off,size) in sections(old_exe).items():
             next_off,next_size=new_sections[name];assert size==next_size and old_exe[off:off+size]==signed[next_off:next_off+next_size], 'Original native section changed: '+name
-        info['CFBundleVersion']='83' if own_ui else '82'
+        info['CFBundleVersion']='84' if own_ui else '82'
         if own_ui:
-            info['CFBundleShortVersionString']='1.9.0'
+            info['CFBundleShortVersionString']='1.9.1'
             info['MinimumOSVersion']='15.0'
         replacements={exe_name:signed,info_name:plistlib.dumps(info,fmt=plistlib.FMT_BINARY),prefix+'main.jsbundle':js}
         new_files={prefix+'Frameworks/LXFullCarPlay.dylib':module}
+        if own_ui:
+            brand=plistlib.loads(additions.read('OwnUIBrand/BrandInfo.plist'))
+            for key in ['CFBundleIcons','CFBundleIcons~ipad']:
+                if key in brand:info[key]=brand[key]
+            info['CFBundleDisplayName']='栖页音乐';info['CFBundleName']='栖页音乐'
+            replacements[info_name]=plistlib.dumps(info,fmt=plistlib.FMT_BINARY)
+            for name in additions.namelist():
+                if name.startswith('OwnUIBrand/') and (name.endswith('.png') or name.endswith('.car')):
+                    target=prefix+pathlib.PurePosixPath(name).name
+                    (replacements if target in original.namelist() else new_files)[target]=additions.read(name)
+
         old_names=set(original.namelist())
         if own_ui:
             own_manifest=json.loads(additions.read('OwnUIResources/OwnUI.manifest.json'))

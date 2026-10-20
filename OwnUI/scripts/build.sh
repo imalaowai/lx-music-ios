@@ -3,6 +3,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 python3 OwnUI/scripts/prepare.py
+python3 -m venv build/own-ui/brand-venv
+build/own-ui/brand-venv/bin/pip install --quiet Pillow==11.3.0
+build/own-ui/brand-venv/bin/python OwnUI/Brand/generate.py
+mkdir -p build/own-ui/brand
+xcrun actool OwnUI/Brand/Images.xcassets --compile build/own-ui/brand --platform iphoneos --minimum-deployment-target 15.0 --target-device iphone --target-device ipad --app-icon AppIcon --output-partial-info-plist build/own-ui/brand/BrandInfo.plist --output-format human-readable-text
 mkdir -p build/own-ui/include/React build/own-ui/objects
 python3 - <<'PY'
 import pathlib
@@ -28,10 +33,12 @@ python3 - <<'PY'
 import hashlib,json,pathlib,struct,zipfile
 d=pathlib.Path('build/own-ui');b=(d/'main.jsbundle').read_bytes()
 assert struct.unpack_from('<I',b,8)[0]==96
-metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.0','build':'83','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
+metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.1','build':'84','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
 (d/'components.json').write_text(json.dumps(metadata,indent=2)+'\n')
 with zipfile.ZipFile(d/'LX-OwnUI-Native-Components.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     for name in ['main.jsbundle','LXFullCarPlay.dylib','components.json']:z.write(d/name,name)
+    for p in (d/'brand').iterdir():
+        if p.is_file():z.write(p,'OwnUIBrand/'+p.name)
     for p in (d/'resources').iterdir():z.write(p,'OwnUIResources/'+p.name)
     for p in (d/'assets').rglob('*') if (d/'assets').is_dir() else []:
         if p.is_file():z.write(p,p.relative_to(d).as_posix())

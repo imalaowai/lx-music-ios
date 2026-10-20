@@ -9,3 +9,11 @@
 浏览器界面回归覆盖底部四个导航、自有首页推荐与回退、我的入口、离线封面歌词分享、房间创建加入折叠、默认聊天、成员头像、内置表情和键盘视口。音频路由回归覆盖 TrackPlayer/FLAC 选择、暂停恢复、快速切歌、旧事件隔离和 EOF 去重。真实服务器端到端同步、实机发热和物理 CarPlay 仍需真实设备验证；编译和静态检查不等于这些验证已通过。
 
 构建流程 `.github/workflows/lx-own-ui.yml`，公开源码组件与本地参考 IPA 通过 `FullReference/scripts/package.py` 合成最终安装包。输入参考二进制不上传公开仓库。
+
+## 栖页音乐 1.9.1 · Build 84
+
+The home screen embeds the complete featured-playlist catalog. Personal sections retain their entry page for back navigation. The player detail and collection sheet close synchronously; the queue uses an opaque surface and its own backdrop. Chat retains its header/member geometry as the native keyboard guide moves, and emoji selection/sending never focuses the text input. Room unread counts appear on the bottom navigation.
+
+Offline selections use `playDownload` and the native library's stable record ID. The audio adapter opens on-device files with `AVAudioPlayer`; online audio continues to use the reference TrackPlayer/streaming-FLAC modules. Chinese filenames, real FLAC decode, advancing position, pause, seek, EOF and shareable file lookup are checked in the iOS Simulator host. A quality/content picker controls audio, LRC and cover downloads. Branding is rendered from editable paths and compiled by `actool` into a new app-icon catalog.
+
+`NativeCompanion/WebOverrides` contains the readable edited UI modules; `prepare.py` validates the original packed page before applying these modules, then hashes the actual packaged output. Room synchronization policy is unchanged. Foreground resume depends on accepted room command reasons; background delivery without active playback is limited by iOS suspension.

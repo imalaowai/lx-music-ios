@@ -52,10 +52,18 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         let url = root.appendingPathComponent(filename)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
+    func coverURL(_ id: String) -> URL? {
+        guard UUID(uuidString: id) != nil, let root = try? folder(id) else { return nil }
+        let url = root.appendingPathComponent("封面.jpg")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
     func songs() -> [Object] {
         records.map { row in
             var result = row, raw = row["song"] as? Object ?? [:]
             raw["offlineId"] = row["id"]
+            // Never send web IndexedDB device keys or expired sandbox URLs back to JS.
+            raw.removeValue(forKey: "deviceKey"); raw.removeValue(forKey: "url")
+            raw["quality"] = row["quality"]
             if bool(row["hasCover"]) { raw["img"] = "lx-local://cover/" + text(row["id"]) }
             result["song"] = raw; return result
         }
@@ -66,10 +74,14 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         if let data = try? Data(contentsOf: root.appendingPathComponent("lyrics.json")), let value = (try? JSONSerialization.jsonObject(with: data)) as? Object { return value }
         return [:]
     }
-    func download(_ song: Song, quality: String, api: API, completion: @escaping (Result<Object, Error>) -> Void) {
+    func download(_ song: Song, quality: String, api: API, parts: [String] = ["song", "lyrics", "cover"], completion: @escaping (Result<Object, Error>) -> Void) {
         if let existing = records.first(where: { row in guard let raw = row["song"] as? Object else { return false }; return Song(raw: raw).key == song.key && text(raw["source"]) == text(song.raw["source"]) && ["finished", "resolving", "downloading"].contains(text(row["status"])) }) { completion(.success(existing)); return }
         let id = UUID().uuidString
-        records.insert(["id": id, "song": song.raw, "status": "resolving", "quality": quality, "progress": 0, "createdAt": Date().timeIntervalSince1970 * 1000], at: 0); persist(); changed(id)
+        records.insert(["id": id, "song": song.raw, "status": "resolving", "quality": quality, "progress": 0, "parts": parts, "createdAt": Date().timeIntervalSince1970 * 1000], at: 0); persist(); changed(id)
+        if !parts.contains("song") {
+            patch(id, ["status": "assets", "quality": quality]); cacheAssets(id, song: song)
+            completion(.success(["id": id])); return
+        }
         api.resolve(song, quality: quality, allowFallback: true) { [weak self] result in
             guard let self = self, self.records.contains(where: {text($0["id"]) == id && text($0["status"]) == "resolving"}) else { completion(.failure(ClientError("下载已取消"))); return }
             do {
@@ -86,13 +98,14 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         var raw = song.raw
         if let meta = raw["meta"] as? Object { raw = meta.merging(raw) { _, value in value } }
         let source = text(raw["source"]), songmid = text(raw["songmid"]).isEmpty ? text(raw["songId"]) : text(raw["songmid"])
-        if !source.isEmpty, source != "local" {
+        if !source.isEmpty, source != "local", (records.first {text($0["id"]) == id}?["parts"] as? [String] ?? ["lyrics"]).contains("lyrics") {
             var query = URLComponents(); query.queryItems = [URLQueryItem(name: "source", value: source), URLQueryItem(name: "songmid", value: songmid)]
             LocalEngine.shared.call("api", ["path": "/api/music/lyric?" + (query.percentEncodedQuery ?? ""), "body": ["songInfo": raw]]) { [weak self] result in
                 guard let self = self, self.records.contains(where: {text($0["id"]) == id}), case .success(let value) = result, let lyric = value as? Object else { return }
                 self.saveLyrics(lyric, id: id)
             }
         }
+        guard (records.first {text($0["id"]) == id}?["parts"] as? [String] ?? ["cover"]).contains("cover") else { return }
         let picture = text(raw["img"]).isEmpty ? text(raw["picUrl"]) : text(raw["img"])
         if picture.isEmpty, !source.isEmpty, source != "local" {
             LocalEngine.shared.call("api", ["path": "/api/music/pic?source=" + source, "body": ["songInfo": raw]]) { [weak self] result in
@@ -139,9 +152,12 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         try FileManager.default.removeItem(at: folder(id)); records.removeAll { text($0["id"]) == id }; persist(); onChange?(["id": id, "deleted": true])
     }
     func shareFiles(_ id: String) throws -> [URL] {
-        guard let row = records.first(where: {text($0["id"]) == id}), let raw = row["song"] as? Object, let audio = localURL(Song(raw: raw)) else { throw ClientError("歌曲尚未下载完成") }
+        guard let row = records.first(where: {text($0["id"]) == id}) else { throw ClientError("没有找到这条下载记录") }
         let root = try folder(id)
-        return [audio, root.appendingPathComponent("封面.jpg"), root.appendingPathComponent("歌词.lrc")].filter { FileManager.default.fileExists(atPath: $0.path) }
+        var files = [root.appendingPathComponent("封面.jpg"), root.appendingPathComponent("歌词.lrc")]
+        if let raw = row["song"] as? Object, let audio = localURL(Song(raw: raw.merging(["offlineId":id]) {_,new in new})) { files.insert(audio, at: 0) }
+        let existing = files.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !existing.isEmpty else { throw ClientError("文件尚未保存完成，请稍后重试") }; return existing
     }
     func importFiles(_ urls: [URL], completion: @escaping (Result<Int, Error>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in

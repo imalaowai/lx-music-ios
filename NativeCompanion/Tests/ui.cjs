@@ -46,6 +46,7 @@ const server=http.createServer((req,res)=>{
        window.LXBridge.reply(message.id,value,null);
        if(message.op==='roomMembership')window.LXBridge.room(message.operation==='leave'?{binding:null,participants:[],state:{},connected:false}:window.__mockRoom);
        if(message.op==='roomRefresh')window.LXBridge.room(window.__mockRoom);
+       if(message.op==='playDownload')window.LXBridge.state({queueRevision:11,queue:[window.__offlineSong],index:0,song:window.__offlineSong,paused:false,playing:true,position:12,duration:180,mode:'list'});
        if(message.op==='select')window.LXBridge.state({queueRevision:10,queue:message.queue,index:message.index,song:message.queue[message.index],paused:false,playing:true,position:12,duration:180,mode:'list'});
       });
      }}}};
@@ -65,21 +66,16 @@ const server=http.createServer((req,res)=>{
      window.__uiSongs=titles.map((name,i)=>({id:'ui-'+i,name,singer:'LX Music',source:'wy',img:art(i),pic:art(i)}));
      currentListData={defaultList:[window.__uiSongs[0]],loveList:[],userList:titles.map((name,i)=>({id:'collection-'+i,name,list:window.__uiSongs.slice(0,i+1),cover:art(i)}))};
     });
-    assert.deepEqual(await page.locator('#mobile-bottom-nav button').allTextContents(),['首页','歌单','一起听','我的']);
+    assert.deepEqual(await page.locator('#mobile-bottom-nav button').allTextContents(),['首页','我的歌单','一起听','我的']);
     assert.ok(await page.locator('#view-native-home').isVisible());
     assert.equal(await page.locator('header.h-16').isVisible(),false,'Top capsule header removed');
-    await page.waitForFunction(()=>document.querySelectorAll('#native-home-posters button').length===4);
-    assert.equal(await page.locator('#native-home-hot button').count(),0,'A pending hot-search request must not block playlist cards');
-    await page.evaluate(()=>window.__releaseHot());await page.waitForFunction(()=>document.querySelectorAll('#native-home-hot button').length===4);
-    if(width===375){
-     await page.evaluate(()=>{window.__catalogFail=true;window.NativeShell.state.feed.lists=[];window.NativeShell.state.listsAt=0;window.NativeShell.go('home');});
-     await page.waitForFunction(()=>window.NativeShell.state.feed.listOrder==='hot'&&document.querySelectorAll('#native-home-posters button').length===4);
-     assert.ok(await page.getByText('推荐歌单',{exact:true}).isVisible());
-     assert.ok(await page.evaluate(()=>window.__nativeCommands.some(c=>c.op==='musicApi'&&c.path.includes('sortId=hot'))),'A failed list request must retry despite a successful cached hot-search result');
-     await page.evaluate(()=>{window.__catalogFailAllWY=true;window.NativeShell.state.feed.lists=[];window.NativeShell.state.listsAt=0;window.NativeShell.go('home');});
-     await page.waitForFunction(()=>document.querySelectorAll('#native-home-posters button').length===4&&window.__nativeCommands.some(c=>c.op==='musicApi'&&c.path.includes('source=kg')));
-     await page.evaluate(()=>{window.__catalogFailAllWY=false;window.__catalogFail=false;});
-    }
+    await page.waitForFunction(()=>document.querySelectorAll('#songlist-container > [onclick]').length===4);
+    assert.equal(await page.locator('#native-home-hot,#native-home-favorites,#native-home-posters').count(),0);
+    assert.ok(await page.locator('#native-home-catalog').getByText('精选歌单',{exact:true}).isVisible());
+    await page.locator('#native-home-downloads').click();await page.locator('#native-download-back').click();
+    assert.ok(await page.locator('#view-native-home').isVisible(),'Home downloads must return to home');
+    await page.evaluate(()=>window.NativeShell.go('favorites'));await page.locator('.playlist-back').click();
+    assert.ok(await page.locator('#view-native-home').isVisible(),'Home favorites must return to home');
     await page.screenshot({path:out+'/'+name+'-'+width+'-home.png'});
     await page.locator('[data-native-page=mine]').click();
     for(const text of ['我的收藏','我的歌单','本地 / 网盘','设置','已下载'])assert.ok(await page.locator('#native-mine-grid').getByText(text,{exact:true}).isVisible());
@@ -91,7 +87,7 @@ const server=http.createServer((req,res)=>{
     await page.locator('.native-sheet-close').click();
     await page.locator('.native-download-play').click();
     await page.waitForFunction(()=>typeof currentRawLrc==='string'&&currentRawLrc.includes('离线歌词测试'));
-    assert.ok(await page.evaluate(()=>window.__nativeCommands.some(c=>c.op==='select'&&c.queue[0].offlineId===window.__offlineSong.offlineId)));
+    assert.ok(await page.evaluate(()=>window.__nativeCommands.some(c=>c.op==='playDownload'&&c.downloadId===window.__offlineSong.offlineId)));
     await page.evaluate(()=>{if(!document.getElementById('view-player-detail').classList.contains('hidden'))window.toggleLyrics();});
     await page.locator('[data-native-page=room]').click();
     assert.equal(await page.locator('#native-room-create-form').isVisible(),false);assert.equal(await page.locator('#native-room-join-form').isVisible(),false);
@@ -104,7 +100,13 @@ const server=http.createServer((req,res)=>{
     assert.equal(await page.locator('#native-room-member-strip .native-member').count(),2);
     await page.evaluate(()=>{window.__firstChatNode=document.querySelector('[data-message-id=m1]');window.__chatMessages.push({id:'m2',kind:'text',text:'好呀 🎶',time:Date.now(),author:{name:'alice',nickname:'我'}});window.LXBridge.chat('room:chat-history',{revision:2,messages:window.__chatMessages});});
     assert.ok(await page.evaluate(()=>window.__firstChatNode===document.querySelector('[data-message-id=m1]')),'Unchanged chat rows must be reused');
-    await page.locator('#room-chat-emoji').click();assert.ok(await page.locator('#room-emoji-grid button').count()>20);await page.locator('#room-chat-emoji').click();
+    await page.locator('#room-chat-emoji').click();assert.ok(await page.locator('#room-emoji-grid button').count()>20);
+    await page.locator('#room-emoji-grid button').first().click();
+    assert.equal(await page.evaluate(()=>document.activeElement.id==='room-chat-input'),false,'Choosing emoji must not focus keyboard');
+    assert.ok(await page.locator('#room-emoji-panel').isVisible());
+    await page.locator('#room-chat-send').click();assert.ok(await page.locator('#room-emoji-panel').isVisible(),'Send must retain emoji panel');
+    assert.equal(await page.evaluate(()=>document.activeElement.id==='room-chat-input'),false);
+    await page.locator('#room-emoji-close').click();assert.ok(await page.locator('#room-chat-input').evaluate(n=>n===document.activeElement));
     await page.locator('#room-chat-input').fill('输入文字不跳页');
     if(phone){
      await page.setViewportSize({width,height:330});await page.waitForTimeout(120);
@@ -113,6 +115,15 @@ const server=http.createServer((req,res)=>{
      await page.screenshot({path:out+'/'+name+'-'+width+'-keyboard.png'});await page.setViewportSize({width,height:width===375?667:932});await page.locator('#room-chat-input').blur();
     }
     await page.screenshot({path:out+'/'+name+'-'+width+'-room.png'});
+    await page.evaluate(()=>{window.LXBridge.state({song:window.__offlineSong,paused:false,playing:true,position:12,duration:180});window.toggleLyrics();window.toggleLyrics();});
+    assert.ok(await page.locator('#view-native-room').isVisible());
+    assert.equal(await page.locator('#view-player-detail').isVisible(),false,'Player hide must finish synchronously');
+    await page.locator('[data-native-page=home]').click();
+    await page.evaluate(()=>{window.__chatMessages.push({id:'unread-3',kind:'text',text:'新消息',time:Date.now()+5000,author:{name:'bob',nickname:'朋友'}});window.LXBridge.chat('room:chat-history',{revision:3,messages:window.__chatMessages});});
+    await page.waitForFunction(()=>!document.querySelector('[data-native-page=room] .native-unread').hidden);
+    await page.locator('[data-native-page=room]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-native-page=room] .native-unread').hidden);
+
     await page.locator('#room-chat-more').click();assert.ok(await page.locator('#native-room-leave').isVisible());await page.locator('#native-room-leave').click();
     await page.waitForFunction(()=>!window.RoomSocial.state.open);
     for(const theme of ['apple','kugou','lx','apple']){
@@ -131,6 +142,19 @@ const server=http.createServer((req,res)=>{
      await page.waitForFunction(()=>!document.getElementById('view-player-detail').classList.contains('hidden'));
      await page.waitForTimeout(300);
      await page.screenshot({path:out+'/'+name+'-'+width+'-player.png'});
+     await page.evaluate(()=>window.toggleQueueDrawer());
+     assert.ok(await page.locator('#native-queue-backdrop').isVisible());
+     assert.ok(await page.locator('#queue-drawer').evaluate(n=>!['transparent','rgba(0, 0, 0, 0)'].includes(getComputedStyle(n).backgroundColor)));
+     await page.evaluate(()=>window.toggleQueueDrawer());assert.equal(await page.locator('#native-queue-backdrop').isVisible(),false);
+     await page.evaluate(()=>window.openPlaylistAddModal());await page.waitForTimeout(20);
+     await page.evaluate(()=>window.closePlaylistAddModal());assert.equal(await page.locator('#playlist-add-modal').isVisible(),false);
+     await page.evaluate(()=>{void window.DeviceLibrary.downloadBatch([window.__uiSongs[0]]);});
+     await page.waitForSelector('.download-options-overlay');
+     await page.locator('.download-options-card select').selectOption('320k');
+     await page.locator('.download-options-card input[name=cover]').uncheck();
+     await page.locator('.download-options-card [type=submit]').click();
+     await page.waitForFunction(()=>window.__nativeCommands.some(c=>c.op==='download'&&c.quality==='320k'&&c.parts.includes('lyrics')&&!c.parts.includes('cover')));
+
      const player=await page.evaluate(()=>{
       const cover=document.getElementById('mobile-player-cover-container'),chain=[];
       for(let node=cover;node && chain.length<5;node=node.parentElement){const style=getComputedStyle(node),rect=node.getBoundingClientRect();chain.push({id:node.id,className:node.className,inline:node.getAttribute('style'),display:style.display,visibility:style.visibility,width:rect.width,height:rect.height,top:rect.top,left:rect.left});}

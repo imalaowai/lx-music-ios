@@ -9,6 +9,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     var loadingBundledPage = false
     var smokeReloadRequested = false
     var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
+    var keyboardObserver: NSObjectProtocol?
     var lastSong = ""
     var pickerPurpose = ""
     static let deviceOrigin = URL(string: "https://lx-device.invalid/")!
@@ -37,6 +38,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(web)
         NSLayoutConstraint.activate([web.leadingAnchor.constraint(equalTo: view.leadingAnchor), web.trailingAnchor.constraint(equalTo: view.trailingAnchor), web.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), web.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)])
+        keyboardObserver = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self = self, let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let local = self.view.convert(frame, from: nil)
+            self.emit("keyboard", ["visible": local.minY < self.view.bounds.maxY - 80, "duration": number(note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey], 0.25)])
+        }
         player.onState = { [weak self] value in self?.emit("state", value) }
         player.onRoom = { [weak self] value in self?.emit("room", value) }
         player.onRevoked = { [weak self] in self?.web.evaluateJavaScript("window.LXBridge?.revoked()", completionHandler: nil) }
@@ -181,9 +187,15 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             }.resume()
         case "importAudio": showPicker("audio"); done()
         case "downloads": done(MusicLibrary.shared.songs())
+        case "playDownload":
+            let rows = MusicLibrary.shared.songs().filter { text($0["status"]) == "finished" }
+            let songs = rows.compactMap { $0["song"] as? Object }.map { Song(raw: $0) }
+            guard let target = songs.firstIndex(where: {text($0.raw["offlineId"]) == text(value["downloadId"])}), MusicLibrary.shared.localURL(songs[target]) != nil else { done(false, "本机音频文件缺失，请重新下载或导入"); return }
+            player.select(songs, index: target); done()
+
         case "download":
             guard let raw = value["song"] as? Object else { done(false, "歌曲信息无效"); return }
-            MusicLibrary.shared.download(Song(raw: raw), quality: text(value["quality"]).isEmpty ? player.quality : text(value["quality"]), api: player.api) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
+            MusicLibrary.shared.download(Song(raw: raw), quality: text(value["quality"]).isEmpty ? player.quality : text(value["quality"]), api: player.api, parts: value["parts"] as? [String] ?? ["song", "lyrics", "cover"]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
         case "downloadAssets": do { done(try MusicLibrary.shared.assets(text(value["downloadId"]))) } catch { done(false, error.localizedDescription) }
         case "downloadCancel": MusicLibrary.shared.cancel(text(value["downloadId"])); done()
         case "downloadRemove":

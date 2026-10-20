@@ -68,3 +68,5 @@ buck-out/
 /coverage
 NativeCompanion/Engine/vendor/
 NativeCompanion/Engine/node_modules
+OwnUI/Brand/Images.xcassets/
+OwnUI/Brand/QiyeIcon.png
