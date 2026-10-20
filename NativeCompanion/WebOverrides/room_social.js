@@ -98,7 +98,7 @@
   }
   async function send(){
     if(state.sending || !binding())return;const input=$('room-chat-input'),text=input.value.trim();if(!text)return;const roomId=state.roomId,epoch=state.epoch;state.sending=true;$('room-chat-send').disabled=true;
-    try{const result=await window.DeviceLibrary.api('/api/room/chat',{text});if(epoch!==state.epoch || roomId!==binding())return;adopt(result,roomId);if(input.value.trim()===text){input.value='';input.style.height='44px';}$('room-chat-status').textContent='';$('room-chat-messages').scrollTop=$('room-chat-messages').scrollHeight;markSeen();hideEmoji();}
+    try{const result=await window.DeviceLibrary.api('/api/room/chat',{text});if(epoch!==state.epoch || roomId!==binding())return;adopt(result,roomId);if(input.value.trim()===text){input.value='';input.style.height='44px';}$('room-chat-status').textContent='';$('room-chat-messages').scrollTop=$('room-chat-messages').scrollHeight;markSeen();}
     catch(error){if(epoch===state.epoch)$('room-chat-status').textContent=error.message;}finally{if(epoch===state.epoch){state.sending=false;$('room-chat-send').disabled=false;if($('room-emoji-panel').hidden&&document.activeElement===input)input.focus({preventScroll:true});}}
   }
   function open(){
