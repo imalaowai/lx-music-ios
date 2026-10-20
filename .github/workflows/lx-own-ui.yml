@@ -53,6 +53,7 @@ jobs:
           clang -fobjc-arc -fblocks -framework Foundation -I FullReference/Sources FullReference/Sources/LXFullLibrary.m FullReference/Tests/library.m -o build/own-ui/library-tests
           build/own-ui/library-tests
       - name: Launch the owned phone root with real WebKit in iOS Simulator
+        timeout-minutes: 8
         run: bash OwnUI/scripts/check-phone.sh
       - uses: actions/upload-artifact@v4
         with:

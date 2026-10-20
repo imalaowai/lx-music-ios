@@ -14,6 +14,7 @@ final class OwnHostScene:UIResponder,UIWindowSceneDelegate {
         guard let scene=scene as? UIWindowScene else { return }
         let window=UIWindow(windowScene:scene),parent=UIViewController()
         window.rootViewController=parent;window.makeKeyAndVisible();self.window=window
-        let root=OwnUIRootView(frame:parent.view.bounds);root.autoresizingMask=[.flexibleWidth,.flexibleHeight];parent.view.addSubview(root)
+        guard let root=LXOwnMakeRoot() else { fatalError("ObjC bridge cannot find owned root view") }
+        root.frame=parent.view.bounds;root.autoresizingMask=[.flexibleWidth,.flexibleHeight];parent.view.addSubview(root)
     }
 }

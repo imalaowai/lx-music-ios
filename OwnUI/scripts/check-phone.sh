@@ -11,9 +11,10 @@ import pathlib,plistlib
 info={'CFBundleIdentifier':'net.minyue.lxownui.verify','CFBundleExecutable':'LXOwnHost','CFBundleName':'LXOwnHost','CFBundleDisplayName':'LX 自有界面验证','CFBundlePackageType':'APPL','CFBundleVersion':'83','CFBundleShortVersionString':'1.9.0','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False,'UISceneConfigurations':{'UIWindowSceneSessionRoleApplication':[{'UISceneConfigurationName':'Phone'}]}},'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True}}
 pathlib.Path('build/own-ui/LXOwnHost.app/Info.plist').write_bytes(plistlib.dumps(info))
 PY
-xcrun swiftc -emit-executable -O -module-name LXOwnHost -target "$(uname -m)-apple-ios15.0-simulator" -sdk "$SDK" -D LX_OWN_UI \
+xcrun clang -c -arch "$(uname -m)" -isysroot "$SDK" -mios-simulator-version-min=15.0 -fobjc-arc OwnUI/Tests/PhoneLookup.m -o build/own-ui/phone-lookup.o
+xcrun swiftc -emit-executable -O -module-name LXOwnHost -target "$(uname -m)-apple-ios15.0-simulator" -sdk "$SDK" -D LX_OWN_UI -import-objc-header OwnUI/Tests/PhoneLookup.h \
   NativeCompanion/Sources/Core.swift NativeCompanion/Sources/API.swift NativeCompanion/Sources/Room.swift NativeCompanion/Sources/LocalEngine.swift NativeCompanion/Sources/MusicLibrary.swift NativeCompanion/Sources/WebController.swift \
-  OwnUI/Sources/Player.swift OwnUI/Sources/ReferenceAudio.swift OwnUI/Sources/OwnUIRoot.swift OwnUI/Tests/PhoneHost.swift \
+  OwnUI/Sources/Player.swift OwnUI/Sources/ReferenceAudio.swift OwnUI/Sources/OwnUIRoot.swift OwnUI/Tests/PhoneHost.swift build/own-ui/phone-lookup.o \
   -framework Foundation -framework UIKit -framework WebKit -framework AVFoundation -framework MediaPlayer -framework JavaScriptCore -framework Security -framework UniformTypeIdentifiers -framework ImageIO -o "$HOST_DIR/LXOwnHost"
 codesign --force --sign - "$HOST_DIR"
 DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next(v["udid"] for group in d["devices"].values() for v in group if v["name"].startswith("iPhone")))')
