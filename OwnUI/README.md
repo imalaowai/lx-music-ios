@@ -19,3 +19,5 @@ Offline selections use `playDownload` and the native library's stable record ID.
 `NativeCompanion/WebOverrides` contains the readable edited UI modules; `prepare.py` validates the original packed page before applying these modules, then hashes the actual packaged output. Room synchronization policy is unchanged. Foreground resume depends on accepted room command reasons; background delivery without active playback is limited by iOS suspension.
 
 The home catalog requests cards independently of categories, caches the last 12 successful result pages, and falls back across providers when the initial provider fails. Explicit user source selections are respected.
+
+Packaging also renders/replaces the legacy standalone CarPlay icon PNGs. Install Pillow 11.3.0 in the Python environment used for packaging; the packager runs `OwnUI/Brand/generate.py` to regenerate these files from source.

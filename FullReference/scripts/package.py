@@ -95,6 +95,14 @@ def package(reference,components,signer,output):
                 if name.startswith('OwnUIBrand/') and (name.endswith('.png') or name.endswith('.car')):
                     target=prefix+pathlib.PurePosixPath(name).name
                     (replacements if target in original.namelist() else new_files)[target]=additions.read(name)
+            # actool's phone target omits legacy standalone CarPlay PNGs.
+            # Replace those fallback icons too, from the same editable Qiye mark.
+            brand_root=pathlib.Path(__file__).resolve().parents[2]/'OwnUI/Brand'
+            required={'AppIcon60x60@2x~car.png':'Qiye-car-60-2.png','AppIcon60x60@3x~car.png':'Qiye-car-60-3.png','AppIcon60x60@3x.png':'Qiye-iphone-60-3.png'}
+            subprocess.run([sys.executable,str(brand_root/'generate.py')],check=True)
+            for target,name in required.items():
+                data=(brand_root/'Images.xcassets/AppIcon.appiconset'/name).read_bytes()
+                (replacements if prefix+target in original.namelist() else new_files)[prefix+target]=data
 
         old_names=set(original.namelist())
         if own_ui:
@@ -129,7 +137,7 @@ def package(reference,components,signer,output):
                 if name not in replacements:
                     assert result.read(name)==original.read(name),'Original resource changed: '+name
                     if not name.endswith('/'):preserved.append({'path':name,'sha256':sha(result.read(name))})
-        report={'referenceSHA256':REFERENCE_SHA,'outputSHA256':sha(output.read_bytes()),'outputBytes':output.stat().st_size,'referenceFiles':len(original.namelist()),'removedOriginalFiles':0,'modifiedOriginalFiles':sorted(replacements),'addedFiles':sorted(new_files),'preservedFiles':preserved,'nativeCodeSectionsUnchanged':True,'bundleIdentifier':info['CFBundleIdentifier'],'build':info['CFBundleVersion'],'carplayConnectionOwner':'original CarPlaySupport.dylib','phoneUI':'own-local-ui' if own_ui else 'complete original React Native client','sourceCommit':metadata.get('sourceCommit',''),'physicalCarPlayVerified':False}
+        report={'referenceSHA256':REFERENCE_SHA,'outputSHA256':sha(output.read_bytes()),'outputBytes':output.stat().st_size,'referenceFiles':len(original.namelist()),'removedOriginalFiles':0,'modifiedOriginalFiles':sorted(replacements),'addedFiles':sorted(new_files),'preservedFiles':preserved,'nativeCodeSectionsUnchanged':True,'bundleIdentifier':info['CFBundleIdentifier'],'build':info['CFBundleVersion'],'carplayConnectionOwner':'original CarPlaySupport.dylib','phoneUI':'own-local-ui' if own_ui else 'complete original React Native client','sourceCommit':metadata.get('sourceCommit',''),'packagerSHA256':sha(pathlib.Path(__file__).read_bytes()),'physicalCarPlayVerified':False}
         output.with_suffix('.verification.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
         print(json.dumps({k:v for k,v in report.items() if k not in ('preservedFiles','addedFiles')},ensure_ascii=False))
         return report
