@@ -191,7 +191,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             let rows = MusicLibrary.shared.songs().filter { text($0["status"]) == "finished" }
             let songs = rows.compactMap { $0["song"] as? Object }.map { Song(raw: $0) }
             guard let target = songs.firstIndex(where: {text($0.raw["offlineId"]) == text(value["downloadId"])}), MusicLibrary.shared.localURL(songs[target]) != nil else { done(false, "本机音频文件缺失，请重新下载或导入"); return }
-            player.select(songs, index: target); done()
+            player.select(songs, index: target)
+            if player.failure.isEmpty { done() } else { done(false, player.failure) }
 
         case "download":
             guard let raw = value["song"] as? Object else { done(false, "歌曲信息无效"); return }

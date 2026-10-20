@@ -1,8 +1,8 @@
 import Foundation
 import AVFoundation
 
-// A transport adapter, not an AVPlayer. All sound is produced by the native
-// TrackPlayer / streaming FLAC modules already present in the reference core.
+// Online audio uses the reference TrackPlayer / streaming FLAC modules.
+// On-device files use AVAudioPlayer directly, without web URLs or a JS load.
 final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
     var localAudio: AVAudioPlayer?
     final class Item { var duration = CMTime.zero }
