@@ -51,6 +51,7 @@ const server=http.createServer((req,res)=>{
       });
      }}}};
     });
+    await context.addInitScript({content:'window.__catalogFailAllWY='+JSON.stringify(width===375)+';'});
     await context.addInitScript({content:bridge});
     await context.addInitScript({content:'window.__LX_SHELL_CSS__='+JSON.stringify(shellCSS)+';document.addEventListener("DOMContentLoaded",()=>{'+shell+'});'});
     const page=await context.newPage(),errors=[],remoteUI=[];page.setDefaultTimeout(10000);page.on('pageerror',e=>{errors.push({name:e.name,message:e.message,stack:e.stack});fs.writeFileSync(out+'/'+name+'-'+width+'-errors.json',JSON.stringify(errors,null,2));});
@@ -75,6 +76,8 @@ const server=http.createServer((req,res)=>{
     assert.ok(await page.locator('#view-native-home').isVisible());
     assert.equal(await page.locator('header.h-16').isVisible(),false,'Top capsule header removed');
     await page.waitForFunction(()=>document.querySelectorAll('#songlist-container > [onclick]').length===4);
+    if(width===375)assert.equal(await page.locator('#songlist-source').inputValue(),'kg','Unavailable initial provider must fall back');
+    assert.ok(await page.evaluate(()=>JSON.parse(localStorage.getItem('lx_catalog_cache_v1')||'[]').length>0),'Successful home playlists are cached locally');
     assert.equal(await page.locator('#native-home-hot,#native-home-favorites,#native-home-posters').count(),0);
     assert.ok(await page.locator('#native-home-catalog').getByText('精选歌单',{exact:true}).isVisible());
     await page.locator('#native-home-downloads').click();await page.locator('#native-download-back').click();

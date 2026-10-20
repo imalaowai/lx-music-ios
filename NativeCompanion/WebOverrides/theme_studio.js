@@ -7,7 +7,7 @@ const colours={
  gray:{name:'高级灰',hex:'#596273'},navy:{name:'深海蓝',hex:'#135c7f'},green:{name:'墨玉绿',hex:'#32756e'},
  blue:{name:'天空蓝',hex:'#168cf3'},violet:{name:'暮光紫',hex:'#7961c7'},rose:{name:'玫瑰粉',hex:'#dc3458'},amber:{name:'暖沙金',hex:'#a16c27'}
 };
-const legacy={apple:'rose',emerald:'green',blue:'blue',amber:'amber',violet:'violet',rose:'rose'};
+const legacy={apple:'green',emerald:'green',blue:'blue',amber:'amber',violet:'violet',rose:'rose'};
 const defaults={lx:'green',kugou:'green',apple:'green'};
 let profiles={},layout='lx',generation=0,wallpaperURL='',database,loading=false;
 try{const saved=JSON.parse(localStorage.getItem(key));if(saved && typeof saved==='object' && !Array.isArray(saved))for(const l of layouts){const p=saved[l];if(p && colours[p.colour])profiles[l]={colour:p.colour,wallpaperName:String(p.wallpaperName || '').slice(0,160),strength:Math.max(10,Math.min(70,Number(p.strength)||35))};}}catch{}

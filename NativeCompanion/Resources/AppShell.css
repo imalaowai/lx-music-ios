@@ -160,3 +160,4 @@ body.native-shell #view-native-room>#room-chat-modal{flex:1 1 0%;height:0!import
 body.native-shell #view-native-room>#room-chat-modal:not([hidden]){display:block!important}
 body.native-shell #view-native-room>#room-chat-modal[hidden],body.native-shell .native-room-members[hidden]{display:none!important}
 body.native-shell #room-chat-modal .room-chat-window{position:absolute!important;inset:0!important;height:auto!important;max-height:none!important;transform:none!important}
+body.native-shell #view-native-room{padding:0 0 calc(var(--native-nav) + var(--native-mini))!important}
