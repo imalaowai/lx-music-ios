@@ -1,3 +1,7 @@
+本分支的 iOS 自有界面整合入口见 [OwnUI](OwnUI/README.md)，构建流程为 [lx-own-ui.yml](.github/workflows/lx-own-ui.yml)。手机默认使用自有首页、歌单、一起听、房间聊天和“我的”，参考 IPA 提供原生音频与 CarPlay 基础。`FullReference` 是早期参考底包补丁路径，`NativeCompanion` 是早期独立客户端路径，二者均不代表自有界面整合版。
+
+以下保留上游项目说明。
+
 <p align="center"><a href="https://github.com/lyswhut/lx-music-mobile"><img width="200" src="https://github.com/lyswhut/lx-music-mobile/blob/master/doc/images/icon.png" alt="lx-music logo"></a></p>
 
 <h1 align="center">LX Music 移动版</h1>

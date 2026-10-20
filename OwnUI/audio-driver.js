@@ -77,6 +77,7 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
   }
   function run(request) {
     if (request.operation === 'probe') return sample().then(()=>({}));
+    if (request.operation === 'clearMetadata') return Promise.resolve(nowPlaying?.clearNowPlayingInfo?.()).then(()=>({}));
     if (request.operation === 'metadata') {
       const info=request.args||{};
       return Promise.resolve(nowPlaying?.updateNowPlayingInfo?.(info)).then(()=>info.playbackRate>0?nowPlaying?.playNowPlaying?.({elapsedTime:info.elapsedTime,playbackRate:info.playbackRate}):nowPlaying?.pauseNowPlaying?.({elapsedTime:info.elapsedTime,playbackRate:0})).then(()=>({}));

@@ -110,7 +110,7 @@ final class Player {
         resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel(); artwork = nil
         audio.pause(); audio.replaceCurrentItem(with: nil); currentURL = nil
         if user { room.sendState(reason: "track") }
-        persistQueue(); publish(); updateArtwork(song)
+        persistQueue(); publish()
         resolution = api.resolve(song, quality: quality, allowFallback: allowFallback) { [weak self] result in
             guard let self = self, self.generation == epoch else { return }
             do {
@@ -198,36 +198,20 @@ final class Player {
         if signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
     }
     func updateNowPlaying() {
-        let signature = "\(generation)|\(wanted)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(artwork != nil)|\(queueRevision)"
+        let signature = "\(generation)|\(wanted)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(current?.key ?? "")"
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
         nowPlayingSignature = signature; nowPlayingAt = now
-        let c = MPRemoteCommandCenter.shared()
-        c.nextTrackCommand.isEnabled = queue.count > 1; c.previousTrackCommand.isEnabled = queue.count > 1
-        c.changePlaybackPositionCommand.isEnabled = duration > 0
-        guard let song = current else { MPNowPlayingInfoCenter.default().nowPlayingInfo = nil; return }
-        var info: Object = [MPMediaItemPropertyTitle: song.name, MPMediaItemPropertyArtist: song.artist, MPMediaItemPropertyAlbumTitle: text(song.raw["albumName"]), MPNowPlayingInfoPropertyElapsedPlaybackTime: position, MPNowPlayingInfoPropertyPlaybackRate: audio.rate, MPNowPlayingInfoPropertyDefaultPlaybackRate: 1, MPNowPlayingInfoPropertyPlaybackQueueIndex: max(0, index), MPNowPlayingInfoPropertyPlaybackQueueCount: queue.count]
-        if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
-        if let artwork = artwork { info[MPMediaItemPropertyArtwork] = artwork }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        guard let song=current else { audio.send("clearMetadata"); return }
         var cover=text(song.raw["img"])
-        if let id=song.raw["offlineId"] as? String,let folder=try? MusicLibrary.shared.folder(id) { let file=folder.appendingPathComponent("封面.jpg");if FileManager.default.fileExists(atPath:file.path) { cover=file.absoluteString } }
+        if let id=song.raw["offlineId"] as? String,let folder=try? MusicLibrary.shared.folder(id) {
+            let file=folder.appendingPathComponent("封面.jpg")
+            // The reference module's local artwork API accepts a path, not file://.
+            if FileManager.default.fileExists(atPath:file.path) { cover=file.path }
+        }
+        // One native metadata owner: its cache, artwork loader and remote handlers
+        // remain authoritative. Do not overwrite them with a second InfoCenter.
         audio.metadata(["title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":duration,"elapsedTime":position,"playbackRate":audio.rate])
-    }
-    func updateArtwork(_ song: Song) {
-        if let id = song.raw["offlineId"] as? String, let root = try? MusicLibrary.shared.folder(id), let image = UIImage(contentsOfFile: root.appendingPathComponent("封面.jpg").path) {
-            artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }; nowPlayingSignature = ""; updateNowPlaying(); return
-        }
-        let base = api.base ?? WebController.deviceOrigin
-        guard let url = URL(string: text(song.raw["img"]), relativeTo: base), ["http", "https"].contains(url.scheme ?? "") else { return }
-        let epoch = generation
-        artworkTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let data = data, data.count < 8_000_000, let image = UIImage(data: data) else { return }
-            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 512))
-            let thumbnail = renderer.image { _ in image.draw(in: CGRect(x: 0, y: 0, width: 512, height: 512)) }
-            DispatchQueue.main.async { guard let self = self, self.generation == epoch else { return }; self.artwork = MPMediaItemArtwork(boundsSize: thumbnail.size) { _ in thumbnail }; self.updateNowPlaying() }
-        }
-        artworkTask?.resume()
     }
     func persistQueue() {
         let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]

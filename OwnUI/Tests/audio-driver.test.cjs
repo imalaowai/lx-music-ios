@@ -20,3 +20,11 @@ test('EOF is deduplicated and an old end event cannot skip a fresh track',async(
 test('pause, seek and a stale command cannot affect a newer selection',async()=>{const f=fixture();await f.load(2);await f.driver.run({operation:'pause',generation:1});assert.equal(f.calls.filter(x=>x[0]==='pause').length,0);await f.driver.run({operation:'seek',generation:2,args:{position:36}});await f.driver.run({operation:'pause',generation:2});assert.equal(f.state.position,36);assert.equal(f.state.state,State.Paused);});
 test('failed load does not poison future playback',async()=>{const f=fixture();const add=f.player.add;f.player.add=async()=>{throw Error('decode failure');};await assert.rejects(f.load(1),/decode failure/);f.player.add=add;await f.load(2);assert.equal(f.state.state,State.Playing);});
 test('in-flight progress from a previous track is discarded',async()=>{const f=fixture();await f.load(1);await settle();let release;f.player.getPosition=()=>new Promise(r=>{release=r;});const task=f.driver.sample();await f.load(2);release(179);await task;assert.ok(!f.reports.some(x=>x.generation===2&&x.position===179));});
+test('offline artwork and lock-screen transport use the reference metadata owner',async()=>{
+ const calls=[],native={updateNowPlayingInfo:async info=>calls.push(['info',info]),playNowPlaying:async info=>calls.push(['play',info]),pauseNowPlaying:async info=>calls.push(['pause',info]),clearNowPlayingInfo:async()=>calls.push(['clear'])};
+ const d=create({nowPlaying:native});
+ await d.run({operation:'metadata',args:{title:'离线音乐',artwork:'/Documents/Music/封面.jpg',elapsedTime:31,playbackRate:1}});
+ await d.run({operation:'metadata',args:{title:'离线音乐',elapsedTime:32,playbackRate:0}});
+ await d.run({operation:'clearMetadata'});
+ assert.equal(calls[0][1].artwork,'/Documents/Music/封面.jpg');assert.deepEqual(calls.map(x=>x[0]),['info','play','info','pause','clear']);
+});

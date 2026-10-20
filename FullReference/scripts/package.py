@@ -64,6 +64,9 @@ def package(reference,components,signer,output):
         metadata=json.loads(additions.read('components.json'));assert sha(js)==metadata['jsSha256']
         own_ui=metadata.get('ownUI') is True
         assert struct.unpack_from('<I',js,8)[0]==96 and len(js)>(500000 if own_ui else 3000000)
+        if own_ui:
+            assert b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module,'Own UI native container missing'
+            assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js,'Own UI JS entry missing'
         e=entitlements(old_exe);assert e['com.apple.developer.carplay-audio'] is True
         # Keep the working reference's team/container identity; release build needs no debugger entitlement.
         e.pop('get-task-allow',None)
