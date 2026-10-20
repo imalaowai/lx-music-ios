@@ -61,8 +61,9 @@ def package(reference,components,signer,output):
         assert info['CFBundleIdentifier']=='cn.toside.music.cplay3'
         assert sha(original.read(prefix+'Frameworks/CarPlaySupport.dylib')) != ''
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
-        assert struct.unpack_from('<I',js,8)[0]==96 and len(js)>3000000
         metadata=json.loads(additions.read('components.json'));assert sha(js)==metadata['jsSha256']
+        own_ui=metadata.get('ownUI') is True
+        assert struct.unpack_from('<I',js,8)[0]==96 and len(js)>(500000 if own_ui else 3000000)
         e=entitlements(old_exe);assert e['com.apple.developer.carplay-audio'] is True
         # Keep the working reference's team/container identity; release build needs no debugger entitlement.
         e.pop('get-task-allow',None)
@@ -75,10 +76,24 @@ def package(reference,components,signer,output):
         new_sections=sections(signed)
         for name,(off,size) in sections(old_exe).items():
             next_off,next_size=new_sections[name];assert size==next_size and old_exe[off:off+size]==signed[next_off:next_off+next_size], 'Original native section changed: '+name
-        info['CFBundleVersion']='82'
+        info['CFBundleVersion']='83' if own_ui else '82'
+        if own_ui:
+            info['CFBundleShortVersionString']='1.9.0'
+            info['MinimumOSVersion']='15.0'
         replacements={exe_name:signed,info_name:plistlib.dumps(info,fmt=plistlib.FMT_BINARY),prefix+'main.jsbundle':js}
         new_files={prefix+'Frameworks/LXFullCarPlay.dylib':module}
         old_names=set(original.namelist())
+        if own_ui:
+            own_manifest=json.loads(additions.read('OwnUIResources/OwnUI.manifest.json'))
+            assert own_manifest['phoneUI']=='own-local-ui' and own_manifest['entry']=='OwnUI/index.js'
+            assert {'WebUI.html','LocalEngine.js','Bridge.js','AppShell.js','AppShell.css'}<=set(own_manifest['resources'])
+            assert {'home','room-chat','mine','downloads'}<=set(own_manifest['pages'])
+            for name,digest in own_manifest['resources'].items():
+                assert pathlib.PurePosixPath(name).name==name
+                data=additions.read('OwnUIResources/'+name);assert sha(data)==digest
+                assert prefix+name not in old_names,'Unexpected reference resource collision: '+name
+                new_files[prefix+name]=data
+            new_files[prefix+'OwnUI.manifest.json']=additions.read('OwnUIResources/OwnUI.manifest.json')
         for name in additions.namelist():
             path=pathlib.PurePosixPath(name)
             assert not path.is_absolute() and '..' not in path.parts
@@ -97,7 +112,7 @@ def package(reference,components,signer,output):
                 if name not in replacements:
                     assert result.read(name)==original.read(name),'Original resource changed: '+name
                     if not name.endswith('/'):preserved.append({'path':name,'sha256':sha(result.read(name))})
-        report={'referenceSHA256':REFERENCE_SHA,'outputSHA256':sha(output.read_bytes()),'outputBytes':output.stat().st_size,'referenceFiles':len(original.namelist()),'removedOriginalFiles':0,'modifiedOriginalFiles':sorted(replacements),'addedFiles':sorted(new_files),'preservedFiles':preserved,'nativeCodeSectionsUnchanged':True,'bundleIdentifier':info['CFBundleIdentifier'],'build':info['CFBundleVersion'],'carplayConnectionOwner':'original CarPlaySupport.dylib','phoneUI':'complete original React Native client','physicalCarPlayVerified':False}
+        report={'referenceSHA256':REFERENCE_SHA,'outputSHA256':sha(output.read_bytes()),'outputBytes':output.stat().st_size,'referenceFiles':len(original.namelist()),'removedOriginalFiles':0,'modifiedOriginalFiles':sorted(replacements),'addedFiles':sorted(new_files),'preservedFiles':preserved,'nativeCodeSectionsUnchanged':True,'bundleIdentifier':info['CFBundleIdentifier'],'build':info['CFBundleVersion'],'carplayConnectionOwner':'original CarPlaySupport.dylib','phoneUI':'own-local-ui' if own_ui else 'complete original React Native client','sourceCommit':metadata.get('sourceCommit',''),'physicalCarPlayVerified':False}
         output.with_suffix('.verification.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
         print(json.dumps({k:v for k,v in report.items() if k not in ('preservedFiles','addedFiles')},ensure_ascii=False))
         return report

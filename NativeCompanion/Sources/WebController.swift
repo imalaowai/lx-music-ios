@@ -128,6 +128,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             let file = FileManager.default.temporaryDirectory.appendingPathComponent("LX-CarPlay-connection.json")
             do { try data.write(to: file, options: .atomic); let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil); sheet.popoverPresentationController?.sourceView = view; sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 100, width: 1, height: 1); present(sheet, animated: true); done() } catch { done(false, error.localizedDescription) }
         case "uiReady":
+            #if LX_OWN_UI
+            OwnIntegration.uiReady(value)
+            #endif
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
                 smokeReloadRequested = true

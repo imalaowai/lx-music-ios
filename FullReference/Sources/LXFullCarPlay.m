@@ -182,6 +182,6 @@ __attribute__((constructor)) static void LXInstallFullCarPlay(void) {
         class_addMethod(reference, NSSelectorFromString(@"templateApplicationScene:didDisconnectInterfaceController:"), (IMP)LXAudioDisconnected, "v@:@@");
         [NSNotificationCenter.defaultCenter addObserverForName:LXFullLibraryChanged object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { LXRefresh(); }];
         dispatch_async(dispatch_get_main_queue(), ^{ LXRecord(@"完整参考接入已加载", nil); });
-        NSLog(@"[LXFullCarPlay] reference CPSceneDelegate retained; original player and phone lifecycle unchanged");
+        NSLog(@"[LXFullCarPlay] reference CPSceneDelegate retained; phone root supplied by active application entry");
     }
 }

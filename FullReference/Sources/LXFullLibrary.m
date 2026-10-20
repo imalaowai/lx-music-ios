@@ -15,7 +15,11 @@ NSString * const LXFullActionQueued = @"LXFullActionQueued";
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+        #ifdef LX_OWN_UI
+        library = [[self alloc] initWithURL:[base URLByAppendingPathComponent:@"LXMusic/CarPlay/own-library-v13.json"]];
+        #else
         library = [[self alloc] initWithURL:[base URLByAppendingPathComponent:@"LXMusic/CarPlay/library-v12.json"]];
+        #endif
     });
     return library;
 }

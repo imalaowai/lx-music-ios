@@ -1,0 +1,59 @@
+name: LX Own UI Rooms Chat Native IPA Components
+on:
+  push:
+    branches: [codex/native-web-carplay]
+    paths: ['OwnUI/**', 'NativeCompanion/Sources/**', 'NativeCompanion/Resources/**', 'FullReference/**', '.github/workflows/lx-own-ui.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lx-own-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  interface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          python3 OwnUI/scripts/prepare.py
+          node --test OwnUI/Tests/audio-driver.test.cjs NativeCompanion/Tests/bridge.test.cjs NativeCompanion/Tests/lyrics.test.cjs NativeCompanion/Tests/engine.test.cjs
+          npm install --prefix /tmp/lx-ui-review playwright@1.62.1
+          /tmp/lx-ui-review/node_modules/.bin/playwright install --with-deps chromium webkit
+          LX_PLAYWRIGHT=/tmp/lx-ui-review/node_modules/playwright node NativeCompanion/Tests/ui.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: LX-OwnUI-Interface-Review
+          path: NativeCompanion/build/ui-review/
+          if-no-files-found: ignore
+  native:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install matching React Native bridge dependencies
+        run: |
+          git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+          git config --global --add url.https://github.com/.insteadOf git@github.com:
+          npm ci
+      - name: Build integrated owned phone UI and native reference audio adapter
+        run: bash OwnUI/scripts/build.sh
+      - name: Check room ordering and native cache
+        run: |
+          xcrun swiftc NativeCompanion/Sources/Core.swift NativeCompanion/Tests/main.swift -o build/own-ui/core-tests
+          build/own-ui/core-tests
+          clang -fobjc-arc -fblocks -framework Foundation -I FullReference/Sources FullReference/Sources/LXFullLibrary.m FullReference/Tests/library.m -o build/own-ui/library-tests
+          build/own-ui/library-tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LX-OwnUI-Native-Components
+          path: build/own-ui/LX-OwnUI-Native-Components.zip
+          if-no-files-found: error
