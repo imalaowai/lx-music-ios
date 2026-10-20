@@ -106,7 +106,10 @@ def package(reference,components,signer,output):
             # writestr updates ZipInfo.header_offset. Keep the input archive's
             # entries intact so later byte-for-byte verification reads its real offsets.
             for entry in original.infolist():result.writestr(copy.copy(entry),replacements.get(entry.filename,original.read(entry.filename)))
-            for name,data in new_files.items():result.writestr(name,data)
+            for name,data in new_files.items():
+                entry=zipfile.ZipInfo(name);entry.create_system=3;entry.compress_type=zipfile.ZIP_DEFLATED
+                entry.external_attr=(0o100755 if name.endswith('.dylib') else 0o100644)<<16
+                result.writestr(entry,data)
         preserved=[]
         with zipfile.ZipFile(output) as result:
             assert result.testzip() is None
