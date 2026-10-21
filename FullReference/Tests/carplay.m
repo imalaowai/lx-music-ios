@@ -4,8 +4,10 @@
 #import <CarPlay/CarPlay.h>
 
 @interface LXFixtureController : NSObject
-@property(nonatomic, strong) CPTemplate *rootTemplate, *top;
-@property(nonatomic) NSUInteger sets, rejects;
+@property(nonatomic, strong) CPTemplate *rootTemplate;
+@property(nonatomic, strong) CPTemplate *top;
+@property(nonatomic) NSUInteger sets;
+@property(nonatomic) NSUInteger rejects;
 @property(nonatomic) BOOL delay;
 @property(nonatomic, strong) NSMutableArray *completions;
 - (CPTemplate *)topTemplate;
@@ -37,7 +39,10 @@
 // hook must wrap existing selectors, not silently fail at class_addMethod.
 @interface CPSceneDelegate : NSObject
 @property(nonatomic, strong) id interfaceController;
-@property(nonatomic) NSUInteger audioConnects, windowConnects, disconnects, genericDisconnects;
+@property(nonatomic) NSUInteger audioConnects;
+@property(nonatomic) NSUInteger windowConnects;
+@property(nonatomic) NSUInteger disconnects;
+@property(nonatomic) NSUInteger genericDisconnects;
 - (void)setupRootTemplate;
 - (void)templateApplicationScene:(id)scene didConnectInterfaceController:(id)controller;
 - (void)templateApplicationScene:(id)scene didConnectInterfaceController:(id)controller toWindow:(id)window;

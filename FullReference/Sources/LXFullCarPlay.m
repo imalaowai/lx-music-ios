@@ -15,11 +15,16 @@
 @property(nonatomic, weak) CPTemplateApplicationScene *scene;
 @property(nonatomic, strong) CPInterfaceController *controller;
 @property(nonatomic, strong) CPWindow *window;
-@property(nonatomic, strong) CPListTemplate *home, *lists, *recent;
+@property(nonatomic, strong) CPListTemplate *home;
+@property(nonatomic, strong) CPListTemplate *lists;
+@property(nonatomic, strong) CPListTemplate *recent;
 @property(nonatomic, strong) CPTemplate *root;
 @property(nonatomic, copy) NSString *identifier;
-@property(nonatomic) NSUInteger generation, attempt;
-@property(nonatomic) BOOL installing, simple, audio;
+@property(nonatomic) NSUInteger generation;
+@property(nonatomic) NSUInteger attempt;
+@property(nonatomic) BOOL installing;
+@property(nonatomic) BOOL simple;
+@property(nonatomic) BOOL audio;
 @end
 @implementation LXCarConnection
 @end
