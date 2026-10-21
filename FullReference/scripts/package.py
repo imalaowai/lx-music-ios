@@ -79,9 +79,9 @@ def package(reference,components,signer,output):
         new_sections=sections(signed)
         for name,(off,size) in sections(old_exe).items():
             next_off,next_size=new_sections[name];assert size==next_size and old_exe[off:off+size]==signed[next_off:next_off+next_size], 'Original native section changed: '+name
-        info['CFBundleVersion']='84' if own_ui else '82'
+        info['CFBundleVersion']='85' if own_ui else '82'
         if own_ui:
-            info['CFBundleShortVersionString']='1.9.1'
+            info['CFBundleShortVersionString']='1.9.2'
             info['MinimumOSVersion']='15.0'
         replacements={exe_name:signed,info_name:plistlib.dumps(info,fmt=plistlib.FMT_BINARY),prefix+'main.jsbundle':js}
         new_files={prefix+'Frameworks/LXFullCarPlay.dylib':module}

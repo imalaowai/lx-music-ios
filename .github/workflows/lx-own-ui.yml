@@ -56,6 +56,9 @@ jobs:
       - name: Launch the owned phone root with real WebKit in iOS Simulator
         timeout-minutes: 8
         run: bash OwnUI/scripts/check-phone.sh
+      - name: Exercise production CarPlay reconnect and lifecycle callbacks in iOS Simulator
+        timeout-minutes: 4
+        run: bash OwnUI/scripts/check-carplay.sh
       - uses: actions/upload-artifact@v4
         with:
           name: LX-OwnUI-Native-Components
@@ -69,6 +72,7 @@ jobs:
             build/own-ui/own-phone-launch.png
             build/own-ui/own-phone-ready.json
             build/own-ui/offline-playback.json
+            build/own-ui/carplay-lifecycle.json
             build/own-ui/own-phone-handshake.json
             build/own-ui/own-phone-runtime.log
           if-no-files-found: ignore
