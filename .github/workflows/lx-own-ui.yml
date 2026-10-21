@@ -40,6 +40,9 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+      - name: Exercise production CarPlay reconnect and lifecycle callbacks in iOS Simulator
+        timeout-minutes: 4
+        run: bash OwnUI/scripts/check-carplay.sh
       - name: Install matching React Native bridge dependencies
         run: |
           git config --global url.https://github.com/.insteadOf ssh://git@github.com/
@@ -56,9 +59,6 @@ jobs:
       - name: Launch the owned phone root with real WebKit in iOS Simulator
         timeout-minutes: 8
         run: bash OwnUI/scripts/check-phone.sh
-      - name: Exercise production CarPlay reconnect and lifecycle callbacks in iOS Simulator
-        timeout-minutes: 4
-        run: bash OwnUI/scripts/check-carplay.sh
       - uses: actions/upload-artifact@v4
         with:
           name: LX-OwnUI-Native-Components
