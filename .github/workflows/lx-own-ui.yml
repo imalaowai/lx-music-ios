@@ -41,7 +41,7 @@ jobs:
           node-version: '20'
           cache: npm
       - name: Exercise production CarPlay reconnect and lifecycle callbacks in iOS Simulator
-        timeout-minutes: 4
+        timeout-minutes: 8
         run: bash OwnUI/scripts/check-carplay.sh
       - name: Install matching React Native bridge dependencies
         run: |

@@ -149,7 +149,9 @@ static void RunTests(void) {
     LXFixtureController *existing=[LXFixtureController new]; LXFixtureScene *se=Scene(a,existing);
     [a sceneWillEnterForeground:se];
     Check(existing.rootTemplate && LXCurrent.controller==(id)existing, @"foregroundCanAdoptUnobservedScene");
-    [NSNotificationCenter.defaultCenter postNotificationName:UISceneDidActivateNotification object:se];
+    // Call our actual observer with the fixture. Broadcasting a fake UIScene
+    // to UIKit's own observers would require private UIKit scene internals.
+    LXHandleSceneEvent([NSNotification notificationWithName:UISceneDidActivateNotification object:se]);
     Check(existing.sets==1, @"sceneNotificationIsIdempotent");
     [a templateApplicationScene:se didDisconnectInterfaceController:existing];
     for (NSUInteger i=0;i<20;i++) {

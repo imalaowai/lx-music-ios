@@ -305,6 +305,11 @@ static void LXSceneDisconnected(id owner, SEL selector, id scene) {
             ((void (*)(id, SEL, id))LXReferenceSceneDisconnect)(owner, selector, scene);
     });
 }
+static void LXHandleSceneEvent(NSNotification *note) {
+    CPTemplateApplicationScene *scene = note.object;
+    Class reference = NSClassFromString(@"CPSceneDelegate");
+    if ([scene isKindOfClass:CPTemplateApplicationScene.class] && [scene.delegate isKindOfClass:reference]) LXRecoverScene(scene.delegate, scene, note.name);
+}
 
 #ifndef LX_CARPLAY_TESTING
 @interface LXFullCarPlayModule : RCTEventEmitter <RCTBridgeModule>
@@ -362,8 +367,7 @@ static void LXInstallFullCarPlay(void) {
         // activation callbacks. This is event-driven and does not poll the car.
         for (NSString *name in @[UISceneDidActivateNotification, UISceneWillEnterForegroundNotification])
             [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-                CPTemplateApplicationScene *scene = note.object;
-                if ([scene isKindOfClass:CPTemplateApplicationScene.class] && [scene.delegate isKindOfClass:reference]) LXRecoverScene(scene.delegate, scene, name);
+                LXHandleSceneEvent(note);
             }];
         dispatch_async(dispatch_get_main_queue(), ^{
             LXRecord(@"完整参考接入已加载", @"install");
