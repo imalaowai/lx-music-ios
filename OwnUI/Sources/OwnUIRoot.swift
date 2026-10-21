@@ -32,8 +32,10 @@ enum CarScene {
         value["liveScenes"] = UIApplication.shared.connectedScenes.map { scene -> Object in
             var item:Object = ["class":NSStringFromClass(type(of:scene)),"role":scene.session.role.rawValue,"state":scene.activationState.rawValue,"delegate":scene.delegate.map { String(describing:type(of:$0)) } ?? ""]
             if let car = scene as? CPTemplateApplicationScene {
-                item["root"] = car.interfaceController.rootTemplate.map { NSStringFromClass(type(of:$0)) } ?? ""
-                item["top"] = car.interfaceController.topTemplate.map { NSStringFromClass(type(of:$0)) } ?? ""
+                // The SDK imports rootTemplate as nonoptional, although a scene
+                // without an installed root can return nil. KVC preserves nil.
+                item["root"] = (car.interfaceController.value(forKey:"rootTemplate") as? CPTemplate).map { NSStringFromClass(type(of:$0)) } ?? ""
+                item["top"] = (car.interfaceController.value(forKey:"topTemplate") as? CPTemplate).map { NSStringFromClass(type(of:$0)) } ?? ""
             }
             return item
         }
