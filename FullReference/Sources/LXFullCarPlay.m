@@ -87,8 +87,9 @@ static NSString *LXText(id value, NSString *fallback) { return [value isKindOfCl
 static void LXPush(CPTemplate *page) {
     LXCarConnection *c = LXCurrent;
     if (!LXIsCurrent(c) || !page || c.controller.topTemplate == page) return;
+    __weak LXCarConnection *weak = c;
     [c.controller pushTemplate:page animated:YES completion:^(BOOL ok, NSError *error) {
-        if (!LXIsCurrent(c)) return;
+        if (!LXIsCurrent(weak)) return;
         if (!ok) { LXError = error.localizedDescription ?: @"无法打开车机页面"; LXRecord(@"车机页面打开失败", nil); }
     }];
 }
@@ -185,21 +186,23 @@ static void LXInstallRoot(LXCarConnection *c) {
         NSUInteger count = MIN(tabs.count, (NSUInteger)CPTabBarTemplate.maximumTabCount);
         c.root = !c.simple && count >= 2 ? [[CPTabBarTemplate alloc] initWithTemplates:[tabs subarrayWithRange:NSMakeRange(0, count)]] : c.home;
         LXRecord(c.simple ? @"正在建立兼容菜单" : @"正在建立完整原生菜单", nil);
+        __weak LXCarConnection *weak = c;
         [c.controller setRootTemplate:c.root animated:NO completion:^(BOOL ok, NSError *error) {
             LXMain(^{
-                if (!LXIsCurrent(c) || c.attempt != attempt || !c.installing) return;
-                c.installing = NO;
-                if (ok) { LXError = @""; LXRecord(c.simple ? @"兼容菜单已就绪" : @"完整原生菜单已就绪", nil); }
+                LXCarConnection *current = weak;
+                if (!LXIsCurrent(current) || current.attempt != attempt || !current.installing) return;
+                current.installing = NO;
+                if (ok) { LXError = @""; LXRecord(current.simple ? @"兼容菜单已就绪" : @"完整原生菜单已就绪", nil); }
                 else {
                     LXError = error.localizedDescription ?: @"系统拒绝车机菜单";
                     LXRecord(@"系统拒绝车机菜单", nil);
-                    if (!c.simple) { c.simple = YES; LXInstallRoot(c); }
+                    if (!current.simple) { current.simple = YES; LXInstallRoot(current); }
                 }
             });
         }];
         // Only the current attempt may fall back; old completions cannot replace
         // the new controller's menu. No periodic timer runs while disconnected.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ LXRootTimeout(c, attempt); });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ LXRootTimeout(weak, attempt); });
     } @catch (NSException *error) {
         c.installing = NO; LXError = error.reason ?: @"菜单异常"; LXRecord(@"车机菜单建立异常", nil);
         if (!c.simple) { c.simple = YES; LXInstallRoot(c); }

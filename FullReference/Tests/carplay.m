@@ -162,6 +162,15 @@ static void RunTests(void) {
         if (LXCurrent || a.interfaceController) @throw [NSException exceptionWithName:@"RepeatedClose" reason:@"Repeated close retained connection" userInfo:nil];
     }
     Check(YES, @"twentyAlternatingReconnectsRemainUsable");
+    LXFixtureController *held=[LXFixtureController new]; held.delay=YES;
+    __weak LXCarConnection *releasedConnection;
+    @autoreleasepool {
+        LXFixtureScene *heldScene=Scene(a,held);
+        [a templateApplicationScene:heldScene didConnectInterfaceController:held];
+        releasedConnection=LXCurrent;
+        [a templateApplicationScene:heldScene didDisconnectInterfaceController:held];
+    }
+    Check(releasedConnection==nil && held.completions.count==1, @"unansweredSystemCompletionCannotRetainDisconnectedSession");
     // More than 120 events must not erase process/connection metadata or grow unbounded.
     for (NSUInteger i=0;i<130;i++) LXRecord(@"回归记录", @"test");
     NSDictionary *saved=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:LXDiagnosticURL()] options:0 error:nil];
