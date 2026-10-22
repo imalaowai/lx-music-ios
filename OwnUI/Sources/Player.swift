@@ -184,6 +184,7 @@ final class Player {
     func fail(_ error: Error) {
         guard wanted || loading || failure.isEmpty else { return }
         generation += 1; resolution?.cancel(); prefetchTask?.cancel()
+        audio.failedGeneration=audio.generation;audio.pending.removeAll()
         RuntimeTrace.record("player.failure",["generation":generation,"error":error.localizedDescription])
         finishTransition(); loading = false; wanted = false; audio.pause(); failure = error.localizedDescription; publish()
     }
