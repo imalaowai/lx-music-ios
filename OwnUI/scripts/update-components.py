@@ -31,6 +31,7 @@ def package(source,components,signer,output):
         metadata=json.loads(additions.read('components.json'))
         assert metadata['ownUI'] is True and metadata['version']=='1.9.4' and metadata['build']=='87'
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
+        assert js!=z.read(prefix+'main.jsbundle') and module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt JS and native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
         assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js
         manifest=json.loads(additions.read('OwnUIResources/OwnUI.manifest.json'))

@@ -16,6 +16,7 @@ const server=http.createServer((req,res)=>{
   const browser=await engine.launch({headless:true,...(process.env.LX_CHROMIUM?{executablePath:process.env.LX_CHROMIUM}:{}),args:name==='chromium'?['--no-sandbox','--no-zygote','--disable-dev-shm-usage']:[]});
   try{
    for(const width of (process.env.LX_TEST_WIDTH?[Number(process.env.LX_TEST_WIDTH)]:[1440,430,375])){
+    console.log('Review '+name+' '+width);
     const phone=width<700,context=await browser.newContext({...phone?devices['iPhone 13 Pro Max']:{},viewport:{width,height:phone?(width===375?667:932):950},serviceWorkers:'block'});
     await context.addInitScript(()=>{
      localStorage.setItem('lx_desktop_layout','apple');localStorage.setItem('lx_sync_mode','local');

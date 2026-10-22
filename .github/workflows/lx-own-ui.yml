@@ -31,7 +31,7 @@ jobs:
           path: NativeCompanion/build/ui-review/
           if-no-files-found: ignore
   native:
-    needs: interface
+    # Both jobs are required; compile in parallel so UI review does not delay native diagnostics.
     runs-on: macos-15
     timeout-minutes: 25
     steps:
