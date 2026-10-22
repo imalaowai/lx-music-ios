@@ -69,7 +69,8 @@ async function sync(notify=false){
   try {
     const result=await window.DeviceLibrary.api('/api/user/subscriptions');if(version!==epoch || revision!==window.LibrarySync?.revision())return;
     // Adopt only the subscription rows: never replace unrelated unsaved edits.
-    window.__LX_LIBRARY_GETTERS__.adoptSubscriptions(result.data,result.subscriptions);
+    const changed=window.__LX_LIBRARY_GETTERS__.adoptSubscriptions(result.data,result.subscriptions);
+    if(!changed)return; // Keep unchanged polls out of the DOM and native storage.
     render();window.LibrarySync?.refreshView();await window.LibrarySync?.nativeLibrary(data());const current=window.currentViewingListId;
     if(current && !$('view-search').classList.contains('hidden') && result.subscriptions[current]){detail(current);const status=$('playlist-subscription-status');if(status)status.textContent=result.subscriptions[current].error || '已同步 · '+new Date(result.subscriptions[current].updatedAt).toLocaleTimeString();}
     if(notify)window.showSuccess?.('订阅歌单已同步');
