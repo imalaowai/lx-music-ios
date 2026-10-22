@@ -174,7 +174,7 @@ body.native-shell #qiye-account{position:fixed;right:20px;top:calc(16px + env(sa
 #qiye-account-menu{position:absolute;right:0;top:48px;min-width:190px;padding:8px;border:1px solid var(--border-main,#ddd);border-radius:15px;background:var(--bg-panel,#fff);box-shadow:0 12px 36px #0002}
 #qiye-account-menu[hidden]{display:none}#qiye-account-menu p{margin:5px 10px 8px;color:var(--text-muted);font-size:12px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #qiye-account-menu button{display:block;width:100%;text-align:left;background:none;color:inherit;border:0;padding:12px 10px;border-radius:9px;font-size:14px;cursor:pointer}#qiye-account-menu button:hover,#qiye-account-menu button:focus-visible{background:var(--bg-hover,#eaf0ec)}#qiye-account-menu [data-account-action=logout]{color:#c24b48}
-body.native-shell .native-home-heading{padding-right:90px}body.native-shell .native-person{padding-right:58px}body.native-shell #native-room-tools{margin-right:52px}
+body.native-shell .native-home-heading{padding-right:90px}body.native-shell .native-person{padding-right:58px}body.native-shell #native-room-tools{margin-right:calc(var(--qiye-account-width,90px) + 12px)}
 body.native-shell #view-native-downloads .native-title,body.native-shell #view-native-sources .native-title,body.native-shell .apple-view-intro{padding-right:65px}
 body.native-shell.native-chat-keyboard #qiye-account,body.native-shell.mobile-player-open #qiye-account{display:none}
 body.native-shell #mobile-bottom-nav .qiye-desktop-link{display:none}

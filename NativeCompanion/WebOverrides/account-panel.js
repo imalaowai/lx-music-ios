@@ -163,6 +163,9 @@
             const wrap=document.createElement('div');wrap.id='qiye-account';
             wrap.innerHTML='<button type="button" id="qiye-account-button" aria-haspopup="menu" aria-expanded="false"></button><div id="qiye-account-menu" role="menu" hidden><p id="qiye-account-name"></p><button type="button" role="menuitem" data-account-action="avatar">更改头像与资料</button><button type="button" role="menuitem" data-account-action="password">修改密码</button><button type="button" role="menuitem" data-account-action="logout">退出登录</button></div>';
             document.body.append(wrap);
+            const measure=()=>document.documentElement.style.setProperty('--qiye-account-width',wrap.getBoundingClientRect().width+'px');
+            if(typeof ResizeObserver==='function')new ResizeObserver(measure).observe(wrap);
+            requestAnimationFrame(measure);
             $('qiye-account-button').onclick=()=>{
                 if(!logged()){void signIn();return;}
                 const menu=$('qiye-account-menu');menu.hidden=!menu.hidden;$('qiye-account-button').setAttribute('aria-expanded',String(!menu.hidden));$('qiye-account-name').textContent=profile?.nickname || localStorage.getItem('lx_sync_user') || '我的账号';
