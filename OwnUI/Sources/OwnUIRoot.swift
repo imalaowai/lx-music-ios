@@ -39,7 +39,12 @@ enum CarScene {
             }
             return item
         }
-        value["phoneUI"]="own-local-ui"; value["audioCore"]="reference-track-player-and-flac"; return value
+        value["phoneUI"]="own-local-ui"; value["audioCore"]="reference-track-player-and-flac"
+        let player=Player.shared
+        value["runtime"]=["room":player.room.diagnostic(),"wanted":player.wanted,"loading":player.loading,
+            "audioFailed":player.audio.hasFailed,"generation":player.generation,"position":player.position,
+            "events":RuntimeTrace.snapshot()] as Object
+        return value
     }
 }
 
@@ -54,6 +59,7 @@ enum CarScene {
     @objc static func activate() {
         guard !active else { return }; active=true
         let player=Player.shared
+        RuntimeTrace.record("runtime.start")
         for name in [Notification.Name.lxLibrary,.lxPlayback,.lxDownloads] {
             tokens.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { _ in publish() })
         }
@@ -61,6 +67,11 @@ enum CarScene {
             // Drain through the ObjC facade so no RN/Swift header coupling is needed.
             NotificationCenter.default.post(name:Notification.Name("LXOwnDrainCarPlay"),object:nil)
         })
+        for name in [UIScene.didActivateNotification,UIScene.willEnterForegroundNotification] {
+            tokens.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main){note in
+                if note.object is CPTemplateApplicationScene {player.room.recoverConnection("carplay-scene")}
+            })
+        }
         tokens.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnCarPlayAction"),object:nil,queue:.main) { note in
             let action=note.userInfo as? Object ?? [:]
             if text(action["type"])=="refresh-library" { player.refreshLibrary(); publish(); return }
@@ -69,6 +80,9 @@ enum CarScene {
             if let index=songs.firstIndex(where:{$0.key==text(action["musicId"])}) { player.select(songs,index:index) }
         })
         NotificationCenter.default.post(name:Notification.Name("LXOwnDrainCarPlay"),object:nil)
+        // CarPlay may launch while the phone WebKit view is suspended. Account
+        // restoration and room networking must start without a web auth message.
+        player.room.refresh()
         publish()
     }
     private static func rawLists()->[Object] {

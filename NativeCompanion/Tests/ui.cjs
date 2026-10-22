@@ -80,7 +80,8 @@ const server=http.createServer((req,res)=>{
     assert.ok(await page.evaluate(()=>JSON.parse(localStorage.getItem('lx_catalog_cache_v1')||'[]').length>0),'Successful home playlists are cached locally');
     assert.equal(await page.locator('#native-home-hot,#native-home-favorites,#native-home-posters').count(),0);
     assert.ok(await page.locator('#native-home-catalog').getByText('精选歌单',{exact:true}).isVisible());
-    await page.locator('#native-home-downloads').click();await page.locator('#native-download-back').click();
+    assert.equal(await page.locator('#native-home-downloads').count(),0,'Downloads moved out of the home header');
+    await page.evaluate(()=>window.NativeShell.go('downloads'));await page.locator('#native-download-back').click();
     assert.ok(await page.locator('#view-native-home').isVisible(),'Home downloads must return to home');
     await page.evaluate(()=>window.NativeShell.go('favorites'));await page.locator('.playlist-back').click();
     assert.ok(await page.locator('#view-native-home').isVisible(),'Home favorites must return to home');

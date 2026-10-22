@@ -63,7 +63,7 @@ final class Player {
         for name in ["LXRemoteCommand", "LXOwnRemoteCommand"] {
             observers.append(NotificationCenter.default.addObserver(forName:Notification.Name(name),object:nil,queue:.main) { [weak self] note in self?.remote(note.userInfo as? Object ?? [:]) })
         }
-        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.room.refresh(); self?.publish() })
+        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.room.recoverConnection("phone-active"); self?.publish() })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
             guard let self=self else { return }
             if number(note.userInfo?[AVAudioSessionInterruptionTypeKey]) == Double(AVAudioSession.InterruptionType.began.rawValue) { self.interruptionWanted=self.wanted; self.audio.pause(); self.publish() }
@@ -71,6 +71,7 @@ final class Player {
         })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification,object:nil,queue:.main) { [weak self] note in
             if UInt(number(note.userInfo?[AVAudioSessionRouteChangeReasonKey])) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.pause(user:false) }
+            self?.room.recoverConnection("audio-route")
         })
     }
     func remote(_ value:Object) {
@@ -143,7 +144,7 @@ final class Player {
         guard current != nil else { return }
         if endGuard.handled, !room.active { select(queue, index: index, user: user); return }
         wanted = true; failure = ""
-        if audio.currentItem == nil { select(queue, index: index, user: user, time: resumeTime); return }
+        if audio.currentItem == nil || audio.hasFailed { select(queue, index: index, user: user, time: resumeTime); return }
         do { try activate(); audio.play(); if user { room.sendState(reason: "play") }; publish() } catch { fail(error) }
     }
     func pause(user: Bool = true) {
@@ -181,6 +182,9 @@ final class Player {
         } else { move(automatic: true) }
     }
     func fail(_ error: Error) {
+        guard wanted || loading || failure.isEmpty else { return }
+        generation += 1; resolution?.cancel(); prefetchTask?.cancel()
+        RuntimeTrace.record("player.failure",["generation":generation,"error":error.localizedDescription])
         finishTransition(); loading = false; wanted = false; audio.pause(); failure = error.localizedDescription; publish()
     }
     func tick() {

@@ -6,6 +6,13 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
   let setup, chain = Promise.resolve(), latest = 0, active = null, switching = false, probing = false;
   const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
   const current = item => active === item && item.generation === latest;
+  function failOnce(item,error) {
+    if (!current(item) || item.failed) return;
+    // Swift pauses after a failure. Pausing used to sample again and report the
+    // same failed query forever, flooding both the RN and main queues.
+    item.failed=true;
+    report({generation:item.generation,error:error?.message||String(error)});
+  }
   async function initialize() {
     if (!setup) setup = (async () => {
       await player.setupPlayer({autoUpdateMetadata:false, waitForBuffer:true, maxCacheSize:65536, iosCategory:'playback', iosCategoryMode:'default'});
@@ -16,7 +23,7 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
   }
   async function sample(ended = false) {
     const item = active;
-    if (!item || switching || probing || !current(item)) return;
+    if (!item || item.failed || switching || probing || !current(item)) return;
     probing = true;
     try {
       const flac = item.engine === 'flac';
@@ -32,7 +39,7 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
       if (finished) item.ended = true;
       report({generation:item.generation,position:num(position),duration:num(duration),playing:playing&&!item.ended,loading:buffering,rate:playing?num(rate)||1:0,ended:finished,engine:item.engine,sampledAt:Date.now()});
     } catch (error) {
-      if (current(item)) report({generation:item.generation,error:error.message||String(error)});
+      failOnce(item,error);
     } finally {probing = false;}
   }
   async function execute(request) {
@@ -87,7 +94,7 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
   }
   function nativeEvent(engine,event={}) {
     if (!active || switching || active.engine!==engine || !current(active)) return;
-    if (event.type==='error') report({generation:active.generation,error:event.message||event.error||'原生音源播放失败'});
+    if (event.type==='error') failOnce(active,new Error(event.message||event.error||'原生音源播放失败'));
     else void sample(event.type==='ended');
   }
   return {run,sample,nativeEvent};

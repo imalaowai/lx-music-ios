@@ -24,11 +24,34 @@ final class RoomClient {
     var sending = false
     var lastError = ""
     var publishedSignature = ""
+    var health = RoomConnectionHealth()
+    var lastRecovery = -Double.infinity
+    var receivedFrames = 0
     var roomID: String { text(binding?["roomId"]) }
     var active: Bool { !roomID.isEmpty && enabled && syncTracks }
     var controller: Bool { !participantID.isEmpty && text(state["controllerId"]) == participantID }
     var api: API { player.api }
     init(player: Player) { self.player = player }
+    func diagnostic()->Object {
+        ["active":active,"connected":connected,"receivedFrames":receivedFrames,
+         "lastFrameAge":max(0,ProcessInfo.processInfo.systemUptime-health.lastReceived),
+         "reconnectScheduled":reconnect != nil,"error":lastError,"epoch":epoch]
+    }
+    func recoverConnection(_ reason:String) {
+        guard active else {refresh();return}
+        let now=ProcessInfo.processInfo.systemUptime
+        guard now-lastRecovery>=1 else{return};lastRecovery=now
+        RuntimeTrace.record("room.recover",["reason":reason,"epoch":epoch])
+        connect();exchange(["type":"room:sync-request"]);publish()
+    }
+    func heartbeat() {
+        guard active else{return}
+        if health.expired(at:ProcessInfo.processInfo.systemUptime) {
+            lastError="房间连接无响应，正在自动恢复"
+            recoverConnection("heartbeat-timeout");return
+        }
+        send(["type":"room:ping","time":Date().timeIntervalSince1970*1000])
+    }
     func publish() {
         let visible: Object = ["room": roomID, "connected": connected, "enabled": enabled, "sync": syncTracks, "members": participants, "participantId": participantID, "controller": text(state["controllerId"]), "paused": bool(state["paused"], true), "song": (state["song"] as? Object).map { Song(raw: $0).key } ?? "", "error": lastError]
         let signature = (try? JSONSerialization.data(withJSONObject: visible, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? ""
@@ -78,7 +101,9 @@ final class RoomClient {
     }
     func connect() {
         guard active, let url = api.url("/api/room/ws"), let credentials = api.credentials else { return }
-        socket?.cancel(with: .goingAway, reason: nil); ping?.invalidate(); reconnect?.cancel(); epoch += 1
+        socket?.cancel(with: .goingAway, reason: nil); ping?.invalidate(); reconnect?.cancel(); reconnect=nil;connected=false;epoch += 1
+        health.opened(at:ProcessInfo.processInfo.systemUptime)
+        RuntimeTrace.record("room.connect",["epoch":epoch])
         let version = epoch
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
         components.scheme = url.scheme == "https" ? "wss" : "ws"
@@ -88,7 +113,8 @@ final class RoomClient {
         let task = api.session.webSocketTask(with: request); socket = task; task.resume()
         send(["type": "room:ping", "time": Date().timeIntervalSince1970 * 1000]); send(["type": "room:sync-request"])
         receive(task, version: version)
-        ping = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in self?.send(["type": "room:ping", "time": Date().timeIntervalSince1970 * 1000]) }
+        let timer=Timer(timeInterval:4,repeats:true){[weak self] _ in self?.heartbeat()}
+        ping=timer;RunLoop.main.add(timer,forMode:.common)
     }
     func send(_ body: Object) {
         guard let socket = socket, let data = try? JSONSerialization.data(withJSONObject: body), let message = String(data: data, encoding: .utf8) else { return }
@@ -102,6 +128,7 @@ final class RoomClient {
                 switch result {
                 case .success(let message):
                     self.connected = true; self.retry = 0
+                    self.lastError="";self.receivedFrames += 1;self.health.received(at:ProcessInfo.processInfo.systemUptime)
                     let data: Data
                     switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: data = Data() }
                     if let value = (try? JSONSerialization.jsonObject(with: data)) as? Object { self.handle(text(value["type"]), value["data"]) }
@@ -113,6 +140,7 @@ final class RoomClient {
     }
     func lost(_ version: Int) {
         guard epoch == version, active else { return }
+        RuntimeTrace.record("room.socket-lost",["epoch":version])
         socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false; ping?.invalidate(); ping = nil; publish()
         guard reconnect == nil else { return }
         let delay = min(15, pow(2, Double(retry))); retry += 1
@@ -161,6 +189,7 @@ final class RoomClient {
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
         if song.key != oldKey || player.audio.currentItem == nil || restarted {
+            RuntimeTrace.record("room.track",["revision":number(incoming["revision"]),"paused":shouldPause,"reason":reason])
             player.select(listToUse, index: selected, paused: shouldPause, user: false, time: target(incoming))
         } else {
             if listToUse.map(\.key) != player.queue.map(\.key) { player.queue = listToUse; player.queueRevision += 1 }; player.index = selected

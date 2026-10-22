@@ -28,3 +28,25 @@ test('offline artwork and lock-screen transport use the reference metadata owner
  await d.run({operation:'clearMetadata'});
  assert.equal(calls[0][1].artwork,'/Documents/Music/封面.jpg');assert.deepEqual(calls.map(x=>x[0]),['info','play','info','pause','clear']);
 });
+test('a failed progress probe cannot feed a native pause/error loop',async()=>{
+ const f=fixture();await f.load(1);await settle();let failures=0;const pending=[];
+ f.player.getPosition=async()=>{throw Error('native probe failed');};
+ const driver=create({player:f.player,stream:f.stream,State,Capability,RepeatMode:{Off:0},report:value=>{
+  if(!value.error)return;failures++;
+  // The production Swift Player.fail pauses the native core on an error.
+  // Bound the old loop so this regression can fail without hanging the runner.
+  if(failures<32)pending.push(driver.run({operation:'pause',generation:value.generation}));
+ }});
+ await driver.run({operation:'load',generation:1,args:{url:'https://cdn.invalid/a.mp3',quality:'320k'}});await settle();await Promise.all(pending);await settle();
+ assert.equal(failures,1,'one decoder error must yield one terminal failure, never a pause/probe storm');
+ const previous=failures;await driver.run({operation:'probe',generation:1});await settle();assert.equal(failures,previous);
+});
+
+test('repeated decoder errors stop at one report and a fresh track recovers',async()=>{
+ const f=fixture();await f.load(1);await settle();
+ for(let i=0;i<20;i++)f.driver.nativeEvent('track-player',{type:'error',message:'decode failed'});
+ await f.driver.run({operation:'pause',generation:1});await settle();
+ assert.equal(f.reports.filter(x=>x.error).length,1);
+ await f.load(2);await settle();
+ assert.equal(f.reports.at(-1).generation,2);assert.equal(f.reports.at(-1).playing,true);
+});

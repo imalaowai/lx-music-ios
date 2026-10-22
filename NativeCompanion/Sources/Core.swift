@@ -9,6 +9,44 @@ struct ClientError: LocalizedError {
     var errorDescription: String? { message }
     init(_ message: String) { self.message = message }
 }
+// Monotonic time: wall clock corrections must not hide a dead room connection.
+struct RoomConnectionHealth {
+    var lastReceived = 0.0
+    mutating func opened(at now: Double) { lastReceived = now }
+    mutating func received(at now: Double) { lastReceived = now }
+    func expired(at now: Double) -> Bool { now - lastReceived >= 20 }
+}
+enum RuntimeTrace {
+    private static let lock = NSLock()
+    private static let io = DispatchQueue(label:"net.minyue.lx.runtime-trace",qos:.utility)
+    private static let process = UUID().uuidString
+    private static var entries:[Object]=[]
+    private static var loaded=false
+    private static var scheduled=false
+    private static var url:URL? { FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first?.appendingPathComponent("LX-Runtime-Events.json") }
+    static func record(_ event:String,_ fields:Object=[:]) {
+        // Do not export account credentials, media URLs, lyrics or song names.
+        var safe:Object=[:]
+        for(key,value)in fields {
+            if let s=value as? String {
+                safe[key]=String(s.replacingOccurrences(of:"https?://\\S+",with:"[url]",options:.regularExpression).prefix(240))
+            }else if value is NSNumber {safe[key]=value}
+        }
+        lock.lock()
+        if !loaded {
+            loaded=true
+            if let file=url,let data=try? Data(contentsOf:file),let saved=(try? JSONSerialization.jsonObject(with:data)) as? [Object] {entries=Array(saved.suffix(80))}
+        }
+        entries.append(["at":Date().timeIntervalSince1970,"process":process,"event":event,"fields":safe])
+        entries=Array(entries.suffix(100))
+        let write = !scheduled;scheduled=true;lock.unlock()
+        if write {io.asyncAfter(deadline:.now()+1) {
+            lock.lock();let values=entries;scheduled=false;lock.unlock()
+            if let file=url,let data=try? JSONSerialization.data(withJSONObject:values) {try? data.write(to:file,options:.atomic)}
+        }}
+    }
+    static func snapshot()->[Object] {lock.lock();defer{lock.unlock()};return entries}
+}
 struct Song {
     var raw: Object
     var key: String { for k in ["songmid", "mid", "id"] { if let v = raw[k], !(v is NSNull) { return String(describing: v) } }; return name + "-" + artist }
