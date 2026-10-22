@@ -161,3 +161,30 @@ body.native-shell #view-native-room>#room-chat-modal:not([hidden]){display:block
 body.native-shell #view-native-room>#room-chat-modal[hidden],body.native-shell .native-room-members[hidden]{display:none!important}
 body.native-shell #room-chat-modal .room-chat-window{position:absolute!important;inset:0!important;height:auto!important;max-height:none!important;transform:none!important}
 body.native-shell #view-native-room{padding:0 0 calc(var(--native-nav) + var(--native-mini))!important}
+
+/* One viewport owner for the room. Nested scrollers never move the composer. */
+body.native-shell #view-native-room{position:fixed!important;top:var(--native-visible-top,0px)!important;left:0;right:0;bottom:auto!important;height:var(--native-visible-height,100%)!important;overflow:hidden!important;overscroll-behavior:none;padding-bottom:var(--chat-bottom-space,calc(var(--native-nav) + var(--native-mini)))!important;transition:none!important;min-height:0}
+body.native-shell #room-chat-modal,body.native-shell #room-chat-modal .room-chat-window,body.native-shell #room-chat-modal .room-chat-thread{min-height:0;overflow-anchor:none}
+body.native-shell #room-chat-modal #room-chat-input{scroll-margin:0;touch-action:manipulation}
+body.native-shell #room-emoji-panel{max-height:min(235px,35vh);overscroll-behavior:contain}
+body.native-shell #qiye-account{position:fixed;right:20px;top:calc(16px + env(safe-area-inset-top,0px));z-index:6000;color:var(--text-main,#243b35)}
+#qiye-account-button{display:flex;align-items:center;justify-content:center;gap:7px;width:40px;height:40px;padding:0;border-radius:50%;border:1px solid var(--border-main,#ddd);background:var(--bg-panel,#fff);color:inherit;overflow:hidden;cursor:pointer}
+#qiye-account-button img{width:100%;height:100%;object-fit:cover}#qiye-account-button svg{width:23px;height:23px}
+#qiye-account-button.is-guest{width:auto;border-radius:22px;padding:0 12px;font-size:13px}
+#qiye-account-menu{position:absolute;right:0;top:48px;min-width:190px;padding:8px;border:1px solid var(--border-main,#ddd);border-radius:15px;background:var(--bg-panel,#fff);box-shadow:0 12px 36px #0002}
+#qiye-account-menu[hidden]{display:none}#qiye-account-menu p{margin:5px 10px 8px;color:var(--text-muted);font-size:12px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#qiye-account-menu button{display:block;width:100%;text-align:left;background:none;color:inherit;border:0;padding:12px 10px;border-radius:9px;font-size:14px;cursor:pointer}#qiye-account-menu button:hover,#qiye-account-menu button:focus-visible{background:var(--bg-hover,#eaf0ec)}#qiye-account-menu [data-account-action=logout]{color:#c24b48}
+body.native-shell .native-home-heading{padding-right:90px}body.native-shell .native-person{padding-right:58px}body.native-shell #native-room-tools{margin-right:52px}
+body.native-shell #view-native-downloads .native-title,body.native-shell #view-native-sources .native-title,body.native-shell .apple-view-intro{padding-right:65px}
+body.native-shell.native-chat-keyboard #qiye-account,body.native-shell.mobile-player-open #qiye-account{display:none}
+body.native-shell #mobile-bottom-nav .qiye-desktop-link{display:none}
+body.native-shell .native-room-heading{flex:1;min-width:0}body.native-shell .native-room-heading h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}body.native-shell .native-room-tools{flex-shrink:0}
+body.native-shell #room-chat-modal #room-chat-composer{display:grid;grid-template-columns:60px minmax(0,1fr);gap:0 7px;align-items:end;padding:7px 10px 9px}
+body.native-shell #room-chat-modal .room-chat-toolbar{grid-column:1;grid-row:1;height:44px;gap:3px;align-items:center;margin:0}
+body.native-shell #room-chat-modal .room-chat-toolbar button{min-width:28px;width:28px;height:38px;padding:0;flex-shrink:0}
+body.native-shell #room-chat-modal #room-chat-form{grid-column:2;grid-row:1;display:flex;min-width:0;align-items:flex-end}
+body.native-shell #room-chat-modal #room-emoji-panel{grid-column:1/-1;grid-row:2;position:relative!important;inset:auto!important;max-height:min(235px,35vh)!important;padding:4px 0;border:0;box-shadow:none;overflow:auto}
+body.native-shell #room-chat-modal #room-emoji-grid{grid-template-columns:repeat(8,minmax(0,1fr));max-height:140px;gap:2px}
+body.native-shell #room-chat-modal #room-chat-status:not(:empty){position:absolute;bottom:100%;left:10px;right:10px;padding:8px;background:var(--bg-panel);border-radius:10px;max-width:none}
+
+body.native-shell #native-room-back{width:28px;min-width:28px;height:38px;border:0;padding:0;background:none;color:var(--native-accent);font:34px/1 system-ui;flex-shrink:0}

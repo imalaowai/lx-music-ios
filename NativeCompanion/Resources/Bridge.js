@@ -158,13 +158,23 @@
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
-    state: receiveState, room: receiveRoom,
+    publishLibrary, state: receiveState, room: receiveRoom,
     keyboard(value) {window.dispatchEvent(new CustomEvent('lx-native-keyboard', {detail:value}));},
     download(value) {window.dispatchEvent(new CustomEvent('lx-native-download', {detail: value}));},
     sources(value) {window.dispatchEvent(new CustomEvent('lx-native-sources', {detail: value}));},
     chat(type, data) {window.dispatchEvent(new CustomEvent(type === 'room:chat-history' ? 'lx-room-chat-history' : 'lx-room-chat-update', {detail: {...data, roomId: room.binding?.roomId || ''}}));},
     revoked() {localStorage.removeItem('lx_user_token'); window.dispatchEvent(new CustomEvent('lx-auth-revoked'));}
   };
+  let libraryQueue = Promise.resolve();
+  function publishLibrary(data) {
+    const lists = [{id:'love',name:'我的收藏',list:data.loveList||[]},{id:'default',name:'默认列表',list:data.defaultList||[]},...(data.userList||[])];
+    const serialized = JSON.stringify(lists), owner=authKey;
+    const job = libraryQueue.catch(()=>{}).then(async()=>{
+      if (owner!==authKey || serialized === listKey) return;
+      await post('library',{lists}); listKey = serialized;
+    });
+    libraryQueue = job; return job;
+  }
   function preferences() {
     try { return {quality: settings.preferredQuality || 'flac', allowFallback: settings.enableAutoDegradeQuality !== false, mode: playMode || 'list'}; }
     catch { return {quality: 'flac', allowFallback: true, mode: 'list'}; }
@@ -172,7 +182,7 @@
   function syncAuth() {
     const username = localStorage.getItem('lx_sync_user') || '', token = localStorage.getItem('lx_user_token') || '';
     const value = JSON.stringify({username, token});
-    if (value === authKey) return; authKey = value;
+    if (value === authKey) return; authKey = value; listKey = '';
     post('auth', {username, token}).catch(warn);
   }
   const originalSet = Storage.prototype.setItem, originalRemove = Storage.prototype.removeItem, originalClear = Storage.prototype.clear;
@@ -290,9 +300,7 @@
       syncAuth();
       const data = window.__LX_LIBRARY_GETTERS__?.getData?.();
       if (!data) return;
-      const lists = [{id: 'love', name: '我的收藏', list: data.loveList || []}, {id: 'default', name: '默认列表', list: data.defaultList || []}, ...(data.userList || [])];
-      const serialized = JSON.stringify(lists);
-      if (serialized !== listKey) {listKey = serialized; send('library', {lists});}
+      publishLibrary(data).catch(warn);
     }, 30000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();

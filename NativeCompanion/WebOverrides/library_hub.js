@@ -1,6 +1,6 @@
 
 window.__LX_COMPONENT_RELEASES__=window.__LX_COMPONENT_RELEASES__ || {};
-window.__LX_COMPONENT_RELEASES__['js/library_hub.js']='2.8.6';
+window.__LX_COMPONENT_RELEASES__['js/library_hub.js']='2.9.0';
 (function(){
 'use strict';
 const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -13,13 +13,13 @@ function artwork(image,list){
   let next=0,asked=false;const owner=window.DeviceLibrary?.identity();
   image.referrerPolicy='no-referrer';
   const fallback=async()=>{if(next<candidates.length){image.src=candidates[next++];return;}if(!asked && list.list?.length){asked=true;try{const key=owner+':'+list.id;let pending=artPending.get(key);if(!pending){pending=window.DeviceLibrary.api('/api/user/playlist-art',{listId:list.id,refresh:true}).finally(()=>{if(artPending.get(key)===pending)artPending.delete(key);});artPending.set(key,pending);}const result=await pending;if(owner!==window.DeviceLibrary.identity() || !image.isConnected)return;const resolved=normalize(result.cover);if(result.cover && !candidates.includes(resolved)){image.src=resolved;return;}}catch{}}
-    image.onerror=null;image.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbDpzcGFjZT0icHJlc2VydmUiIHZpZXdCb3g9IjAgMCA0NDcuOTQyIDQ0Ny45NDMiPgogIDxwYXRoIGZpbGw9IiM1ZWQ2OTgiIGQ9Ik0yMDMuODA2LjQ4MmMtMTkuNjY4LTMuMzQ2LTM1Ljc2IDExLjEzOS0zNS43NiAzMS4wODZ2MjA2LjE2NmMtMTEuNjQyLTQuMjcxLTI0LjE2NS02LjcyNS0zNy4yODEtNi43MjUtNTkuOTA1IDAtMTA4LjQ2OSA0OC41NjYtMTA4LjQ2OSAxMDguNDczIDAgNTkuOTAzIDQ4LjU2NCAxMDguNDYxIDEwOC40NjkgMTA4LjQ2MSAzNC4xNDEgMCA2NC41NC0xNS44MiA4NC40MDYtNDAuNDgybC00OS42NTgtNDkuNjY0Yy0xNS4xMTYtMTUuMTEyLTExLjcwOC0yOC45MDEtOS41NDItMzQuMTQgMi4xNjYtNS4yMzMgOS41MTQtMTcuNCAzMC44ODMtMTcuNGgxOC4wODJ2LTU2Ljg4NWMwLTIxLjEzMiAxNC42MTctMzguODYyIDM0LjI2Ni00My43NDUuMDMyLTQ0LjM3My4wMzItODEuODA4LjAzMi04MS44MDggMTQwLjE0NyAwIDEzMS43MjQgODMuOTc0IDExNS4zMjUgMTMyLjE5Ni02LjQyIDE4Ljg4NC0yLjYwMSAyMi4wNSAxMC44OTMgNy4zNTRDNTM2LjQ3MyA3Ny4xMDYgMjk4LjM4IDE2LjU2NiAyMDMuODA2LjQ4MnoiLz4KICA8cGF0aCBmaWxsPSIjNGRhZjdjIiBkPSJNMzAxLjA2MSAyMjMuODc2aC01MC45OTRjLTMuOTExIDAtNy41NzQuOTUtMTAuODg5IDIuNTIzLTguNjE2IDQuMDktMTQuNjE1IDEyLjc5OC0xNC42MTUgMjIuOTczdjc2LjUxaC0zNy43MDhjLTE0LjA4MiAwLTE3LjQyOCA4LjA3MS03LjQ2NiAxOC4wMjlsNDYuODkzIDQ2Ljg5OCAzMS4yNSAzMS4yNDZhMjUuNDI0IDI1LjQyNCAwIDAgMCAxOC4wMzMgNy40NzRjNi41MjMgMCAxMy4wNTItMi40ODQgMTguMDI5LTcuNDc0bDc4LjE1Mi03OC4xNDVjOS45NTEtOS45NTggNi42MDgtMTguMDI5LTcuNDctMTguMDI5aC0zNy43MXYtNzYuNTFjLjAwMS0xNC4wNzgtMTEuNDItMjUuNDk1LTI1LjUwNS0yNS40OTV6Ii8+Cjwvc3ZnPgo=';image.closest('.playlist-poster')?.classList.add('poster-fallback');};
+    image.onerror=null;image.src='/music/assets/logo.svg';image.closest('.playlist-poster')?.classList.add('poster-fallback');};
   image.onerror=fallback;image.onload=()=>{const poster=image.closest('.playlist-poster');poster?.classList.add('poster-loaded');if(!image.src.includes('logo.svg'))poster?.classList.remove('poster-fallback');};fallback();
 }
 function menu(list,event){event.preventDefault();window.MusicContext.open(event,[{label:'打开歌单',action:()=>window.handleListClick(list.id)},...(list.id!=='default'?[{label:'编辑名称',action:()=>window.handleRenameList(list.id)},{label:'删除歌单',action:()=>window.handleRemoveList(list.id)}]:[]),{label:'分享到房间聊天',action:()=>window.RoomSocial.share(list.id)},{label:'创建分享链接',action:()=>window.ShareHub.choose({listId:list.id,title:list.name,songs:list.list})}]);}
 function lists(){const d=data();if(!d)return [];const items=[{id:'default',name:'默认列表',list:d.defaultList || []},...(d.userList || [])],order=window.settings?.favoriteSidebarOrder || [];return items.sort((a,b)=>{const i=order.indexOf(a.id),j=order.indexOf(b.id);return (i<0?order.length:i)-(j<0?order.length:j);});}
 function subscribed(list){return !!(list.subscription || (list.source && list.sourceListId));}
-function cover(list){const raw=list.Album || list.cover || (list.list?.[0] && window.getImgUrl(list.list[0])) || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbDpzcGFjZT0icHJlc2VydmUiIHZpZXdCb3g9IjAgMCA0NDcuOTQyIDQ0Ny45NDMiPgogIDxwYXRoIGZpbGw9IiM1ZWQ2OTgiIGQ9Ik0yMDMuODA2LjQ4MmMtMTkuNjY4LTMuMzQ2LTM1Ljc2IDExLjEzOS0zNS43NiAzMS4wODZ2MjA2LjE2NmMtMTEuNjQyLTQuMjcxLTI0LjE2NS02LjcyNS0zNy4yODEtNi43MjUtNTkuOTA1IDAtMTA4LjQ2OSA0OC41NjYtMTA4LjQ2OSAxMDguNDczIDAgNTkuOTAzIDQ4LjU2NCAxMDguNDYxIDEwOC40NjkgMTA4LjQ2MSAzNC4xNDEgMCA2NC41NC0xNS44MiA4NC40MDYtNDAuNDgybC00OS42NTgtNDkuNjY0Yy0xNS4xMTYtMTUuMTEyLTExLjcwOC0yOC45MDEtOS41NDItMzQuMTQgMi4xNjYtNS4yMzMgOS41MTQtMTcuNCAzMC44ODMtMTcuNGgxOC4wODJ2LTU2Ljg4NWMwLTIxLjEzMiAxNC42MTctMzguODYyIDM0LjI2Ni00My43NDUuMDMyLTQ0LjM3My4wMzItODEuODA4LjAzMi04MS44MDggMTQwLjE0NyAwIDEzMS43MjQgODMuOTc0IDExNS4zMjUgMTMyLjE5Ni02LjQyIDE4Ljg4NC0yLjYwMSAyMi4wNSAxMC44OTMgNy4zNTRDNTM2LjQ3MyA3Ny4xMDYgMjk4LjM4IDE2LjU2NiAyMDMuODA2LjQ4MnoiLz4KICA8cGF0aCBmaWxsPSIjNGRhZjdjIiBkPSJNMzAxLjA2MSAyMjMuODc2aC01MC45OTRjLTMuOTExIDAtNy41NzQuOTUtMTAuODg5IDIuNTIzLTguNjE2IDQuMDktMTQuNjE1IDEyLjc5OC0xNC42MTUgMjIuOTczdjc2LjUxaC0zNy43MDhjLTE0LjA4MiAwLTE3LjQyOCA4LjA3MS03LjQ2NiAxOC4wMjlsNDYuODkzIDQ2Ljg5OCAzMS4yNSAzMS4yNDZhMjUuNDI0IDI1LjQyNCAwIDAgMCAxOC4wMzMgNy40NzRjNi41MjMgMCAxMy4wNTItMi40ODQgMTguMDI5LTcuNDc0bDc4LjE1Mi03OC4xNDVjOS45NTEtOS45NTggNi42MDgtMTguMDI5LTcuNDctMTguMDI5aC0zNy43MXYtNzYuNTFjLjAwMS0xNC4wNzgtMTEuNDItMjUuNDk1LTI1LjUwNS0yNS40OTV6Ii8+Cjwvc3ZnPgo=';return window.DeviceLibrary?.imageSource?.(raw) || raw;}
+function cover(list){const raw=list.Album || list.cover || (list.list?.[0] && window.getImgUrl(list.list[0])) || '/music/assets/logo.svg';return window.DeviceLibrary?.imageSource?.(raw) || raw;}
 async function show(){if(window.isViewingPublicFavorites)await window.handleTogglePublicFavorites();window.switchTab('playlists');render();}
 function render(){
   const grid=$('personal-playlists-grid');if(!grid)return;
@@ -53,7 +53,7 @@ function detail(listId){
   if(hero._detailSignature!==signature){hero._detailSignature=signature;
   hero.innerHTML=`<button class="playlist-back apple-link" aria-label="返回上一页">‹</button><img class="personal-playlist-cover" src="${esc(cover(list))}" alt=""><div class="personal-playlist-description"><small>${listId==='love'?'我的收藏':'我的歌单'}</small><h1>${esc(list.name)}</h1><p>${list.list.length} 首歌曲${subscribed(list)?' · ↻ 持续订阅同步':''}</p><div class="media-actions"><button class="apple-primary" data-action="play">播放全部</button><button class="apple-secondary" data-action="download" aria-label="下载整个歌单"><span class="playlist-wide-label">下载整个歌单</span><span class="playlist-compact-label">下载</span></button><button class="apple-secondary" data-action="share">分享</button>${listId!=='love' && listId!=='default' || subscribed(list)?'<button class="apple-secondary" data-action="more" aria-label="更多歌单选项">•••</button>':''}</div><p class="playlist-subscription-status" id="playlist-subscription-status"></p></div>`;
   artwork(hero.querySelector('img'),list);hero.querySelector('.playlist-back').onclick=()=>window.NativeShell?window.NativeShell.back():show();
-  const actions={play:()=>{if(!list.list.length)return;window.__LX_PLAYER_GETTERS__.setRoomPlaylist(list.list,0);window.playSong(list.list[0],0);},download:()=>window.DeviceLibrary.downloadBatch(list.list),share:()=>window.ShareHub.choose({listId,title:list.name,songs:list.list}),rename:()=>window.handleRenameList(listId),export:()=>window.exportPlaylistToLocal(listId),remove:()=>window.handleRemoveList(listId),sync:()=>list.subscription?.type==='room'?sync(true):window.handleRefreshList(listId,null,true),unsubscribe:async()=>{
+  const actions={play:()=>{if(!list.list.length)return;window.__LX_PLAYER_GETTERS__.setRoomPlaylist(list.list,0);window.playSong(list.list[0],0);},download:()=>window.DeviceLibrary.downloadBatch(list.list),share:()=>window.ShareHub.choose({listId,title:list.name,songs:list.list}),rename:()=>window.handleRenameList(listId),export:()=>window.exportPlaylistToLocal(listId),remove:()=>window.handleRemoveList(listId),sync:()=>window.LibrarySync.run({listId}),unsubscribe:async()=>{
     if(list.subscription?.type==='room')await window.DeviceLibrary.api('/api/user/subscriptions/remove',{listId});
     delete list.subscription;delete list.sourceListId;await window.__LX_LIBRARY_GETTERS__.save();render();detail(listId);window.showSuccess?.('已转为独立歌单');
   }};
@@ -64,12 +64,13 @@ function detail(listId){
 }
 function hideDetail(){ $('personal-playlist-hero')?.classList.add('hidden');$('view-search')?.classList.remove('is-playlist-detail'); }
 async function sync(notify=false){
-  if(syncing || !window.getUserAuthHeaders?.()['x-user-token'])return;syncing=true;const version=epoch;
+  if(notify)return window.LibrarySync.run().catch(()=>{});
+  if(window.LibrarySync?.isRunning() || syncing || !window.getUserAuthHeaders?.()['x-user-token'])return;syncing=true;const version=epoch,revision=window.LibrarySync?.revision();
   try {
-    const result=await window.DeviceLibrary.api('/api/user/subscriptions');if(version!==epoch)return;
+    const result=await window.DeviceLibrary.api('/api/user/subscriptions');if(version!==epoch || revision!==window.LibrarySync?.revision())return;
     // Adopt only the subscription rows: never replace unrelated unsaved edits.
     window.__LX_LIBRARY_GETTERS__.adoptSubscriptions(result.data,result.subscriptions);
-    render();const current=window.currentViewingListId;
+    render();window.LibrarySync?.refreshView();await window.LibrarySync?.nativeLibrary(data());const current=window.currentViewingListId;
     if(current && !$('view-search').classList.contains('hidden') && result.subscriptions[current]){detail(current);const status=$('playlist-subscription-status');if(status)status.textContent=result.subscriptions[current].error || '已同步 · '+new Date(result.subscriptions[current].updatedAt).toLocaleTimeString();}
     if(notify)window.showSuccess?.('订阅歌单已同步');
   }catch(error){if(notify)window.showError?.(error.message);}finally{syncing=false;}
@@ -115,7 +116,7 @@ function init(){
   const fav=$('tab-favorites');if(fav)fav.onclick=()=>{favorites();const children=$('favorites-children');if(children){children.style.height='auto';children.classList.remove('hidden');}};
   $('tab-playlists').onclick=e=>{e.preventDefault();show();};
   const main=$('view-search')?.parentElement;
-  const view=document.createElement('div');view.id='view-playlists';view.className='hidden media-view';view.innerHTML='<div class="apple-view-intro"><h1>我的歌单</h1><p>收藏、创作与订阅的音乐，每一张都有自己的故事。</p></div><div class="media-actions"><button class="apple-primary" id="personal-new-list">新建歌单</button><button class="apple-secondary" id="personal-sync-lists">同步订阅</button></div><div id="personal-playlists-grid" class="personal-playlists-grid"></div>';main?.append(view);
+  const view=document.createElement('div');view.id='view-playlists';view.className='hidden media-view';view.innerHTML='<div class="apple-view-intro"><h1>我的歌单</h1><p>收藏、创作与订阅的音乐，每一张都有自己的故事。</p></div><div class="media-actions"><button class="apple-primary" id="personal-new-list">新建歌单</button><button class="apple-secondary" id="personal-sync-lists">立即同步</button></div><div id="personal-playlists-grid" class="personal-playlists-grid"></div>';main?.append(view);
   const hero=document.createElement('section');hero.id='personal-playlist-hero';hero.className='personal-playlist-hero hidden';$('view-search')?.prepend(hero);
   $('personal-new-list').onclick=()=>window.handleCreateList();$('personal-sync-lists').onclick=()=>sync(true);
   window.addEventListener('lx-auth-change',()=>{epoch++;syncing=false;artPending.clear();const grid=$('personal-playlists-grid');if(grid)grid._posterSignature=null;render();hideDetail();setTimeout(()=>sync(),700);});

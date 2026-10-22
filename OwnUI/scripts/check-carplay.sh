@@ -7,7 +7,7 @@ HOST_DIR=build/own-ui/LXCarPlayTests.app
 mkdir -p "$HOST_DIR"
 python3 - <<'PY'
 import pathlib,plistlib
-info={'CFBundleIdentifier':'net.minyue.lxcarplay.verify','CFBundleExecutable':'LXCarPlayTests','CFBundleName':'LXCarPlayTests','CFBundlePackageType':'APPL','CFBundleVersion':'85','CFBundleShortVersionString':'1.9.2','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{}}
+info={'CFBundleIdentifier':'net.minyue.lxcarplay.verify','CFBundleExecutable':'LXCarPlayTests','CFBundleName':'LXCarPlayTests','CFBundlePackageType':'APPL','CFBundleVersion':'86','CFBundleShortVersionString':'1.9.3','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{}}
 pathlib.Path('build/own-ui/LXCarPlayTests.app/Info.plist').write_bytes(plistlib.dumps(info))
 PY
 xcrun clang -target "$(uname -m)-apple-ios15.0-simulator" -isysroot "$SDK" -fobjc-arc -fblocks -DLX_OWN_UI=1 -I FullReference/Sources \

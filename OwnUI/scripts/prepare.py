@@ -13,6 +13,11 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
         for override in sorted((old/'WebOverrides').glob('*.js')):
             pattern=r'(<script\b[^>]*data-source="js/'+re.escape(override.name)+r'\?[^"\n]*"[^>]*>).*?(</script>)'
             html,count=re.subn(pattern,lambda m:m[1]+override.read_text()+m[2],html,flags=re.S)
+            if count==0 and override.name=='library_sync.js':
+                anchor=re.search(r'<script\b[^>]*data-source="js/library_hub\.js\?[^"\n]*"[^>]*>',html)
+                assert anchor,'Missing library script anchor'
+                html=html[:anchor.start()]+'<script data-source="js/library_sync.js?v=2.9.1">'+override.read_text()+'</script>\n'+html[anchor.start():]
+                count=1
             assert count==1,'Missing bundled script: '+override.name
         html=html.replace('<title>LX Music', '<title>栖页音乐')
         data=html.encode()

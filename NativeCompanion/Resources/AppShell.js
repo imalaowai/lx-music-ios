@@ -16,10 +16,10 @@ function page(id,html){const node=document.createElement('section');node.id='vie
 function hidePages(){for(const node of container.children)if(node.id?.startsWith('view-')){if(node.classList.contains('native-page'))node.hidden=true;else node.classList.add('hidden');}}
 function showOwn(id){hidePages();if(id==='home')$('view-songlist')?.classList.remove('hidden');$('view-native-'+id).hidden=false;$('view-native-'+id).classList.remove('hidden');}
 function syncNavigation(){
- for(const button of document.querySelectorAll('#mobile-bottom-nav [data-native-page]')){const active=button.dataset.nativePage===state.area;button.classList.toggle('is-active',active);button.setAttribute('aria-current',active?'page':'false');}
+ for(const button of document.querySelectorAll('#mobile-bottom-nav [data-native-page]')){const direct=['favorites','downloads','localmusic'].includes(state.page);const active=button.classList.contains('qiye-desktop-link')?button.dataset.nativePage===state.page:!direct&&button.dataset.nativePage===state.area;button.classList.toggle('is-active',active);button.setAttribute('aria-current',active?'page':'false');}
  $('mobile-library-tabs')?.setAttribute('hidden','');
 }
-function closeChat(){if(window.RoomSocial?.state?.open)window.RoomSocial.close();document.body.classList.remove('native-chat-keyboard');}
+function closeChat(){const input=document.activeElement;if(input?.closest?.('#view-native-room'))input.blur();state.keyboard=false;if(window.RoomSocial?.state?.open)window.RoomSocial.close();document.body.classList.remove('native-chat-keyboard');}
 function back(){const previous=state.history.pop();go(previous?.page||state.area||'home',false,previous?.area);}
 function go(target,remember=true,area){
  state.interacted=state.interacted||remember;if(state.page==='room'&&target!=='room')closeChat();closeSheet();
@@ -40,17 +40,28 @@ function go(target,remember=true,area){
    else if(target==='playlists')window.LibraryHub.show();
    else originalSwitch(target);
   }
- }finally{switching=false;syncNavigation();window.MobileShell?.update();}
+ }finally{switching=false;syncNavigation();window.MobileShell?.update();viewport();}
 }
+let chatBaseHeight=innerHeight,chatBarSpace=66;
 function viewport(){
  cancelAnimationFrame(viewportFrame);viewportFrame=requestAnimationFrame(()=>{
-  if(innerWidth!==lastWidth){lastWidth=innerWidth;maxHeight=innerHeight;}else maxHeight=Math.max(maxHeight,innerHeight);
-  const v=window.visualViewport,height=Math.min(innerHeight,v?.height||innerHeight),editing=!!document.activeElement?.matches('input,textarea,[contenteditable=true]');
-  const keyboard=state.page==='room'&&(state.keyboard===true||editing&&height<maxHeight-100);
+  const v=window.visualViewport,browser=window.LXNative?.runtime==='browser',width=innerWidth;
+  if(width!==lastWidth){lastWidth=width;chatBaseHeight=innerHeight;}
+  chatBaseHeight=Math.max(chatBaseHeight,innerHeight);
+  const height=Math.min(innerHeight,v?.height||innerHeight),occluded=Math.max(0,chatBaseHeight-height);
+  const room=state.page==='room',keyboard=room&&(occluded>80 || state.keyboard===true);
+  if(!document.body.classList.contains('native-chat-keyboard')){
+   const nav=$('mobile-bottom-nav'),footer=$('player-footer');
+   chatBarSpace=(nav?.getBoundingClientRect().height||66)+(document.body.classList.contains('native-has-player')?(footer?.getBoundingClientRect().height||74):0);
+  }
   document.body.classList.toggle('native-chat-keyboard',keyboard);
-  document.documentElement.style.setProperty('--native-visible-height',height+'px');
+  const style=document.documentElement.style;
+  style.setProperty('--native-visible-height',height+'px');
+  style.setProperty('--native-visible-top',(browser?Math.max(0,v?.offsetTop||0):0)+'px');
+  style.setProperty('--chat-bottom-space',Math.max(0,chatBarSpace-occluded)+'px');
  });
 }
+
 function search(value){const query=String(value||'').trim();if(!query)return;go('search');$('search-input').removeAttribute('readonly');$('search-input').value=query;window.doSearch(1);document.activeElement?.blur();}
 async function playDownload(id){await request('playDownload',{downloadId:id});window.MobileShell?.openOnPlay?.();}
 function play(songs,index){if(!songs[index])return;window.__LX_PLAYER_GETTERS__.setRoomPlaylist(songs,index);return window.playSong(songs[index],index);}
@@ -118,7 +129,7 @@ async function loadSources(){const rows=await request('sources');state.sources=A
 function renderSources(){const box=$('native-source-list');box.replaceChildren();if(!state.sources.length){box.innerHTML='<div class="native-empty">导入一次洛雪 .js 音源，之后由手机直接解析。<br>音源文件仅保存在这台设备。<br>尚未导入时，已连接的旧服务器音源可临时继续使用。</div>';return;}for(const item of state.sources){const node=document.createElement('article');node.className='native-source';node.innerHTML=`<strong>${esc(item.name)}</strong><p>${esc([item.version,item.author].filter(Boolean).join(' · '))}</p><p>${esc((item.supportedSources||Object.keys(item.sources||{})).map(x=>({kw:'酷我',kg:'酷狗',wy:'网易',tx:'QQ',mg:'咪咕'})[x]||x).join(' / '))} · ${item.enabled?'已启用':'已停用'}</p><div class="native-page-actions"><button class="native-secondary" data-action="toggle">${item.enabled?'停用':'启用'}</button><button class="native-secondary" data-action="delete">删除</button></div>`;node.querySelector('[data-action=toggle]').onclick=()=>perform(async()=>{await request('sourceEnable',{sourceId:item.id,enabled:!item.enabled});await loadSources();});node.querySelector('[data-action=delete]').onclick=()=>perform(async()=>{const ok=await window.showSelect('删除本地音源',item.name,{confirmText:'删除'});if(ok){await request('sourceRemove',{sourceId:item.id});await loadSources();}});box.append(node);}}
 async function importURL(){const url=await window.showInput('导入音源链接','填写洛雪音源 .js 文件的完整网址',{placeholder:'https://…/source.js'});if(!url)return;window.showInfo?.('正在下载并初始化音源…');await request('importSourceURL',{url});await loadSources();window.showSuccess?.('音源已保存在手机');}
 async function migrateSources(){const list=await request('serverSources'),rows=Array.isArray(list)?list:list?.sources||[];const content=document.createElement('div');if(!rows.length)content.innerHTML='<p class="native-note">没有读取到服务器音源。可以直接导入原 .js 文件。</p>';for(const item of rows){content.append(row(item.name||'音源',async()=>{if(!item.sourceUrl){window.showInfo?.('此音源由文件上传，请在手机重新选择原 .js 文件');return;}await request('importSourceURL',{url:item.sourceUrl});closeSheet();await loadSources();},'source',item.sourceUrl?'导入':'需原文件'));}showSheet('从服务器迁移音源',content);}
-async function saveLibrary(data){const value=data||own();if(!value)return;await window.ListStore?.set(value);const lists=[{id:'love',name:'我的收藏',list:value.loveList||[]},{id:'default',name:'默认列表',list:value.defaultList||[]},...(value.userList||[])];const serialized=JSON.stringify(lists);if(serialized!==savedLibrary){savedLibrary=serialized;await request('library',{lists});}renderMine();}
+async function saveLibrary(data){const value=data||own();if(!value)return;await window.ListStore?.set(value);const lists=[{id:'love',name:'我的收藏',list:value.loveList||[]},{id:'default',name:'默认列表',list:value.defaultList||[]},...(value.userList||[])];const serialized=JSON.stringify(lists);if(serialized!==savedLibrary){if(window.LXBridge?.publishLibrary)await window.LXBridge.publishLibrary(value);else await request('library',{lists});savedLibrary=serialized;}renderMine();}
 async function initLibrary(){
  if(!localStorage.getItem('lx_sync_user')){localStorage.setItem('lx_sync_user','__device__');localStorage.setItem('lx_sync_mode','device');}
  const previousLogin=window.isUserLoggedIn;window.isUserLoggedIn=()=>localStorage.getItem('lx_sync_user')==='__device__'||previousLogin?.();
@@ -137,16 +148,17 @@ function init(){
  const style=document.createElement('style');style.id='lx-native-shell-style';style.textContent=window.__LX_SHELL_CSS__||'';document.head.append(style);document.body.classList.add('native-shell');document.body.classList.toggle('native-rich-effects',localStorage.getItem('lx_native_rich_effects')==='true');
  container=$('view-search').parentElement;originalSwitch=window.switchTab;
  const nav=$('mobile-bottom-nav');nav.innerHTML=[['home','首页'],['playlists','我的歌单'],['room','一起听'],['mine','我的']].map(([id,title])=>`<button type="button" data-native-page="${id}">${icon(id==='playlists'?'list':id)}<span>${title}</span></button>`).join('');nav.onclick=event=>{const button=event.target.closest('[data-native-page]');if(button)go(button.dataset.nativePage);};
- page('home',`<div class="native-page-inner"><div class="native-home-heading"><div><p class="native-eyebrow">QIYE MUSIC</p><h1 class="native-title">栖页音乐</h1></div><button id="native-home-downloads" class="native-icon-button" aria-label="已下载">${icon('download')}</button></div><form id="native-home-search" class="native-search">${icon('search')}<input id="native-home-query" type="search" placeholder="搜索歌曲、歌手、专辑" enterkeyhint="search" autocomplete="off" aria-label="搜索音乐"></form><div id="native-home-catalog"></div></div>`);
+ page('home',`<div class="native-page-inner"><div class="native-home-heading"><div><p class="native-eyebrow">QIYE MUSIC</p><h1 class="native-title">栖页音乐</h1></div></div><form id="native-home-search" class="native-search">${icon('search')}<input id="native-home-query" type="search" placeholder="搜索歌曲、歌手、专辑" enterkeyhint="search" autocomplete="off" aria-label="搜索音乐"></form><div id="native-home-catalog"></div></div>`);
  const catalog=$('view-songlist');$('native-home-catalog').append(catalog);catalog.classList.remove('hidden');
  page('mine',`<div class="native-page-inner"><div class="native-person"><button class="native-person-avatar" id="native-person-avatar" aria-label="个人资料">我</button><div><h1 id="native-person-name">我的音乐</h1><p id="native-person-note">本机音乐库</p></div></div><div id="native-mine-grid" class="native-mine-grid"></div><div class="native-list" id="native-mine-links"></div><p class="native-note">页面和音乐库保存在手机，服务器用于可选同步与一起听。</p></div>`);
  page('downloads',`<div class="native-page-inner"><button class="native-back" aria-label="返回上一页" id="native-download-back">‹</button><h1 class="native-title">已下载</h1><p class="native-note" id="native-download-count">设备中的音乐</p><div class="native-page-actions"><button class="native-primary" id="native-import-audio">导入设备音乐</button><button class="native-secondary" id="native-download-play-all">播放全部</button></div><div id="native-download-list"></div></div>`);
  page('sources',`<div class="native-page-inner"><button class="native-back" aria-label="返回上一页" id="native-source-back">‹</button><h1 class="native-title">音源管理</h1><p class="native-note">搜索、歌单和歌词由手机获取。导入洛雪音源后，播放链接也在本机解析；音频仍从原音源下载。</p><div class="native-page-actions"><button class="native-primary" id="native-import-source">导入 .js 文件</button><button class="native-secondary" id="native-import-source-url">导入链接</button><button class="native-secondary" id="native-migrate-sources">从服务器迁移</button></div><label class="native-row"><span>兼容旧服务器音源</span><input type="checkbox" id="native-legacy-source" checked aria-label="兼容旧服务器音源"></label><p class="native-note">尚未导入本地音源时，允许使用当前同步服务器解析播放链接。</p><div id="native-source-list"></div></div>`);
- page('room',`<div class="native-room-header"><div class="native-room-heading"><h1 id="native-room-title">一起听</h1><p id="native-room-subtitle">同一首歌，同一刻心情</p></div><div id="native-room-tools" class="native-room-tools" hidden></div></div><div id="native-room-member-strip" class="native-room-members" hidden></div><div id="native-room-welcome" class="native-room-welcome"><div class="native-room-hero">${icon('room')}<h2>让音乐，近一点。</h2><p>和朋友共享播放进度，边听边聊。<br>创建一个房间，或者加入他们。</p></div><p class="native-note" id="native-room-connection"></p><button class="native-secondary" id="native-room-connect">连接账号</button>${['create','join'].map((type,index)=>`<section class="native-room-fold"><button type="button" data-fold="${type}" aria-expanded="false">${index?'加入房间':'创建房间'}<span>＋</span></button><form id="native-room-${type}-form" hidden><input name="roomId" placeholder="${index?'房间号':'房间号（留空自动生成）'}" autocomplete="off" ${index?'required':''} aria-label="${index?'加入':'创建'}房间号"><input name="password" type="password" placeholder="房间密码（可选）" autocomplete="off" aria-label="房间密码"><button type="submit" class="native-primary">${index?'加入并聊天':'创建并聊天'}</button></form></section>`).join('')}</div>`);
+ page('room',`<div class="native-room-header"><button type="button" id="native-room-back" aria-label="返回首页">‹</button><div class="native-room-heading"><h1 id="native-room-title">一起听</h1><p id="native-room-subtitle">同一首歌，同一刻心情</p></div><div id="native-room-tools" class="native-room-tools" hidden></div></div><div id="native-room-member-strip" class="native-room-members" hidden></div><div id="native-room-welcome" class="native-room-welcome"><div class="native-room-hero">${icon('room')}<h2>让音乐，近一点。</h2><p>和朋友共享播放进度，边听边聊。<br>创建一个房间，或者加入他们。</p></div><p class="native-note" id="native-room-connection"></p><button class="native-secondary" id="native-room-connect">连接账号</button>${['create','join'].map((type,index)=>`<section class="native-room-fold"><button type="button" data-fold="${type}" aria-expanded="false">${index?'加入房间':'创建房间'}<span>＋</span></button><form id="native-room-${type}-form" hidden><input name="roomId" placeholder="${index?'房间号':'房间号（留空自动生成）'}" autocomplete="off" ${index?'required':''} aria-label="${index?'加入':'创建'}房间号"><input name="password" type="password" placeholder="房间密码（可选）" autocomplete="off" aria-label="房间密码"><button type="submit" class="native-primary">${index?'加入并聊天':'创建并聊天'}</button></form></section>`).join('')}</div>`);
  $('view-native-room').style.setProperty('padding','0 0 calc(var(--native-nav,66px) + var(--native-mini,0px))','important');
  window.NativeShell={go,back,syncNavigation,state,addDownloads,loadDownloads,loadSources,saveLibrary,ready:true};
  window.switchTab=function(tab,...args){const result=originalSwitch.call(this,tab,...args);if(!switching){if(tab==='songlist'){go('home');return result;}if(!state.interacted&&state.page==='home')showOwn('home');else{for(const node of container.querySelectorAll('.native-page'))node.hidden=true;state.page=tab;if(!['search','favorites'].includes(tab))state.area=tab==='playlists'?'playlists':['songlist','leaderboard'].includes(tab)?'home':'mine';if(tab!=='room')closeChat();}syncNavigation();}return result;};
- $('native-home-search').onsubmit=event=>{event.preventDefault();search($('native-home-query').value);};$('native-home-downloads').onclick=()=>go('downloads');
+ $('native-room-back').onclick=()=>go('home');
+ $('native-home-search').onsubmit=event=>{event.preventDefault();search($('native-home-query').value);};
  $('native-person-avatar').onclick=()=>{if(state.info.hasAccount)window.AccountPanel?.open();else window.showInfo?.('连接同步账号后可编辑个人资料');};
  for(const id of ['native-download-back','native-source-back'])$(id).onclick=back;$('native-import-audio').onclick=()=>perform(()=>request('importAudio'));$('native-download-play-all').onclick=()=>perform(()=>playDownload(state.downloads.find(x=>x.status==='finished')?.id));
  $('native-legacy-source').onchange=event=>perform(()=>request('sourcePreferences',{legacySourceFallback:event.target.checked}));$('native-import-source').onclick=()=>perform(()=>request('importSource'));$('native-import-source-url').onclick=()=>perform(importURL);$('native-migrate-sources').onclick=()=>perform(migrateSources);
@@ -174,9 +186,9 @@ function init(){
  window.addEventListener('lx-native-download',event=>{const update=event.detail,id=update.id,index=state.downloads.findIndex(x=>x.id===id);if(update.deleted)state.downloads=state.downloads.filter(x=>x.id!==id);else if(index>=0)state.downloads[index]={...state.downloads[index],...update};else state.downloads.unshift(update);if(state.page==='downloads')renderDownloads();if(state.page==='mine')renderMine();});
  window.addEventListener('lx-native-sources',()=>{void loadSources();void loadDownloads();});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&['downloads','mine'].includes(state.page))void loadDownloads();});window.addEventListener('lx-auth-change',()=>{mineSignature='';perform(async()=>{state.info=await request('appInfo');renderMine();renderRoom();});});
  window.addEventListener('lx-native-keyboard',event=>{state.keyboard=!!event.detail?.visible;document.documentElement.style.setProperty('--native-keyboard-duration',(Number(event.detail?.duration)||.25)+'s');viewport();});
- window.addEventListener('resize',viewport,{passive:true});window.visualViewport?.addEventListener('resize',viewport,{passive:true});document.addEventListener('focusin',viewport);document.addEventListener('focusout',()=>setTimeout(viewport,150));
+ window.addEventListener('resize',viewport,{passive:true});window.visualViewport?.addEventListener('resize',viewport,{passive:true});window.visualViewport?.addEventListener('scroll',viewport,{passive:true});document.addEventListener('focusin',viewport);document.addEventListener('focusout',()=>setTimeout(viewport,150));
  perform(async()=>{state.info=await request('appInfo')||{};$('native-legacy-source').checked=state.info.legacySourceFallback!==false;await initLibrary();renderMine();renderRoom();});void loadDownloads();void loadSources();
- go('home',false);syncNavigation();viewport();
+ go('home',false);syncNavigation();viewport();window.AccountPanel?.mountHeader?.();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,0),{once:true});else setTimeout(init,0);
 })();
