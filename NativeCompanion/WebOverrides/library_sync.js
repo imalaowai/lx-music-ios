@@ -48,7 +48,7 @@ function run(options={}){
  watchWrites();const owner=identity();
  if(!window.getUserAuthHeaders?.()['x-user-token']){const error=new Error('请先登录同步账号');window.showInfo?.(error.message);return Promise.reject(error);}
  if(active?.owner===owner){window.showInfo?.('正在同步，请稍候');if(!active.listId || active.listId===options.listId)return active.promise;return active.promise.then(()=>run(options));}
- const version=++generation,controller=new AbortController(),job={owner,listId:options.listId,controller};active=job;busy(true);
+ const version=++generation,controller=new AbortController(),job={owner,listId:options.listId,controller};active=job;busy(true);const status=$('playlist-subscription-status');if(status)status.textContent='正在读取最新歌单…';
  const check=()=>{if(version!==generation || owner!==identity())throw Object.assign(new Error('账号已切换，已取消旧账号同步'),{name:'AbortError'});};
  job.promise=(async()=>{
   try{
@@ -56,7 +56,7 @@ function run(options={}){
    const base=clone(valid(window.__LX_LIBRARY_GETTERS__.getData())),result=await postSync(options.listId,controller.signal);check();
    const current=valid(window.__LX_LIBRARY_GETTERS__.getData()),merged=merge(base,current,result.data);check();
    window.__LX_LIBRARY_GETTERS__.adopt(merged.data);await nativeLibrary(merged.data);check();refreshView();report(result,merged.conflicts);return {...result,conflicts:merged.conflicts};
-  }catch(error){if(error.name!=='AbortError' && owner===identity())window.showError?.(error.message);throw error;}
+  }catch(error){if(error.name!=='AbortError' && owner===identity()){if(status)status.textContent=error.message;window.showError?.(error.message);}throw error;}
   finally{if(active===job){active=null;busy(false);}}
  })();return job.promise;
 }
