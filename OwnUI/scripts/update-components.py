@@ -54,7 +54,7 @@ def package(source,components,signer,output):
         for name,(offset,length) in base.sections(old_main).items():
             next_offset,next_length=base.sections(new_main)[name]
             assert length==next_length and old_main[offset:offset+length]==new_main[next_offset:next_offset+length],name
-        allowed={prefix+n for n in ['Info.plist','LxMusicMobile','main.jsbundle','Frameworks/LXFullCarPlay.dylib',*resource_names]}
+        allowed={prefix+n for n in ['Info.plist','LxMusicMobile','_CodeSignature/CodeResources','main.jsbundle','Frameworks/LXFullCarPlay.dylib',*resource_names]}
         changed=[];retained=[]
         for item in z.infolist():
             if item.is_dir():continue
@@ -73,7 +73,7 @@ def package(source,components,signer,output):
                 name=p.relative_to(work).as_posix()
                 if p.is_file() and name not in old_names:
                     item=zipfile.ZipInfo(name);item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=(stat.S_IFREG|0o644)<<16;out.writestr(item,p.read_bytes())
-        report={'version':'1.9.4','build':87,'base':'own UI v16','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False}
+        report={'version':'1.9.4','build':87,'base':'own UI v16','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
         output.with_suffix('.verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
         print(json.dumps(report,ensure_ascii=False))
 if __name__=='__main__':package(*sys.argv[1:])

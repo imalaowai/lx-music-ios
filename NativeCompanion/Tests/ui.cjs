@@ -135,6 +135,8 @@ const server=http.createServer((req,res)=>{
     await page.locator('[data-native-page=room]').click();
     await page.waitForFunction(()=>document.querySelector('[data-native-page=room] .native-unread').hidden);
 
+    const footerBox=await page.locator('#player-footer').boundingBox(),roomHeaderBox=await page.locator('.native-room-header').boundingBox();
+    assert.ok(footerBox.y>=roomHeaderBox.y+roomHeaderBox.height,'Compact player must stay below room actions');
     await page.locator('#room-chat-more').click();assert.ok(await page.locator('#native-room-leave').isVisible());await page.locator('#native-room-leave').click();
     await page.waitForFunction(()=>!window.RoomSocial.state.open);
     for(const theme of ['apple','kugou','lx','apple']){
