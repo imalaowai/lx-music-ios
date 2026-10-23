@@ -1,0 +1,20 @@
+{
+  "webVersion": "2.9.3",
+  "date": "2026-10-23",
+  "files": {
+    "share-player.html": "6a85e0b81e1869b440f1c00b644f876a2a2d7c7ba6dd32f0186cc8e920a688d4",
+    "share-player.js": "334da879d64cf83f8f341c321fd7581045b6f9fdb859439dba43514f7305f5af",
+    "share-player.css": "4d2791260d3af1a0c3e6d13e77f8d084d22819f58e69bc48e1ca6fddf05a269e",
+    "css/qiye.css": "2484b6c9d43d8274400cfd85c192189d15b425950f5320c915d207c349f83c85",
+    "css/qiye_browser.css": "f0ec6bd5b03fcc6c422a89238e9bf6a4a16dc75ee04dddf3859f386d64182561",
+    "js/device_library.js": "03ea9eeeb91d7ddca6459059830583d0392c17d830ac04e3c62b096f9d227df6",
+    "js/download_options.js": "74503303d2524100e53475b03d25f08a1a22604f3c7777dcd3d332b154998152",
+    "js/qiye_browser.js": "f5bef4cc649d5e500aa66ecf39f871b2d9d45c88564039e8081fa5870e07614c",
+    "js/download_manager.js": "ea22fc3d67948d07e50a5532b04fa421f77f343a61bf5728d83019012c79a88c",
+    "js/qiye_shell.js": "8889624ed3ddb0659acdfba53ee69134eda82c170c07860506defc0ebd872e43",
+    "js/account-panel.js": "5d2fe26eab03ae28cf987b66478c5cd33fb46b37501b2398d0bac3de18676cf0",
+    "js/qiye_header.js": "d1e1c587c46789777bc9ed10481281fe9576a70931707dc3a2b8ffe726b62546",
+    "js/browser_downloads.js": "1baf5b85831cfd93993710143decc9e644d67666c78f8546bb49f35218ae1108",
+    "js/qiye_offline.js": "b7dc75e139025417882263e589698815302a4850d64501bdb1cbd267eca70443"
+  }
+}

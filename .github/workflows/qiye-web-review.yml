@@ -1,0 +1,31 @@
+name: Qiye Web Header and Download Review
+on:
+  push:
+    branches: [codex/native-web-carplay]
+    paths: ['BrowserClient/**', '.github/workflows/qiye-web-review.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qiye-web-review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          python3 OwnUI/scripts/prepare.py
+          npm install --prefix /tmp/qiye-web-review playwright@1.62.1
+          /tmp/qiye-web-review/node_modules/.bin/playwright install --with-deps chromium webkit
+          LX_PLAYWRIGHT=/tmp/qiye-web-review/node_modules/playwright node BrowserClient/Tests/ui.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Qiye-Web-Header-Downloads-Review
+          path: BrowserClient/build/review/
+          if-no-files-found: ignore

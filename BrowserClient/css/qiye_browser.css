@@ -1,0 +1,114 @@
+/* The IPA pages on a browser viewport, with desktop navigation and safe areas. */
+html[data-qiye-web]{--qiye-safe-top:env(safe-area-inset-top,0px);--qiye-safe-bottom:env(safe-area-inset-bottom,0px);background:var(--bg-main,#f5f7f4)}
+html[data-qiye-web],html[data-qiye-web] body{margin:0;height:100%;height:100svh;overflow:hidden}
+body.native-shell{--native-nav:calc(66px + var(--qiye-safe-bottom));--native-accent:var(--c-500,#246754);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+body.native-shell #mobile-bottom-nav{height:var(--native-nav);padding-bottom:calc(7px + var(--qiye-safe-bottom))}
+body.native-shell .native-page{padding-top:calc(22px + var(--qiye-safe-top))}
+body.native-shell #view-native-room{padding-top:var(--qiye-safe-top)!important;height:var(--native-visible-height,100%)}
+body.native-shell .native-room-header{min-height:64px}
+body.native-shell .native-page-inner{max-width:1200px}
+body.native-shell .native-title{letter-spacing:-.035em}
+body.native-shell #view-native-home #view-songlist{padding:0!important;background:transparent!important;position:static}
+body.native-shell #view-native-home .native-home-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
+body.native-shell #view-native-home .native-title{margin-bottom:18px}
+body.native-shell .native-home-heading .native-icon-button{width:43px;height:43px;border-radius:14px;background:var(--bg-panel,#fff);border:1px solid var(--border-main,#e4e9e4);color:var(--native-accent);display:grid;place-items:center;flex-shrink:0}
+body.native-shell .native-icon-button svg{width:21px;height:21px}
+body.native-shell #view-songlist>h1,body.native-shell #view-songlist>p:first-of-type{display:none}
+body.native-shell #view-settings,body.native-shell #view-localmusic,body.native-shell #view-playlists,body.native-shell #view-search{padding-top:calc(22px + var(--qiye-safe-top))!important;padding-bottom:calc(var(--native-nav) + var(--native-mini) + 24px)!important}
+body.native-shell #room-chat-modal{max-width:none;margin:0}
+body.native-shell #room-chat-messages{overscroll-behavior:contain}
+body.native-shell .room-chat-avatar img,body.native-shell .native-member-avatar img{width:100%;height:100%;object-fit:cover;border-radius:inherit}
+body.native-shell .native-person-avatar svg{width:36px;height:36px}
+body.native-shell .native-back{line-height:1;font-family:Arial,sans-serif}
+body.native-shell .native-unread{position:absolute;right:calc(50% - 26px);top:1px}
+body.native-shell #mobile-bottom-nav button{position:relative}
+body.native-shell .native-sheet-wrap{overscroll-behavior:contain}
+body.native-shell #qiye-browser-brand{display:none}
+body.native-shell button:focus-visible,body.native-shell a:focus-visible{outline:2px solid var(--native-accent);outline-offset:3px}
+body.native-shell #source-label-tip,body.native-shell #native-sync-settings{scroll-margin-top:24px}
+@media(max-width:767px){
+ body.native-shell #player-song-info{cursor:pointer}
+ body.native-shell #view-player-detail{padding-top:var(--qiye-safe-top)}
+ body.native-shell #view-settings,body.native-shell #view-localmusic,body.native-shell #view-playlists,body.native-shell #view-search{padding-left:16px!important;padding-right:16px!important}
+ body.native-shell #view-native-home .native-page-inner{padding:0}
+ body.native-shell .native-page{padding-left:18px;padding-right:18px}
+ body.native-shell .native-title{font-size:29px}
+ body.native-shell #view-player-detail .lyric-line{overflow-wrap:anywhere}
+}
+@media(min-width:960px){
+ body.native-shell{--qiye-rail:224px;--native-nav:0px}
+ body.native-shell #mobile-bottom-nav{left:0;right:auto;top:0;bottom:0;width:var(--qiye-rail);height:100%;padding:130px 14px 24px;display:flex!important;flex-direction:column;gap:7px;justify-content:flex-start;background:var(--bg-panel,#fff);border-top:0;border-right:1px solid var(--border-main,#e4e9e4);z-index:5000}
+ body.native-shell #mobile-bottom-nav button{flex:none;display:flex;flex-direction:row;justify-content:flex-start;gap:14px;width:100%;height:53px;padding:0 20px;border-radius:14px;font-size:15px}
+ body.native-shell #mobile-bottom-nav button.is-active{background:color-mix(in srgb,var(--native-accent) 10%,transparent)}
+ body.native-shell #mobile-bottom-nav button svg{width:23px;height:23px}
+ body.native-shell #mobile-bottom-nav .native-unread{top:15px;right:12px}
+ body.native-shell #qiye-browser-brand{display:flex;align-items:center;gap:12px;position:fixed;left:25px;top:35px;width:178px;z-index:5001;color:var(--text-main,#25332d);pointer-events:none}
+ #qiye-browser-brand img{width:44px;height:44px;border-radius:13px}
+ #qiye-browser-brand strong{font-size:18px;letter-spacing:-.04em}
+ #qiye-browser-brand small{display:block;font-size:9px;letter-spacing:.17em;color:var(--text-muted);margin-top:5px}
+ body.native-shell main{margin-left:var(--qiye-rail)!important;width:calc(100% - var(--qiye-rail));height:100%;padding-top:0!important}
+ body.native-shell .native-page{padding:34px 42px calc(var(--native-mini) + 34px)}
+ body.native-shell .native-title{font-size:35px}
+ body.native-shell .native-search{max-width:760px;height:54px}
+ body.native-shell #view-settings,body.native-shell #view-localmusic,body.native-shell #view-playlists,body.native-shell #view-search{padding:34px 42px calc(var(--native-mini) + 34px)!important}
+ body.native-shell #player-footer{left:var(--qiye-rail)!important;right:0!important;bottom:0!important;width:auto!important}
+ body.native-shell #btn-expand-panel{bottom:18px!important}
+ body.native-shell .native-mine-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+ body.native-shell .native-person{margin-bottom:32px}
+ body.native-shell .native-person-avatar{width:76px;height:76px}
+ body.native-shell .native-person h1{font-size:31px}
+ body.native-shell .native-mine-card{padding:24px;min-height:153px}
+ body.native-shell .native-list{max-width:900px}
+ body.native-shell #view-native-room{padding:0 0 var(--native-mini)!important}
+ body.native-shell .native-room-header{height:76px;padding:14px 30px}
+ body.native-shell .native-room-members{padding-left:30px}
+ body.native-shell .native-room-welcome{max-width:720px;width:100%;margin:auto}
+ body.native-shell #room-chat-messages{padding-left:max(28px,calc((100% - 1050px)/2));padding-right:max(28px,calc((100% - 1050px)/2))}
+ body.native-shell #room-chat-composer{padding:14px max(24px,calc((100% - 1050px)/2));gap:12px}
+ body.native-shell #room-emoji-panel{max-width:1050px;width:100%;margin:0 auto}
+ body.native-shell .native-sheet-wrap{padding-left:var(--qiye-rail)}
+ body.native-shell #queue-drawer{width:min(420px,calc(100vw - var(--qiye-rail)))!important}
+}
+@media(prefers-reduced-motion:reduce){
+ body.native-shell *,body.native-shell *::before,body.native-shell *::after{scroll-behavior:auto!important;animation-duration:0.01ms!important;transition-duration:0.01ms!important}
+}
+
+body.native-shell:not(.native-has-player) #btn-expand-panel{display:none!important}
+
+html[data-qiye-page=home] body.native-shell #desktop-content>[id^="view-"]:not(#view-native-home){display:none!important}
+html[data-qiye-page=mine] body.native-shell #desktop-content>[id^="view-"]:not(#view-native-mine){display:none!important}
+html[data-qiye-page=room] body.native-shell #desktop-content>[id^="view-"]:not(#view-native-room){display:none!important}
+html[data-qiye-page=downloads] body.native-shell #desktop-content>[id^="view-"]:not(#view-native-downloads){display:none!important}
+html[data-qiye-page=sources] body.native-shell #desktop-content>[id^="view-"]:not(#view-native-sources){display:none!important}
+
+html[data-qiye-web] body.native-shell{position:fixed!important;inset:0!important;width:100%;overflow:hidden}
+@media(min-width:960px){
+ body.native-shell #mobile-bottom-nav .qiye-desktop-link{display:flex}
+ body.native-shell #view-native-room{left:var(--qiye-rail)!important}
+ body.native-shell #qiye-account{right:32px;top:30px}
+ body.native-shell #mobile-bottom-nav{overflow-y:auto;padding-bottom:22px!important}
+ .qiye-rail-icon{display:grid;place-items:center;width:23px;height:23px;font-size:25px;line-height:1}
+}
+
+/* One reserved header row: neither avatar floats over the page content. */
+html[data-qiye-web]{--qiye-header-height:calc(64px + var(--qiye-safe-top))}
+body.native-shell #qiye-page-header{display:flex;align-items:center;justify-content:space-between;flex:0 0 var(--qiye-header-height);height:var(--qiye-header-height);min-height:var(--qiye-header-height);padding:var(--qiye-safe-top) 20px 0;gap:12px;position:relative;z-index:6001;box-sizing:border-box;background:var(--bg-panel,#fff);border-bottom:1px solid var(--border-main,#e4e9e4);color:var(--text-main,#25332d)}
+.qiye-header-brand{font-size:21px;font-weight:750;letter-spacing:-.04em;white-space:nowrap;color:var(--native-accent);text-decoration:none}.qiye-header-brand span{font-size:12px;font-weight:500;margin-left:5px;color:var(--text-muted)}
+.qiye-header-actions,.qiye-header-room-group{display:flex;align-items:center;gap:14px;min-width:0}.qiye-header-actions{margin-left:auto}.qiye-header-room-group{gap:10px}
+#qiye-header-room{position:relative;display:flex;align-items:center;gap:8px;min-height:40px;background:transparent;color:inherit;border:0;font-size:13px;font-weight:600;white-space:nowrap;padding:0 2px;cursor:pointer}#qiye-header-room.is-joined{color:var(--native-accent)}#qiye-header-room svg{width:22px;height:22px}
+#qiye-header-unread{position:absolute;top:0;left:14px;min-width:17px;height:17px;line-height:17px;border-radius:10px;background:#d94a4a;color:white;font-size:10px;padding:0 4px;text-align:center;border:2px solid var(--bg-panel,#fff);box-sizing:content-box}#qiye-header-unread[hidden]{display:none}
+#qiye-header-members{display:flex;align-items:center;border:0;background:none;padding:0;cursor:pointer}#qiye-header-members[hidden]{display:none}.qiye-room-avatar{width:34px;height:34px;border-radius:50%;border:2px solid var(--bg-panel,#fff);background:var(--bg-hover,#eaf0ec);color:var(--native-accent);display:grid;place-items:center;overflow:hidden;font-size:17px;flex-shrink:0;box-sizing:content-box}.qiye-room-avatar+.qiye-room-avatar{margin-left:-12px}.qiye-room-avatar img{width:100%;height:100%;object-fit:cover}.qiye-room-avatar svg{width:22px;height:22px}.qiye-room-count{font-size:11px;font-weight:650}
+#qiye-header-account-slot{display:flex;align-items:center;border-left:1px solid var(--border-main,#e4e9e4);padding-left:14px}
+body.native-shell #qiye-page-header #qiye-account{position:relative;top:auto;right:auto;left:auto;bottom:auto;z-index:auto;display:block}
+body.native-shell #qiye-page-header #qiye-account-button{width:38px;height:38px;border-radius:50%;padding:0}body.native-shell #qiye-page-header #qiye-account-button.is-guest span{display:none}
+body.native-shell.mobile-player-open #qiye-page-header{visibility:hidden}
+body.native-shell #mobile-bottom-nav{grid-template-columns:repeat(3,minmax(0,1fr))}
+body.native-shell #mobile-bottom-nav [data-native-page=room]{display:none!important}
+body.native-shell #view-native-room{top:calc(var(--native-visible-top,0px) + var(--qiye-header-height))!important;height:calc(var(--native-visible-height,100%) - var(--qiye-header-height))!important;padding-top:0!important}
+body.native-shell #native-room-member-strip{display:none!important}
+body.native-shell .native-room-tools{margin-right:0!important}body.native-shell .native-room-header{padding-right:18px!important}
+body.native-shell #desktop-layout-root,body.native-shell #desktop-layout-main,body.native-shell #desktop-content{min-height:0}
+@media(min-width:960px){body.native-shell #qiye-page-header{padding-left:42px;padding-right:32px}.qiye-header-brand{font-size:16px;font-weight:600;color:var(--text-muted)}.qiye-header-actions{gap:20px}}
+@media(max-width:430px){body.native-shell #qiye-page-header{padding-left:16px;padding-right:14px;gap:8px}.qiye-header-actions{gap:10px}.qiye-header-room-group{gap:7px}#qiye-header-room{font-size:12px;gap:5px}#qiye-header-account-slot{padding-left:10px}.qiye-room-avatar{width:30px;height:30px}.qiye-room-avatar+.qiye-room-avatar{margin-left:-14px}.qiye-header-brand{font-size:20px}.qiye-header-brand span{display:none}}
+body.native-shell #download-drawer{z-index:18000!important;background:var(--bg-panel,#fff)!important}
+body.native-shell #browser-download-panel{z-index:27000!important}#browser-download-panel a{max-width:100%;overflow-wrap:anywhere;font-size:13px}#browser-download-panel [data-download-files]{max-height:45vh;overflow:auto}
