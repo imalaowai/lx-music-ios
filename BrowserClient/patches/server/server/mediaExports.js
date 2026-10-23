@@ -36,7 +36,7 @@ async function options(song,owner,deps){
  const qualities=song.openlist?['original']:['flac24bit','flac','320k','128k'];const rows=await Promise.all(qualities.map(async quality=>{let response,preview;try{
  const result=await resolved(song,quality,owner,deps),signal=AbortSignal.timeout(8000);response=await transport.open(result.url,{category:'music',signal,headers:{Range:'bytes=0-4095','Accept-Encoding':'identity'}});
  if(![200,206].includes(response.statusCode))throw fail('音源暂不可用 ('+response.statusCode+')');preview=await inspect(response,result.url,result.quality || quality);const {stream,...info}=preview;
- return {quality,actualQuality:result.quality || quality,...info,available:true};}catch(error){return {quality,available:false,format:'暂不可用',error:error.message};}finally{preview?.stream.destroy();response?.destroy();}}));return {qualities:rows};
+ return {quality,actualQuality:result.quality || quality,...info,available:true};}catch(error){return {quality,available:false,format:'暂不可用'};}finally{preview?.stream.destroy();response?.destroy();}}));return {qualities:rows};
 }
 function parts(value){const requested=Array.isArray(value)?value:typeof value==='string'?value.split(','):Object.keys(value || {}).filter(k=>value[k]===true);const valid=[...new Set(requested.filter(p=>['song','lyrics','cover'].includes(p)))];if(!valid.length)throw fail('至少勾选一项下载内容');return valid;}
 async function collect(song,quality,requested,owner,deps,signal){

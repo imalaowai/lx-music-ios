@@ -14,7 +14,7 @@ trap 'rm -rf -- "$QIYE_WORK"' EXIT
 python3 - "$QIYE_ZIP" "$QIYE_WORK" <<'QIYE_PY'
 import hashlib,json,pathlib,stat,sys,zipfile
 archive=pathlib.Path(sys.argv[1]);dest=pathlib.Path(sys.argv[2]).resolve()
-if hashlib.sha256(archive.read_bytes()).hexdigest()!='73bf0bb8fbafead00cc3f83c88096154653cf85128f839988ecf5bd86af0d39d':
+if hashlib.sha256(archive.read_bytes()).hexdigest()!='784bc8ec15567667217e8817b50815045c30d90adcf2d8a61a05b7674b9d5583':
     raise SystemExit('ZIP 校验失败，请重新上传完整的配套 v2.9.3 升级包。')
 with zipfile.ZipFile(archive) as z:
     if z.testzip() is not None:raise SystemExit('ZIP 已损坏')

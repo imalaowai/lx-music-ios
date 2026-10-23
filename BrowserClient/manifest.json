@@ -4,7 +4,7 @@
   "files": {
     "README.md": "f0ba29b1ac986c21a8900b0e73c743754112d88a41f916c459b4ddd8b0212620",
     "share-player.html": "6a85e0b81e1869b440f1c00b644f876a2a2d7c7ba6dd32f0186cc8e920a688d4",
-    "QiyeMusic-Web-v2.9.3-upgrade.sh": "30cb5bc50a3924e5701a522a2cbdde9bd53f37dcf7d9ef2cc0e1b277f722f68c",
+    "QiyeMusic-Web-v2.9.3-upgrade.sh": "dd4a0a2460721c3a7b628ba5eb71b324764d5a3df2043e56cd1f40a88f1603f4",
     "share-player.js": "334da879d64cf83f8f341c321fd7581045b6f9fdb859439dba43514f7305f5af",
     "share-player.css": "1c9bd9f50dd2c84b0b1c20bca446c3c567f0ac4bd78b97efc1efbbc4a68d8a6f",
     "css/qiye.css": "2484b6c9d43d8274400cfd85c192189d15b425950f5320c915d207c349f83c85",
@@ -27,7 +27,7 @@
     "patches/scripts/verify-release.cjs": "5572bca592e20543bff821637391c2dbe77255cc03e532e36fb6bc11e10d45f8",
     "patches/scripts/sync-ipa-interface.py": "7a075b6fe3da9fadf6cff594a8b552c6c8836acfde12e05c59738c2fba0e4a43",
     "patches/server/server/libraryApi.js": "d0e0bee7a153ab64bf578a4d95d527642575f3b89142cafd4ca0910cdb2cca2f",
-    "patches/server/server/mediaExports.js": "4878262386ee01fb594699a6cc1ca4314d1506c9cb748a57eec8dc68bd7921f2",
+    "patches/server/server/mediaExports.js": "177c367236e09f32cfbe3644a5e2fb801e0df70ca4a94509dedc71cb39f12550",
     "patches/server/server/mediaTransport.js": "ef4cf0cd6642d418ebfcaf8a0acd0a009c40d8fe9079e0a5714a8fa0c1fc5b13",
     "patches/server/server/shareApi.js": "7276c53d43bf0641b123b5cf17d21127f8b26310dda674b620a41da23b61bf99"
   }
