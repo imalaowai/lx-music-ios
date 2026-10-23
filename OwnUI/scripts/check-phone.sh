@@ -36,6 +36,10 @@ fi
 if ! test -f "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json"; then
   xcrun simctl spawn "$DEVICE_ID" log show --last 2m --style compact --predicate 'process == "LXOwnHost"' > build/own-ui/own-phone-runtime.log || true
 fi
+if test -f "$CONTAINER_DIR/Documents/LX-Offline-Checkpoint.json"; then
+  cat "$CONTAINER_DIR/Documents/LX-Offline-Checkpoint.json"
+  cp "$CONTAINER_DIR/Documents/LX-Offline-Checkpoint.json" build/own-ui/offline-checkpoint.json
+fi
 cat "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json"
 cp "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json" build/own-ui/own-phone-ready.json
 cp "$CONTAINER_DIR/Documents/LX-Offline-Playback.json" build/own-ui/offline-playback.json

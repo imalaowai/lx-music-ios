@@ -72,6 +72,7 @@ jobs:
             build/own-ui/own-phone-launch.png
             build/own-ui/own-phone-ready.json
             build/own-ui/offline-playback.json
+            build/own-ui/offline-checkpoint.json
             build/own-ui/carplay-lifecycle.json
             build/own-ui/own-phone-handshake.json
             build/own-ui/own-phone-runtime.log
