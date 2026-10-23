@@ -34,12 +34,12 @@ async function read(response,{signal,progress=()=>{}}={}){
 function panel(){
  document.getElementById('browser-download-panel')?.remove();
  const overlay=document.createElement('div');overlay.id='browser-download-panel';overlay.className='download-options-overlay';
- overlay.innerHTML='<section class="download-options-card" role="dialog" aria-modal="true" aria-label="下载文件"><h2>下载文件</h2><p data-download-status role="status">正在连接音源…</p><progress max="100" value="0" style="width:100%"></progress><div data-download-files></div><div><button type="button" data-download-close>取消</button></div></section>';
+ overlay.innerHTML='<section class="download-options-card" role="dialog" aria-modal="true" aria-label="下载文件"><h2>下载文件</h2><p data-download-status role="status">正在连接音源…</p><progress max="100" value="0" class="browser-download-progress"></progress><div data-download-files></div><div><button type="button" data-download-close>取消</button></div></section>';
  document.body.append(overlay);return overlay;
 }
 function offer(blob,name,container){
  const row=document.createElement('div'),url=URL.createObjectURL(blob),link=document.createElement('a');
- row.style.cssText='display:flex;align-items:center;gap:12px;padding:12px 0;flex-wrap:wrap';
+ row.className='browser-download-file';
  link.href=url;link.download=safe(name);link.className='apple-primary';link.textContent='保存 '+safe(name);row.append(link);
  let file;try{file=new File([blob],safe(name),{type:blob.type});}catch{}
  if(file&&navigator.canShare?.({files:[file]})){

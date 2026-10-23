@@ -149,6 +149,8 @@ async function cancel(id){
 async function play(id){
  var scope=owner(),selected=await get(id,scope);
  if(!selected.audio)throw new Error('这条记录没有保存音频');
+ try{await window.BrowserDownloads.validate(selected.audio,selected.audioName || '音乐.mp3');}
+ catch(error){selected.status='error';selected.error='这首离线文件无效，请删除后重新下载：'+error.message;await put(selected);throw new Error(selected.error);}
  var rows=await storage('readonly',function(s){return s.getAll();});
  if(scope!==owner())throw new Error('账号已切换');
  var queue=rows.filter(function(r){return r.owner===scope && r.status==='finished' && r.audio;}).sort(function(a,b){return b.createdAt-a.createdAt;}).map(function(r){return publicRecord(r).song;});
@@ -161,6 +163,7 @@ function saveBlob(blob,name){
 }
 async function bundle(id,parts){
  var scope=owner(),r=await get(id,scope),files=[];parts=parts || ['song','lyrics','cover'];
+ if(parts.includes('song') && r.audio)await window.BrowserDownloads.validate(r.audio,r.audioName || '音乐.mp3');
  if(parts.includes('song') && r.audio)files.push({blob:r.audio,filename:r.audioName || safe(r.song.name+'.mp3')});
  if(parts.includes('lyrics') && r.lyrics)files.push({blob:new Blob([r.lyrics],{type:'text/plain;charset=utf-8'}),filename:safe(r.song.name+'.lrc')});
  if(parts.includes('cover') && r.cover)files.push({blob:r.cover,filename:r.coverName || safe(r.song.name+'.jpg')});

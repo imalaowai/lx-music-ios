@@ -18,11 +18,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: |
+      - name: Prepare packaged page and browser tools
+        run: |
           python3 OwnUI/scripts/prepare.py
           npm install --prefix /tmp/qiye-web-review playwright@1.62.1
-          /tmp/qiye-web-review/node_modules/.bin/playwright install --with-deps chromium webkit
-          LX_PLAYWRIGHT=/tmp/qiye-web-review/node_modules/playwright node BrowserClient/Tests/ui.cjs
+      - name: Install browser engines
+        run: /tmp/qiye-web-review/node_modules/.bin/playwright install --with-deps chromium webkit
+      - name: Exercise desktop, phone and public share downloads
+        timeout-minutes: 5
+        run: LX_PLAYWRIGHT=/tmp/qiye-web-review/node_modules/playwright node BrowserClient/Tests/ui.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

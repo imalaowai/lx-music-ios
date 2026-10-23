@@ -2,11 +2,13 @@
   "webVersion": "2.9.3",
   "date": "2026-10-23",
   "files": {
+    "README.md": "f0ba29b1ac986c21a8900b0e73c743754112d88a41f916c459b4ddd8b0212620",
     "share-player.html": "6a85e0b81e1869b440f1c00b644f876a2a2d7c7ba6dd32f0186cc8e920a688d4",
+    "QiyeMusic-Web-v2.9.3-upgrade.sh": "30cb5bc50a3924e5701a522a2cbdde9bd53f37dcf7d9ef2cc0e1b277f722f68c",
     "share-player.js": "334da879d64cf83f8f341c321fd7581045b6f9fdb859439dba43514f7305f5af",
-    "share-player.css": "4d2791260d3af1a0c3e6d13e77f8d084d22819f58e69bc48e1ca6fddf05a269e",
+    "share-player.css": "1c9bd9f50dd2c84b0b1c20bca446c3c567f0ac4bd78b97efc1efbbc4a68d8a6f",
     "css/qiye.css": "2484b6c9d43d8274400cfd85c192189d15b425950f5320c915d207c349f83c85",
-    "css/qiye_browser.css": "f0ec6bd5b03fcc6c422a89238e9bf6a4a16dc75ee04dddf3859f386d64182561",
+    "css/qiye_browser.css": "9590e8e6e46cd70734b71f239d6fd2561661526d38e5084bea9754bb8279fcbc",
     "js/device_library.js": "03ea9eeeb91d7ddca6459059830583d0392c17d830ac04e3c62b096f9d227df6",
     "js/download_options.js": "74503303d2524100e53475b03d25f08a1a22604f3c7777dcd3d332b154998152",
     "js/qiye_browser.js": "f5bef4cc649d5e500aa66ecf39f871b2d9d45c88564039e8081fa5870e07614c",
@@ -14,7 +16,19 @@
     "js/qiye_shell.js": "8889624ed3ddb0659acdfba53ee69134eda82c170c07860506defc0ebd872e43",
     "js/account-panel.js": "5d2fe26eab03ae28cf987b66478c5cd33fb46b37501b2398d0bac3de18676cf0",
     "js/qiye_header.js": "d1e1c587c46789777bc9ed10481281fe9576a70931707dc3a2b8ffe726b62546",
-    "js/browser_downloads.js": "1baf5b85831cfd93993710143decc9e644d67666c78f8546bb49f35218ae1108",
-    "js/qiye_offline.js": "b7dc75e139025417882263e589698815302a4850d64501bdb1cbd267eca70443"
+    "js/browser_downloads.js": "8d1a5dc11d4efc7a321fba5268088700840c533dfe5fdbe00000c9fe4854defa",
+    "js/qiye_offline.js": "6f1b5618aacbc3c4e7b2cd9eb1fea506f7e6ebeb7cb4175c5a662acb37996a08",
+    "Tests/ui.cjs": "56418ac64bb82dc4e4aa8c21a372e83145166f72b230d6b8bebda416d24691c1",
+    "patches/test/browser-downloads.test.cjs": "3f702fc0e482ed1ca0c12ac3c5a52a0294205e668c04df8f1a47b2d4a91bd537",
+    "patches/test/download-integrity.test.cjs": "29f40d32d277764125e70e4867bd6bd0a2c0c054afa6d42f22eae406df0e809f",
+    "patches/test/qiye-web.test.cjs": "4c9698c7395cb65b8272b1b2afb38dd27df386274387caafc19da427fd51242f",
+    "patches/test/library.test.cjs": "bf019685a6d3d9b64c6f623951ed089d064da96d7895cfe568fbaa5b1bdd9e72",
+    "patches/test/release-http.test.cjs": "30f9c8c39838f553b981aa01516d8986806acaff9fc1e161c0bef231b9800bfb",
+    "patches/scripts/verify-release.cjs": "5572bca592e20543bff821637391c2dbe77255cc03e532e36fb6bc11e10d45f8",
+    "patches/scripts/sync-ipa-interface.py": "7a075b6fe3da9fadf6cff594a8b552c6c8836acfde12e05c59738c2fba0e4a43",
+    "patches/server/server/libraryApi.js": "d0e0bee7a153ab64bf578a4d95d527642575f3b89142cafd4ca0910cdb2cca2f",
+    "patches/server/server/mediaExports.js": "4878262386ee01fb594699a6cc1ca4314d1506c9cb748a57eec8dc68bd7921f2",
+    "patches/server/server/mediaTransport.js": "ef4cf0cd6642d418ebfcaf8a0acd0a009c40d8fe9079e0a5714a8fa0c1fc5b13",
+    "patches/server/server/shareApi.js": "7276c53d43bf0641b123b5cf17d21127f8b26310dda674b620a41da23b61bf99"
   }
 }

@@ -11,9 +11,14 @@ html=html.replace('</head>','<link rel="stylesheet" href="/css/qiye.css"><link r
 html=html.replace('</body>',['browser_downloads','qiye_offline','qiye_browser','qiye_shell','qiye_header'].map(n=>'<script src="/js/'+n+'.js"></script>').join('')+'</body>');
 const audio=Buffer.concat([Buffer.from('ID3'),Buffer.alloc(2048,17)]),song={id:'wy_fixture',songmid:'fixture',source:'wy',name:'下载测试',singer:'栖页'};
 let exportRequests=[];
+const watchdog=setTimeout(()=>{console.error('Browser review exceeded 3 minutes');process.exit(1);},180000);watchdog.unref();
 const server=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://localhost');
  if(url.pathname==='/'){res.setHeader('Content-Type','text/html');res.end(html);return;}
+ if(/^\/share\/music\/[a-f0-9]{48}\/$/.test(url.pathname)){res.setHeader('Content-Type','text/html');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'");res.end(fs.readFileSync(root+'/share-player.html'));return;}
+ const aliases={'/share/assets/browser-downloads.js':'js/browser_downloads.js','/share/assets/download-options.js':'js/download_options.js','/share/assets/player.js':'share-player.js','/share/assets/player.css':'share-player.css'};
+ if(aliases[url.pathname]){const name=aliases[url.pathname];res.setHeader('Content-Type',name.endsWith('.css')?'text/css':'application/javascript');res.end(fs.readFileSync(root+'/'+name));return;}
+ if(['/share/assets/pwa.js','/share/assets/queue-audio.js'].includes(url.pathname)){res.setHeader('Content-Type','application/javascript');res.end('');return;}
  const local=path.resolve(root,'.'+url.pathname);
  if(local.startsWith(root+'/') && fs.existsSync(local) && fs.statSync(local).isFile()){
   res.setHeader('Content-Type',local.endsWith('.js')?'application/javascript':local.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(local));return;
@@ -43,7 +48,7 @@ const server=http.createServer(async(req,res)=>{
  const page=await context.newPage(),errors=[];page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));await page.route('https://**/*',r=>r.abort());
  try{
  await page.goto(base,{waitUntil:'load'});await page.waitForFunction(()=>window.NativeShell && document.getElementById('qiye-page-header'));
- await page.waitForTimeout(200);
+ await page.waitForTimeout(200);console.log(name,width,'page ready');
  const geometry=await page.evaluate(()=>{
   const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,height:r.height};};
   return {header:box('qiye-page-header'),account:box('qiye-account'),home:box('view-native-home'),position:getComputedStyle(document.getElementById('qiye-account')).position,accountParent:document.getElementById('qiye-account').parentElement.id};
@@ -52,22 +57,26 @@ const server=http.createServer(async(req,res)=>{
  await page.evaluate(()=>{const detail={binding:{roomId:'123456'},connected:true,participantId:'me',state:{controllerId:'me'},participants:[{id:'me',name:'我',avatar:{type:'emoji',value:'🎧'}},{id:'friend',name:'朋友',avatar:{type:'emoji',value:'🌻'}},{id:'third',name:'小林'},{id:'fourth',name:'小夏'}]};window.NativeShell.state.room=detail;window.dispatchEvent(new CustomEvent('lx-native-room',{detail}));window.dispatchEvent(new CustomEvent('lx-room-unread',{detail:{count:3}}));});
  assert.equal(await page.locator('#qiye-header-unread').textContent(),'3');assert.equal(await page.locator('#qiye-header-members .qiye-room-avatar').count(),4);assert.ok(await page.locator('#qiye-header-members').isVisible());
  await page.screenshot({path:out+'/'+name+'-'+width+'-home.png'});
- await page.locator('#qiye-header-room').click();assert.ok(await page.locator('#view-native-room').isVisible());const roomTop=await page.locator('#view-native-room').boundingBox(),head=await page.locator('#qiye-page-header').boundingBox();assert.ok(roomTop.y>=head.y+head.height-1);
+ console.log(name,width,'header checked');await page.locator('#qiye-header-room').click();assert.ok(await page.locator('#view-native-room').isVisible());const roomTop=await page.locator('#view-native-room').boundingBox(),head=await page.locator('#qiye-page-header').boundingBox();assert.ok(roomTop.y>=head.y+head.height-1);
  await page.locator('#qiye-header-members').click();await page.getByRole('button',{name:'关闭',exact:true}).last().click();
  await page.evaluate(()=>window.NativeShell.go('home'));
+ console.log(name,width,'room checked');
  // The real public download entry must reach the quality selector and fetch.
  await page.evaluate(song=>{window.DeviceLibrary.downloadBatch([song]).catch(e=>window.__downloadError=e.message);},song);
  await page.getByRole('button',{name:'下载到手机 / 电脑',exact:true}).click();await page.waitForSelector('.download-options-overlay select');
  await page.locator('.download-options-overlay select').selectOption('128k');
- await page.locator('input[name=lyrics]').uncheck();await page.locator('input[name=cover]').uncheck();
+ await page.locator('.download-options-overlay input[name=lyrics]').uncheck();await page.locator('.download-options-overlay input[name=cover]').uncheck();
  await page.getByRole('button',{name:'开始下载',exact:true}).click();
- const save=page.locator('#browser-download-panel a[download]');await save.waitFor();assert.equal(await save.getAttribute('download'),'栖页 - 下载测试.mp3');assert.deepEqual(exportRequests.at(-1).parts,['song']);assert.equal(exportRequests.at(-1).quality,'128k');
+ console.log(name,width,'submitted download');const save=page.locator('#browser-download-panel a[download]');await save.waitFor();assert.equal(await save.getAttribute('download'),'栖页 - 下载测试.mp3');assert.deepEqual(exportRequests.at(-1).parts,['song']);assert.equal(exportRequests.at(-1).quality,'128k');
  const downloadEvent=page.waitForEvent('download');await save.click();const download=await downloadEvent;const downloaded=await download.path();assert.deepEqual(fs.readFileSync(downloaded),audio);
  await page.screenshot({path:out+'/'+name+'-'+width+'-download.png'});await page.locator('[data-download-close]').click();
  await page.evaluate(song=>{window.BrowserDownloads.songs([{...song,id:'bad'}],{quality:'128k',parts:['song']});},song);await page.locator('[data-download-status]').filter({hasText:'不是音频'}).waitFor();assert.equal(await page.locator('#browser-download-panel a[download]').count(),0);await page.locator('[data-download-close]').click();
  // A slow probe cannot lock out manual quality selection or lyrics-only saves.
  await page.evaluate(()=>{window.DownloadOptions.choose({probe:()=>new Promise(()=>{})}).then(value=>window.__slowChoice=value);});
- assert.equal(await page.locator('.download-options-overlay select').isEnabled(),true);await page.locator('.download-options-overlay select').selectOption('320k');await page.locator('input[name=song]').uncheck();await page.locator('input[name=cover]').uncheck();await page.getByRole('button',{name:'开始下载',exact:true}).click();assert.deepEqual(await page.evaluate(()=>window.__slowChoice),{quality:'320k',parts:['lyrics']});
+ assert.equal(await page.locator('.download-options-overlay select').isEnabled(),true);await page.locator('.download-options-overlay select').selectOption('320k');await page.locator('.download-options-overlay input[name=song]').uncheck();await page.locator('.download-options-overlay input[name=cover]').uncheck();await page.getByRole('button',{name:'开始下载',exact:true}).click();assert.deepEqual(await page.evaluate(()=>window.__slowChoice),{quality:'320k',parts:['lyrics']});
+ if(width===375){
+  await page.goto(base+'/share/music/'+'a'.repeat(48)+'/',{waitUntil:'load'});await page.locator('.share-track-download').waitFor();await page.locator('.share-track-download').click();await page.locator('.download-options-overlay select').selectOption('128k');await page.locator('.download-options-overlay input[name=lyrics]').uncheck();await page.locator('.download-options-overlay input[name=cover]').uncheck();await page.getByRole('button',{name:'开始下载',exact:true}).click();const shareSave=page.locator('#browser-download-panel a[download]');await shareSave.waitFor();const event=page.waitForEvent('download');await shareSave.click();const file=await event;assert.deepEqual(fs.readFileSync(await file.path()),audio);assert.equal(await shareSave.getAttribute('download'),'分享歌曲.mp3');await page.screenshot({path:out+'/'+name+'-'+width+'-share-download.png'});
+ }
  report.push({engine:name,width,headerInFlow:true,memberAvatars:true,unreadBadge:true,downloadExactBytes:true,badFileRejected:true,manualQuality:true,errors});assert.deepEqual(errors,[]);
  }catch(error){await page.screenshot({path:out+'/'+name+'-'+width+'-failure.png'});fs.writeFileSync(out+'/failure.json',JSON.stringify({error:error.stack,errors},null,2));throw error;}finally{await context.close();}
  }}finally{await browser.close();}
