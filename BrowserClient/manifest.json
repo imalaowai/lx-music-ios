@@ -18,7 +18,7 @@
     "js/qiye_header.js": "d1e1c587c46789777bc9ed10481281fe9576a70931707dc3a2b8ffe726b62546",
     "js/browser_downloads.js": "8d1a5dc11d4efc7a321fba5268088700840c533dfe5fdbe00000c9fe4854defa",
     "js/qiye_offline.js": "6f1b5618aacbc3c4e7b2cd9eb1fea506f7e6ebeb7cb4175c5a662acb37996a08",
-    "Tests/ui.cjs": "56418ac64bb82dc4e4aa8c21a372e83145166f72b230d6b8bebda416d24691c1",
+    "Tests/ui.cjs": "59e30ddcb6492116481ea0e082dbe340ede91277974665c7dc8caf7813c8fe68",
     "patches/test/browser-downloads.test.cjs": "3f702fc0e482ed1ca0c12ac3c5a52a0294205e668c04df8f1a47b2d4a91bd537",
     "patches/test/download-integrity.test.cjs": "29f40d32d277764125e70e4867bd6bd0a2c0c054afa6d42f22eae406df0e809f",
     "patches/test/qiye-web.test.cjs": "4c9698c7395cb65b8272b1b2afb38dd27df386274387caafc19da427fd51242f",

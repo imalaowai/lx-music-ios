@@ -63,7 +63,7 @@ const server=http.createServer(async(req,res)=>{
  console.log(name,width,'room checked');
  // The real public download entry must reach the quality selector and fetch.
  await page.evaluate(song=>{window.DeviceLibrary.downloadBatch([song]).catch(e=>window.__downloadError=e.message);},song);
- await page.getByRole('button',{name:'下载到手机 / 电脑',exact:true}).click();await page.waitForSelector('.download-options-overlay select');
+ await page.locator('.lx-prompt-modal button[data-value="下载到手机 / 电脑"]').click();await page.waitForSelector('.download-options-overlay select');
  await page.locator('.download-options-overlay select').selectOption('128k');
  await page.locator('.download-options-overlay input[name=lyrics]').uncheck();await page.locator('.download-options-overlay input[name=cover]').uncheck();
  await page.getByRole('button',{name:'开始下载',exact:true}).click();
@@ -78,7 +78,7 @@ const server=http.createServer(async(req,res)=>{
   await page.goto(base+'/share/music/'+'a'.repeat(48)+'/',{waitUntil:'load'});await page.locator('.share-track-download').waitFor();await page.locator('.share-track-download').click();await page.locator('.download-options-overlay select').selectOption('128k');await page.locator('.download-options-overlay input[name=lyrics]').uncheck();await page.locator('.download-options-overlay input[name=cover]').uncheck();await page.getByRole('button',{name:'开始下载',exact:true}).click();const shareSave=page.locator('#browser-download-panel a[download]');await shareSave.waitFor();const event=page.waitForEvent('download');await shareSave.click();const file=await event;assert.deepEqual(fs.readFileSync(await file.path()),audio);assert.equal(await shareSave.getAttribute('download'),'分享歌曲.mp3');await page.screenshot({path:out+'/'+name+'-'+width+'-share-download.png'});
  }
  report.push({engine:name,width,headerInFlow:true,memberAvatars:true,unreadBadge:true,downloadExactBytes:true,badFileRejected:true,manualQuality:true,errors});assert.deepEqual(errors,[]);
- }catch(error){await page.screenshot({path:out+'/'+name+'-'+width+'-failure.png'});fs.writeFileSync(out+'/failure.json',JSON.stringify({error:error.stack,errors},null,2));throw error;}finally{await context.close();}
+ }catch(error){await page.screenshot({path:out+'/'+name+'-'+width+'-failure.png'});fs.writeFileSync(out+'/failure.json',JSON.stringify({error:error.stack,errors,diagnostic:await page.evaluate(()=>({downloadError:window.__downloadError,runtime:window.LXNative?.runtime,options:[...document.querySelectorAll('.lx-prompt-modal button')].map(n=>({text:n.textContent,value:n.dataset.value}))}))},null,2));throw error;}finally{await context.close();}
  }}finally{await browser.close();}
  }}finally{fs.writeFileSync(out+'/report.json',JSON.stringify(report,null,2));await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});
