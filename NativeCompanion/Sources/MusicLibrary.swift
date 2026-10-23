@@ -22,12 +22,12 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
     }
     func directory() throws -> URL {
         let root = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("Music", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); return root
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); try DownloadedAudioFile.allowBackgroundAccess(root); return root
     }
     func folder(_ id: String) throws -> URL {
         guard UUID(uuidString: id) != nil else { throw ClientError("音乐记录无效") }
         let root = try directory().appendingPathComponent(id, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); return root
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); try DownloadedAudioFile.allowBackgroundAccess(root); return root
     }
     func persist() {
         guard let root = try? directory(), let data = try? JSONSerialization.data(withJSONObject: records) else { return }
@@ -77,7 +77,7 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         return [:]
     }
     func download(_ song: Song, quality: String, api: API, parts: [String] = ["song", "lyrics", "cover"], completion: @escaping (Result<Object, Error>) -> Void) {
-        if let existing = records.first(where: { row in guard let raw = row["song"] as? Object else { return false }; return Song(raw: raw).key == song.key && text(raw["source"]) == text(song.raw["source"]) && ["finished", "resolving", "downloading"].contains(text(row["status"])) }) { completion(.success(existing)); return }
+        if let existing = records.first(where: { row in guard let raw = row["song"] as? Object else { return false }; return Song(raw: raw).key == song.key && text(raw["source"]) == text(song.raw["source"]) && text(row["quality"]) == quality && Set(row["parts"] as? [String] ?? ["song", "lyrics", "cover"]) == Set(parts) && ["finished", "resolving", "downloading"].contains(text(row["status"])) }) { completion(.success(existing)); return }
         let id = UUID().uuidString
         records.insert(["id": id, "song": song.raw, "status": "resolving", "quality": quality, "progress": 0, "parts": parts, "createdAt": Date().timeIntervalSince1970 * 1000], at: 0); persist(); changed(id)
         if !parts.contains("song") {
@@ -193,26 +193,18 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         patch(id, ["status": "downloading", "bytes": totalBytesWritten, "progress": totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100 : 0], save: false)
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let id = downloadTask.taskDescription, let row = records.first(where: {text($0["id"]) == id}) else { return }
+        guard let id = downloadTask.taskDescription, let row = records.first(where: {text($0["id"]) == id}), text(row["status"]) == "downloading" else { return }
         do {
             guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else { throw ClientError("下载失败，请重新解析音源") }
-            let handle = try FileHandle(forReadingFrom: location), head = try handle.read(upToCount: 24) ?? Data(); try? handle.close()
-            let bytes = Array(head), ext: String
-            if head.starts(with: Data("fLaC".utf8)) { ext = "flac" }
-            else if head.starts(with: Data("ID3".utf8)) || bytes.count > 1 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0 { ext = "mp3" }
-            else if head.count > 8 && head.subdata(in: 4..<8) == Data("ftyp".utf8) { ext = "m4a" }
-            else if head.starts(with: Data("RIFF".utf8)) { ext = "wav" }
-            else if head.starts(with: Data("OggS".utf8)) { ext = "ogg" }
-            else { throw ClientError("音源返回的内容不是可识别的音频文件") }
-            let raw = row["song"] as? Object ?? [:], proposed = text(raw["name"]).replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
-            let filename = String((proposed.isEmpty ? "音乐" : proposed).prefix(90)) + "." + ext, target = try folder(id).appendingPathComponent(filename)
-            try? FileManager.default.removeItem(at: target); try FileManager.default.moveItem(at: location, to: target)
+            let raw = row["song"] as? Object ?? [:]
+            let target = try DownloadedAudioFile.persist(source: location, directory: folder(id), name: text(raw["name"]))
+            let filename = target.lastPathComponent
             let size = (try FileManager.default.attributesOfItem(atPath: target.path)[.size]) ?? 0
             patch(id, ["filename": filename, "status": "finished", "progress": 100, "bytes": size, "error": ""])
         } catch { patch(id, ["status": "error", "error": error.localizedDescription]) }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let id = task.taskDescription, let error = error else { return }; patch(id, ["status": "error", "error": error.localizedDescription])
+        guard let id = task.taskDescription, let error = error, records.contains(where: {text($0["id"]) == id && text($0["status"]) == "downloading"}) else { return }; patch(id, ["status": "error", "error": error.localizedDescription])
     }
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) { DispatchQueue.main.async { self.backgroundCompletion?(); self.backgroundCompletion = nil } }
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {

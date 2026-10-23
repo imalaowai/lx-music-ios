@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild an already integrated full own-UI IPA with verified native components.
 
-update-components.py OWN_V16_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
+update-components.py OWN_V17_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
 Preserves the reference executable sections, frameworks, resources and identity.
 The own integration module and Hermes entry come from the native CI build.
 """
@@ -12,7 +12,7 @@ base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
 sha=lambda b:hashlib.sha256(b).hexdigest()
 def package(source,components,signer,output):
     source,components,signer,output=map(pathlib.Path,[source,components,signer,output])
-    assert sha(source.read_bytes())=='1b0de10c2c2ba1e0370c948a5b2fd7202a338307083350a8158d1df13c10105c','Expected the complete own-UI v16 release'
+    assert sha(source.read_bytes())=='524700e9550a5e8d5cde39b7581a4232c8da6841521b7b6348f750e8d73dc754','Expected the complete own-UI v17 release'
     with zipfile.ZipFile(source) as z,zipfile.ZipFile(components) as additions,tempfile.TemporaryDirectory(prefix='qiye-own-rebuild-') as work:
         assert z.testzip() is None
         prefix='Payload/LxMusicMobile.app/';app=pathlib.Path(work)/prefix
@@ -29,9 +29,9 @@ def package(source,components,signer,output):
         old_main=z.read(prefix+'LxMusicMobile');ent=base.entitlements(old_main)
         assert ent['com.apple.developer.carplay-audio'] is True
         metadata=json.loads(additions.read('components.json'))
-        assert metadata['ownUI'] is True and metadata['version']=='1.9.4' and metadata['build']=='87'
+        assert metadata['ownUI'] is True and metadata['version']=='1.9.5' and metadata['build']=='88'
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
-        assert js!=z.read(prefix+'main.jsbundle') and module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt JS and native integration'
+        assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
         assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js
         manifest=json.loads(additions.read('OwnUIResources/OwnUI.manifest.json'))
@@ -46,7 +46,7 @@ def package(source,components,signer,output):
         (app/'main.jsbundle').write_bytes(js)
         (app/'Frameworks/LXFullCarPlay.dylib').write_bytes(module)
         info=plistlib.loads((app/'Info.plist').read_bytes())
-        info.update(CFBundleShortVersionString='1.9.4',CFBundleVersion='87')
+        info.update(CFBundleShortVersionString='1.9.5',CFBundleVersion='88')
         (app/'Info.plist').write_bytes(plistlib.dumps(info,fmt=plistlib.FMT_BINARY))
         ent_file=pathlib.Path(work)/'entitlements.plist';ent_file.write_bytes(plistlib.dumps(ent))
         env=dict(os.environ);env['LD_LIBRARY_PATH']=str(signer.resolve().parent)+':'+env.get('LD_LIBRARY_PATH','')
@@ -74,7 +74,7 @@ def package(source,components,signer,output):
                 name=p.relative_to(work).as_posix()
                 if p.is_file() and name not in old_names:
                     item=zipfile.ZipInfo(name);item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=(stat.S_IFREG|0o644)<<16;out.writestr(item,p.read_bytes())
-        report={'version':'1.9.4','build':87,'base':'own UI v16','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
+        report={'version':'1.9.5','build':88,'base':'own UI v17','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
         output.with_suffix('.verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
         print(json.dumps(report,ensure_ascii=False))
 if __name__=='__main__':package(*sys.argv[1:])

@@ -50,3 +50,23 @@ RuntimeTrace.record("test.redaction",["error":"failed https://private.invalid/au
 let trace=RuntimeTrace.snapshot()
 check(!String(describing:trace).contains("token=secret"),"runtime trace never records media credentials")
 print("Room heartbeat recovery and runtime redaction passed.")
+
+// A download must preserve the system-owned source and reject error documents.
+do {
+    let manager = FileManager.default, root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? manager.removeItem(at: root) }
+    try manager.createDirectory(at: root, withIntermediateDirectories: true)
+    let source = root.appendingPathComponent("CFNetworkDownload.tmp"), directory = root.appendingPathComponent("Music")
+    let audio = Data("fLaC".utf8) + Data(repeating: 0, count: 128)
+    try audio.write(to: source)
+    let saved = try DownloadedAudioFile.persist(source: source, directory: directory, name: "离线/歌曲")
+    check(manager.fileExists(atPath: source.path), "never unlink the CFNetwork temporary source")
+    let savedBytes = try Data(contentsOf: saved)
+    check(savedBytes == audio, "copy the complete audio bytes into app-owned storage")
+    check(saved.lastPathComponent == "离线_歌曲.flac", "filename cannot escape the song directory")
+    try Data("{\"error\":\"expired source\"}".utf8).write(to: source)
+    do { _ = try DownloadedAudioFile.persist(source: source, directory: directory, name: "invalid"); fatalError("saved a JSON error as audio") } catch {}
+    let files = try manager.contentsOfDirectory(atPath: directory.path)
+    check(files == [saved.lastPathComponent], "failed downloads leave no staging file")
+    print("Download source ownership, file signatures and staging cleanup passed.")
+} catch { fatalError("Download persistence regression: \(error)") }

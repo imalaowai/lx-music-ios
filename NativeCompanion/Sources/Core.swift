@@ -110,3 +110,40 @@ enum MediaAddress {
         return url
     }
 }
+
+// CFNetwork owns the download temporary directory. Copy its file while the
+// delegate callback is active; never rename/unlink a daemon-owned source file.
+enum DownloadedAudioFile {
+    static func allowBackgroundAccess(_ url: URL) throws {
+        #if os(iOS)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: url.path)
+        #endif
+    }
+    static func persist(source: URL, directory: URL, name: String) throws -> URL {
+        let manager = FileManager.default
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try allowBackgroundAccess(directory)
+        let staging = directory.appendingPathComponent("." + UUID().uuidString + ".download")
+        defer { try? manager.removeItem(at: staging) }
+        try manager.copyItem(at: source, to: staging)
+        try allowBackgroundAccess(staging)
+        let handle = try FileHandle(forReadingFrom: staging)
+        defer { try? handle.close() }
+        let head = try handle.read(upToCount: 256) ?? Data(), bytes = Array(head)
+        let ext: String
+        if head.starts(with: Data("fLaC".utf8)) { ext = "flac" }
+        else if head.starts(with: Data("ID3".utf8)) { ext = "mp3" }
+        else if bytes.count > 1 && bytes[0] == 0xff && bytes[1] & 0xf6 == 0xf0 { ext = "aac" }
+        else if bytes.count > 1 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0 { ext = "mp3" }
+        else if head.count >= 12 && head.subdata(in: 4..<8) == Data("ftyp".utf8) { ext = "m4a" }
+        else if head.count >= 12 && head.starts(with: Data("RIFF".utf8)) && head.subdata(in: 8..<12) == Data("WAVE".utf8) { ext = "wav" }
+        else if head.starts(with: Data("OggS".utf8)) { ext = "ogg" }
+        else { throw ClientError("音源返回的不是音频文件，请更换音质或音源后重试") }
+        let cleaned = name.components(separatedBy: CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "/\\:"))).joined(separator: "_").trimmingCharacters(in: .whitespacesAndNewlines)
+        let stem = cleaned.isEmpty || cleaned == "." || cleaned == ".." ? "音乐" : String(cleaned.prefix(90))
+        let target = directory.appendingPathComponent(stem + "." + ext)
+        if manager.fileExists(atPath: target.path) { _ = try manager.replaceItemAt(target, withItemAt: staging) }
+        else { try manager.moveItem(at: staging, to: target) }
+        return target
+    }
+}

@@ -10,7 +10,11 @@ enum OfflinePlayback {
         do {
             let id = "B86B78E5-25E2-4986-A387-0FD79074211F", library = MusicLibrary.shared
             let file = try library.folder(id).appendingPathComponent("离线 歌曲.flac")
-            try Data(contentsOf: Bundle.main.url(forResource: "local-audio", withExtension: "flac")!).write(to: file)
+            let source = Bundle.main.url(forResource: "local-audio", withExtension: "flac")!
+            let saved = try DownloadedAudioFile.persist(source: source, directory: library.folder(id), name: "离线 歌曲")
+            precondition(saved == file && FileManager.default.fileExists(atPath: source.path))
+            let attributes = try FileManager.default.attributesOfItem(atPath: saved.path)
+            precondition(attributes[.protectionKey] as? FileProtectionType == .completeUntilFirstUserAuthentication)
             library.records = [["id":id,"status":"finished","filename":file.lastPathComponent,"quality":"flac","song":["id":"offline-test","name":"离线歌曲","source":"wy","deviceKey":"old-web-file","url":"file:///old-sandbox/missing.flac"]]]
             // A stale duplicate must never win over the explicitly selected download ID.
             var stale = library.records[0];stale["id"] = "2F7FEAC9-C61A-4C47-8D3A-501D8DE22B06";stale["filename"] = "missing.flac"
@@ -23,7 +27,7 @@ enum OfflinePlayback {
             let player = ReferenceAudio();audio = player
             player.didEnd = {
                 precondition(began && player.durationForTest > 1)
-                let report: Object = ["flacDecoded":true,"clockAdvanced":began,"seekAndPause":true,"naturalEnd":true,"stableFileLookup":true,"shareableAudio":true]
+                let report: Object = ["flacDecoded":true,"clockAdvanced":began,"seekAndPause":true,"naturalEnd":true,"stableFileLookup":true,"shareableAudio":true,"downloadCopiedFromReadOnlySource":true,"backgroundFileProtection":true]
                 let root = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
                 try! JSONSerialization.data(withJSONObject:report).write(to:root.appendingPathComponent("LX-Offline-Playback.json"))
                 audio = nil
