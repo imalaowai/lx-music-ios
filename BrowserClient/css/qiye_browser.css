@@ -114,3 +114,8 @@ body.native-shell #download-drawer{z-index:18000!important;background:var(--bg-p
 body.native-shell #browser-download-panel{z-index:27000!important}#browser-download-panel a{max-width:100%;overflow-wrap:anywhere;font-size:13px}#browser-download-panel [data-download-files]{max-height:45vh;overflow:auto}
 
 .browser-download-progress{width:100%}.browser-download-file{display:flex;align-items:center;gap:12px;padding:12px 0;flex-wrap:wrap}.browser-download-file a{display:inline-block;max-width:100%;overflow-wrap:anywhere;font-size:13px;padding:10px 14px;border-radius:10px;background:var(--accent,var(--native-accent,#32756e));color:#fff}.browser-download-file button{font-size:13px}#browser-download-panel [data-download-files]{max-height:45vh;overflow:auto}
+/* Reserve a real header/content column independently of desktop theme grids. */
+html[data-qiye-web] body.native-shell #desktop-layout-root{display:flex!important;grid-template:none!important;width:100%!important;height:100%!important;min-height:0!important;padding:0!important}
+html[data-qiye-web] body.native-shell #desktop-layout-main{display:flex!important;flex-direction:column!important;position:relative!important;min-height:0!important;min-width:0!important;height:100%!important;padding:0!important}
+html[data-qiye-web] body.native-shell #desktop-content{position:relative!important;flex:1 1 0%!important;min-height:0!important;min-width:0!important;width:100%!important;height:auto!important;grid-area:auto!important;overflow:hidden!important;padding-top:0!important}
+html[data-qiye-web] body.native-shell #kugou-discover{display:none!important}
