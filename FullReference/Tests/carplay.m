@@ -9,6 +9,7 @@
 @property(nonatomic) NSUInteger sets;
 @property(nonatomic) NSUInteger rejects;
 @property(nonatomic) BOOL delay;
+@property(nonatomic) BOOL blockRoots;
 @property(nonatomic, strong) NSMutableArray *completions;
 - (CPTemplate *)topTemplate;
 - (void)setRootTemplate:(CPTemplate *)root animated:(BOOL)animated completion:(void (^)(BOOL, NSError *))completion;
@@ -20,7 +21,7 @@
 - (void)setRootTemplate:(CPTemplate *)root animated:(BOOL)animated completion:(void (^)(BOOL, NSError *))completion {
     self.sets++;
     if (self.delay) { [self.completions addObject:[completion copy]]; return; }
-    if (self.rejects) { self.rejects--; completion(NO, [NSError errorWithDomain:@"Fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Fixture rejection"}]); return; }
+    if (self.blockRoots || self.rejects) { if(self.rejects)self.rejects--; completion(NO, [NSError errorWithDomain:@"Fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Fixture rejection"}]); return; }
     self.rootTemplate=root; self.top=nil; completion(YES,nil);
 }
 - (void)pushTemplate:(CPTemplate *)page animated:(BOOL)animated completion:(void (^)(BOOL, NSError *))completion { self.top=page; completion(YES,nil); }
@@ -239,6 +240,19 @@ static void RunTests(void) {
     [a templateApplicationScene:routeScene didDisconnectInterfaceController:routeRecovered];LXConnectedScenesForTesting=[NSSet set];
     LXReconcileLiveScenes();Check(LXCurrent==nil,@"audioRecoveryDoesNotCreateAnAbsentCarScene");
     LXConnectedScenesForTesting=nil;
+    // IPC may temporarily reject new menus while retaining a non-nil old root.
+    // A stale root is not evidence that the new connection is usable.
+    LXFixtureController *warming=[LXFixtureController new];warming.blockRoots=YES;
+    CPTemplate *staleRoot=[[CPListTemplate alloc] initWithTitle:@"旧连接菜单" sections:@[]];warming.rootTemplate=staleRoot;
+    LXFixtureScene *warmingScene=Scene(a,warming);[a templateApplicationScene:warmingScene didConnectInterfaceController:warming];
+    warming.blockRoots=NO;[a sceneDidBecomeActive:warmingScene];
+    Check(warming.rootTemplate!=staleRoot && warming.rootTemplate==LXCurrent.root,@"foregroundRetriesRejectedRootEvenWhenOldRootStillExists");
+    LXFixtureController *silent=[LXFixtureController new];silent.delay=YES;silent.rootTemplate=staleRoot;
+    LXFixtureScene *silentScene=Scene(b,silent);[b templateApplicationScene:silentScene didConnectInterfaceController:silent];
+    LXCarConnection *silentConnection=LXCurrent;NSUInteger silentAttempt=silentConnection.attempt;silent.delay=NO;LXRootTimeout(silentConnection,silentAttempt);
+    Check(silent.rootTemplate!=staleRoot && silent.rootTemplate==LXCurrent.root && silent.sets==2,@"timeoutCannotMistakePreviousConnectionRootForCurrentRoot");
+    [b templateApplicationScene:silentScene didDisconnectInterfaceController:silent];
+
     LXOwnInstallAudioSafety();
     RNTrackPlayer *track=[RNTrackPlayer new];StreamingFlacPlayerModule *flac=[StreamingFlacPlayerModule new];NowPlayingModule *metadata=[NowPlayingModule new];
     [track sendEventWithName:@"remote-play" body:@{@"position":@17}];

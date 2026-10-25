@@ -174,7 +174,7 @@ static void LXInstallRoot(LXCarConnection *c);
 static void LXRootTimeout(LXCarConnection *c, NSUInteger attempt) {
     if (!LXIsCurrent(c) || c.attempt != attempt || !c.installing) return;
     c.installing = NO;
-    if (c.controller.rootTemplate) { LXRecord(@"车机已有菜单，系统未回传完成通知", nil); return; }
+    if (c.controller.rootTemplate == c.root) { LXRecord(@"车机已有当前菜单，系统未回传完成通知", nil); return; }
     LXError = @"系统未完成菜单建立";
     LXRecord(@"车机菜单建立超时", nil);
     if (!c.simple) { c.simple = YES; LXInstallRoot(c); }
@@ -220,7 +220,7 @@ static void LXInstallRoot(LXCarConnection *c) {
 static void LXEnsureRoot(LXCarConnection *c) {
     if (!LXIsCurrent(c)) return;
     // A nonempty stack may be showing Now Playing or a nested playlist. Keep it.
-    if ((!c.root || !c.controller.rootTemplate) && !c.installing) LXInstallRoot(c);
+    if ((!c.root || c.controller.rootTemplate != c.root) && !c.installing) LXInstallRoot(c);
 }
 static void LXBuildRoot(id owner, SEL selector) {
     LXMain(^{ LXCarConnection *c = objc_getAssociatedObject(owner, &LXConnectionKey); LXEnsureRoot(c); });
