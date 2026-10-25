@@ -42,7 +42,7 @@ enum CarScene {
         value["phoneUI"]="own-local-ui"; value["audioCore"]="reference-track-player-and-flac"
         let player=Player.shared
         value["runtime"]=["room":player.room.diagnostic(),"wanted":player.wanted,"loading":player.loading,
-            "audioFailed":player.audio.hasFailed,"generation":player.generation,"position":player.position,
+            "audioFailed":player.audio.hasFailed,"generation":player.generation,"position":player.position,"routeHold":player.routeGate.held,
             "events":RuntimeTrace.snapshot()] as Object
         return value
     }

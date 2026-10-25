@@ -52,6 +52,7 @@ final class Player {
 
     var remoteAt = 0.0
     var remoteKey = ""
+    var lastOutputLossAt = 0.0
     private init() {
         restoreQueue()
         if UserDefaults.standard.bool(forKey:"lx.routeHold") {
@@ -85,6 +86,7 @@ final class Player {
     }
     func suspendForOutputLoss() {
         guard !routeGate.held else { return }
+        lastOutputLossAt=ProcessInfo.processInfo.systemUptime
         routeGate.suspend(); UserDefaults.standard.set(true,forKey:"lx.routeHold"); generation += 1
         endGuard.reset(generation, now:ProcessInfo.processInfo.systemUptime)
         resolution?.cancel(); prefetchTask?.cancel(); finishTransition(); loading = false
@@ -100,6 +102,10 @@ final class Player {
     }
     func remote(_ value:Object) {
         let command=text(value["command"]), now=ProcessInfo.processInfo.systemUptime
+        let eventAt=number(value["eventAt"])
+        if eventAt>0 && eventAt<lastOutputLossAt {
+            RuntimeTrace.record("audio.stale-remote-ignored",["command":command]);return
+        }
         guard command != remoteKey || now-remoteAt>0.2 else { return }
         remoteKey=command;remoteAt=now
         switch command { case "play":play();case "pause", "stop":pause();case "toggle":wanted ? pause() : play();case "next":move();case "previous":move(previous:true);case "seek":seek(number(value["position"]));default:break }

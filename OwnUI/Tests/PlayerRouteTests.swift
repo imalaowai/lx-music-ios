@@ -25,6 +25,8 @@ enum PlayerRouteTests {
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
                 NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
                 try record(player.routeGate.held && !player.wanted && player.audio.localAudio?.isPlaying == false,"outputLossPausesActualAudioAndHoldsPlayback")
+                player.remote(["command":"play","eventAt":player.lastOutputLossAt-0.01])
+                try record(player.routeGate.held && !player.wanted,"preDisconnectRemoteCommandCannotReleasePauseHold")
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:AVAudioSession.InterruptionOptions.shouldResume.rawValue])
                 player.play(user:false)
                 NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
@@ -33,6 +35,9 @@ enum PlayerRouteTests {
                 let next:Object=["id":"B","name":"房间新歌曲","source":"wy"]
                 player.room.apply(["revision":2,"playbackRevision":2,"reason":"track","song":next,"paused":false])
                 try record(player.current?.key=="B" && !player.wanted && !player.loading && player.audio.currentItem==nil,"roomTracksFollowSilentlyWithoutResolvingOrPlaying")
+                let quietGeneration=player.generation
+                player.room.apply(["revision":2,"playbackRevision":2,"reason":"track","song":next,"paused":false])
+                try record(player.generation==quietGeneration,"duplicateHeldRoomSnapshotsDoNotRebuildOrResolveAudio")
                 player.room.apply(["revision":1,"reason":"track","song":raw,"paused":false])
                 player.room.apply(["revision":2,"reason":"track","song":["id":"C","source":"wy"],"paused":false])
                 try record(player.current?.key=="B","staleAndConflictingSameRevisionCannotRewindTrack")

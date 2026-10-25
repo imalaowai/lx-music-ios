@@ -195,7 +195,7 @@ final class RoomClient {
         state = incoming
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
-        if song.key != oldKey || player.audio.currentItem == nil || restarted {
+        if song.key != oldKey || (player.audio.currentItem == nil && !localRouteHeld) || restarted {
             RuntimeTrace.record("room.track",["revision":number(incoming["revision"]),"paused":shouldPause,"reason":reason])
             player.select(listToUse, index: selected, paused: shouldPause, user: false, time: target(incoming))
         } else {

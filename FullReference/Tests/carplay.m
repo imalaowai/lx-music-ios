@@ -75,11 +75,14 @@ typedef void (^LXTestResolve)(id);
 typedef void (^LXTestReject)(NSString *,NSString *,NSError *);
 @interface RNTrackPlayer:NSObject
 @property(nonatomic) NSUInteger plays;
+@property(nonatomic,strong) NSDictionary *lastEvent;
+- (void)sendEventWithName:(NSString *)name body:(id)body;
 @property(nonatomic) NSUInteger pauses;
 - (void)play:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
 - (void)pause:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
 @end
 @implementation RNTrackPlayer
+- (void)sendEventWithName:(NSString *)name body:(id)body {self.lastEvent=body;}
 - (void)play:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.plays++;if(resolve)resolve(nil);}
 - (void)pause:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.pauses++;if(resolve)resolve(nil);}
 @end
@@ -238,6 +241,8 @@ static void RunTests(void) {
     LXConnectedScenesForTesting=nil;
     LXOwnInstallAudioSafety();
     RNTrackPlayer *track=[RNTrackPlayer new];StreamingFlacPlayerModule *flac=[StreamingFlacPlayerModule new];NowPlayingModule *metadata=[NowPlayingModule new];
+    [track sendEventWithName:@"remote-play" body:@{@"position":@17}];
+    Check([track.lastEvent[@"nativeEventAt"] doubleValue]>0 && [track.lastEvent[@"position"] intValue]==17,@"remoteCommandsAreTimestampedBeforeJavaScriptQueuesThem");
     [track play:nil rejecter:nil];[flac resumeStreamWithResolver:nil rejecter:nil];
     [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioRouteHold" object:nil userInfo:@{@"held":@YES}];
     Check(track.pauses>0 && flac.pauses>0,@"outputLossPausesBothNativeDecodersWithoutJavaScript");

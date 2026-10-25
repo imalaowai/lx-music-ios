@@ -11,6 +11,16 @@ typedef void (^LXAudioReject)(NSString *, NSString *, NSError *);
 static atomic_bool LXOutputHeld = false;
 static __weak id LXTrackInstance, LXFlacInstance;
 static IMP LXTrackPlay, LXTrackPause, LXFlacResume, LXFlacPause, LXMetadataPlay;
+static IMP LXTrackEmit;
+static void LXTrackEmitted(id self,SEL selector,NSString *name,id body) {
+    if([name hasPrefix:@"remote-"]) {
+        NSMutableDictionary *event=[body isKindOfClass:NSDictionary.class]?[body mutableCopy]:[NSMutableDictionary dictionary];
+        // Stamp at the native event source. Stamping after JS wakes would turn
+        // a pre-disconnect queued remote command into a seemingly new action.
+        event[@"nativeEventAt"]=@(NSProcessInfo.processInfo.systemUptime);body=event;
+    }
+    ((void (*)(id,SEL,id,id))LXTrackEmit)(self,selector,name,body);
+}
 static void LXPauseDecoder(id target, IMP method, SEL selector) {
     if (!target || !method) return;
     @try { ((void (*)(id, SEL, id, id))method)(target, selector, ^(id value){}, ^(NSString *code, NSString *message, NSError *error){}); }
@@ -59,6 +69,7 @@ static void LXOwnInstallAudioSafety(void) {
     LXFlacPause=LXAudioHook(@"StreamingFlacPlayerModule",@"pauseStreamWithResolver:rejecter:",(IMP)LXFlacPaused);
     if(LXFlacPause)LXFlacResume=LXAudioHook(@"StreamingFlacPlayerModule",@"resumeStreamWithResolver:rejecter:",(IMP)LXFlacResumed);
     LXMetadataPlay=LXAudioHook(@"NowPlayingModule",@"playNowPlaying:resolver:rejecter:",(IMP)LXMetadataPlayed);
+    LXTrackEmit=LXAudioHook(@"RNTrackPlayer",@"sendEventWithName:body:",(IMP)LXTrackEmitted);
     [NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnAudioRouteHold" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){
         BOOL held=[note.userInfo[@"held"] boolValue];BOOL previous=atomic_exchange(&LXOutputHeld,held);
         if(!held || previous)return;

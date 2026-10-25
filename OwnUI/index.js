@@ -15,7 +15,7 @@ TrackPlayer.addEventListener(Event.PlaybackState, value=>driver.nativeEvent('tra
 TrackPlayer.addEventListener(Event.PlaybackError, value=>driver.nativeEvent('track-player',{...value,type:'error'}))
 TrackPlayer.addEventListener(Event.PlaybackQueueEnded, value=>driver.nativeEvent('track-player',{...value,type:'ended'}))
 for (const [event,command] of [[Event.RemotePlay,'play'],[Event.RemotePause,'pause'],[Event.RemoteStop,'pause'],[Event.RemoteNext,'next'],[Event.RemotePrevious,'previous'],[Event.RemoteSeek,'seek']]) {
-  TrackPlayer.addEventListener(event, value=>bridge.remote({command,position:value?.position||0}))
+  TrackPlayer.addEventListener(event, value=>bridge.remote({command,position:value?.position||0,eventAt:value?.nativeEventAt||0}))
 }
 if (NativeModules.StreamingFlacPlayerModule) new NativeEventEmitter(NativeModules.StreamingFlacPlayerModule).addListener('streaming-flac-event',event=>driver.nativeEvent('flac',event))
 
