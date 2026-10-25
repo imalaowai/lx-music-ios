@@ -45,6 +45,7 @@ final class Player {
     var library: [Object] = []
     var lastWebQueueSignature = ""
     var interruptionWanted = false
+    var routeGate = PlaybackRouteGate()
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
     var position: Double { let n = audio.currentTime().seconds; return n.isFinite ? max(0, n) : 0 }
     var duration: Double { let n = audio.currentItem?.duration.seconds ?? 0; return n.isFinite ? max(0, n) : 0 }
@@ -53,6 +54,10 @@ final class Player {
     var remoteKey = ""
     private init() {
         restoreQueue()
+        if UserDefaults.standard.bool(forKey:"lx.routeHold") {
+            routeGate.suspend()
+            NotificationCenter.default.post(name:Notification.Name("LXOwnAudioRouteHold"),object:nil,userInfo:["held":true])
+        }
         audio.didChange = { [weak self] in self?.tick() }
         audio.didEnd = { [weak self] in self?.finishNaturally() }
         audio.didFail = { [weak self] error in self?.fail(error) }
@@ -67,12 +72,31 @@ final class Player {
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
             guard let self=self else { return }
             if number(note.userInfo?[AVAudioSessionInterruptionTypeKey]) == Double(AVAudioSession.InterruptionType.began.rawValue) { self.interruptionWanted=self.wanted; self.audio.pause(); self.publish() }
-            else if self.interruptionWanted, (UInt(number(note.userInfo?[AVAudioSessionInterruptionOptionKey])) & AVAudioSession.InterruptionOptions.shouldResume.rawValue) != 0 { self.interruptionWanted=false; self.play(user:false) }
+            else if self.interruptionWanted, !self.routeGate.held, (UInt(number(note.userInfo?[AVAudioSessionInterruptionOptionKey])) & AVAudioSession.InterruptionOptions.shouldResume.rawValue) != 0 { self.interruptionWanted=false; self.play(user:false) }
         })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification,object:nil,queue:.main) { [weak self] note in
-            if UInt(number(note.userInfo?[AVAudioSessionRouteChangeReasonKey])) == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.pause(user:false) }
+            let reason=UInt(number(note.userInfo?[AVAudioSessionRouteChangeReasonKey]))
+            if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.suspendForOutputLoss() }
             self?.room.recoverConnection("audio-route")
+            if reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue {
+                NotificationCenter.default.post(name:Notification.Name("LXOwnCarPlayReconcile"),object:nil)
+            }
         })
+    }
+    func suspendForOutputLoss() {
+        guard !routeGate.held else { return }
+        routeGate.suspend(); UserDefaults.standard.set(true,forKey:"lx.routeHold"); generation += 1
+        endGuard.reset(generation, now:ProcessInfo.processInfo.systemUptime)
+        resolution?.cancel(); prefetchTask?.cancel(); finishTransition(); loading = false
+        // The native decoder guard receives this synchronously, independently
+        // of the RN JavaScript queue, which may be asleep in the background.
+        NotificationCenter.default.post(name: Notification.Name("LXOwnAudioRouteHold"), object: nil, userInfo: ["held":true])
+        RuntimeTrace.record("audio.output-lost",["generation":generation,"routeHold":true])
+        pause(user:false)
+    }
+    func resumeAfterUserAction() {
+        routeGate.resumeByUser(); UserDefaults.standard.set(false,forKey:"lx.routeHold")
+        NotificationCenter.default.post(name: Notification.Name("LXOwnAudioRouteHold"), object: nil, userInfo: ["held":false])
     }
     func remote(_ value:Object) {
         let command=text(value["command"]), now=ProcessInfo.processInfo.systemUptime
@@ -100,10 +124,16 @@ final class Player {
         if room.active, text(songs[target].raw["source"]) == "local" || songs[target].raw["deviceKey"] != nil || text(songs[target].raw["url"]).hasPrefix("file:") {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
-        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
+        if user && !paused { resumeAfterUserAction() }
+        queue = songs; queueRevision += 1; index = target; wanted = !paused && !routeGate.held; resumeTime = max(0, time); loading = !routeGate.held; failure = ""; generation += 1
         timelineRevision += 1; seeking = false
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()
+        if routeGate.held {
+            resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel()
+            audio.pause(); audio.replaceCurrentItem(with:nil); currentURL = nil
+            persistQueue(); publish(); return
+        }
         transitionTask = UIApplication.shared.beginBackgroundTask(withName: "LX Track Transition") { [weak self] in
             guard let self = self else { return }; self.generation += 1; self.resolution?.cancel(); self.fail(ClientError("后台播放链接请求超时，请恢复网络后播放"))
         }
@@ -142,6 +172,19 @@ final class Player {
     }
     func play(user: Bool = true) {
         guard current != nil else { return }
+        guard routeGate.permitsPlayback(user:user) else { return }
+        let wasHeld = routeGate.held
+        if user { resumeAfterUserAction() }
+        if user && wasHeld && room.active {
+            let position = room.target(room.state), hostPaused = bool(room.state["paused"],true)
+            if audio.currentItem == nil || audio.hasFailed { select(queue,index:index,user:false,time:position) }
+            else {
+                wanted=true
+                do { try activate();seek(position,user:false);audio.play();publish() } catch { fail(error) }
+            }
+            if hostPaused && wanted { room.sendState(reason:"play",position:position) }
+            return
+        }
         if endGuard.handled, !room.active { select(queue, index: index, user: user); return }
         wanted = true; failure = ""
         if audio.currentItem == nil || audio.hasFailed { select(queue, index: index, user: user, time: resumeTime); return }
@@ -194,7 +237,7 @@ final class Player {
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
     func snapshot(includeQueue: Bool = true) -> Object {
-        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": wanted && audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": wanted ? audio.rate : 0, "routeHold":routeGate.held, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {
@@ -216,7 +259,7 @@ final class Player {
         }
         // One native metadata owner: its cache, artwork loader and remote handlers
         // remain authoritative. Do not overwrite them with a second InfoCenter.
-        audio.metadata(["title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":duration,"elapsedTime":position,"playbackRate":audio.rate])
+        audio.metadata(["title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":duration,"elapsedTime":position,"playbackRate":wanted ? audio.rate : 0])
     }
     func persistQueue() {
         let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]

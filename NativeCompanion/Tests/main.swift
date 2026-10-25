@@ -70,3 +70,17 @@ do {
     check(files == [saved.lastPathComponent], "failed downloads leave no staging file")
     print("Download source ownership, file signatures and staging cleanup passed.")
 } catch { fatalError("Download persistence regression: \(error)") }
+
+var outputGate = PlaybackRouteGate()
+check(outputGate.permitsPlayback(user:false), "ordinary room playback is permitted before output loss")
+outputGate.suspend()
+check(!outputGate.permitsPlayback(user:false), "room sync and interruption recovery cannot release an output-loss hold")
+check(outputGate.permitsPlayback(user:true), "an explicit play can authorize phone output")
+let heldEpoch=outputGate.epoch
+outputGate.resumeByUser()
+check(!outputGate.held && outputGate.epoch>heldEpoch, "only explicit user playback clears the route hold")
+var roomTie=RoomOrder()
+check(roomTie.accept(["revision":12,"songKey":"A"],participant:"me"), "room initial track accepted")
+check(!roomTie.accept(["revision":12,"songKey":"B"],participant:"me"), "equal-revision snapshots cannot switch to another song")
+check(roomTie.accept(["revision":13,"songKey":"B"],participant:"me"), "a newer room track is still accepted")
+print("Local output-loss gate and room revision ties passed.")

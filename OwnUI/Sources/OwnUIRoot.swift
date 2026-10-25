@@ -79,6 +79,11 @@ enum CarScene {
             let songs=(list?["list"] as? [Object] ?? []).map { Song(raw:$0) }
             if let index=songs.firstIndex(where:{$0.key==text(action["musicId"])}) { player.select(songs,index:index) }
         })
+        tokens.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnCarPlayConnected"),object:nil,queue:.main) { _ in
+            player.room.recoverConnection("carplay-connected")
+            NotificationCenter.default.post(name:Notification.Name("LXOwnDrainCarPlay"),object:nil)
+            publish()
+        })
         NotificationCenter.default.post(name:Notification.Name("LXOwnDrainCarPlay"),object:nil)
         // CarPlay may launch while the phone WebKit view is suspended. Account
         // restoration and room networking must start without a web auth message.

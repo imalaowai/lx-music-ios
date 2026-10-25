@@ -69,6 +69,41 @@
 #define LX_CARPLAY_TESTING 1
 #import "../Sources/LXFullCarPlay.m"
 
+// Standalone decoder modules expose the same selectors as the preserved IPA.
+// Exercise the real native guard with no RN/JavaScript event loop present.
+typedef void (^LXTestResolve)(id);
+typedef void (^LXTestReject)(NSString *,NSString *,NSError *);
+@interface RNTrackPlayer:NSObject
+@property(nonatomic) NSUInteger plays;
+@property(nonatomic) NSUInteger pauses;
+- (void)play:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
+- (void)pause:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
+@end
+@implementation RNTrackPlayer
+- (void)play:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.plays++;if(resolve)resolve(nil);}
+- (void)pause:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.pauses++;if(resolve)resolve(nil);}
+@end
+@interface StreamingFlacPlayerModule:NSObject
+@property(nonatomic) NSUInteger resumes;
+@property(nonatomic) NSUInteger pauses;
+- (void)resumeStreamWithResolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
+- (void)pauseStreamWithResolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
+@end
+@implementation StreamingFlacPlayerModule
+- (void)resumeStreamWithResolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.resumes++;if(resolve)resolve(nil);}
+- (void)pauseStreamWithResolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.pauses++;if(resolve)resolve(nil);}
+@end
+@interface NowPlayingModule:NSObject
+@property(nonatomic) double rate;
+- (void)playNowPlaying:(NSDictionary *)value resolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
+- (void)pauseNowPlaying:(NSDictionary *)value resolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject;
+@end
+@implementation NowPlayingModule
+- (void)playNowPlaying:(NSDictionary *)value resolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.rate=1;if(resolve)resolve(nil);}
+- (void)pauseNowPlaying:(NSDictionary *)value resolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.rate=0;if(resolve)resolve(nil);}
+@end
+#import "../../OwnUI/Sources/LXAudioRouteSafety.m"
+
 static NSMutableDictionary *LXResults;
 static void Check(BOOL pass, NSString *name) {
     LXResults[name]=@(pass);
@@ -173,6 +208,46 @@ static void RunTests(void) {
         [a templateApplicationScene:heldScene didDisconnectInterfaceController:held];
     }
     Check(releasedConnection==nil && held.completions.count==1, @"unansweredSystemCompletionCannotRetainDisconnectedSession");
+    // Reopen after backgrounding without a new process. UIKit's current scene
+    // inventory is authoritative; stale detached callbacks remain rejected.
+    LXFixtureController *reuse=[LXFixtureController new]; LXFixtureScene *reuseScene=Scene(a,reuse);
+    [a templateApplicationScene:reuseScene didConnectInterfaceController:reuse];
+    [a templateApplicationScene:reuseScene didDisconnectInterfaceController:reuse];
+    LXConnectedScenesForTesting=[NSSet setWithObject:reuseScene];
+    [a sceneWillEnterForeground:reuseScene];
+    Check(LXCurrent.controller==(id)reuse && reuse.sets==2, @"retiredLiveSceneReopensWithoutKillingPhoneApp");
+    LXFixtureController *replacement=[LXFixtureController new];reuseScene.interfaceController=replacement;
+    [a sceneDidBecomeActive:reuseScene];
+    Check(LXCurrent.controller==(id)replacement && replacement.sets==1, @"currentSceneControllerReplacementIsRecovered");
+    LXFixtureController *newCar=[LXFixtureController new];LXFixtureScene *newScene=Scene(b,newCar);
+    LXConnectedScenesForTesting=[NSSet setWithObject:newScene];
+    LXHandleSceneEvent([NSNotification notificationWithName:UISceneDidActivateNotification object:newScene]);
+    Check(LXCurrent.controller==(id)newCar && newCar.rootTemplate!=nil, @"orphanedOldConnectionCannotBlockLiveCarScene");
+    LXHandleSceneEvent([NSNotification notificationWithName:UISceneDidDisconnectNotification object:reuseScene]);
+    Check(LXCurrent.controller==(id)newCar,@"staleDisconnectNotificationCannotReleaseReconnectedCar");
+    LXHandleSceneEvent([NSNotification notificationWithName:UISceneDidDisconnectNotification object:newScene]);
+    Check(LXCurrent==nil,@"systemDisconnectNotificationReleasesCurrentController");
+    LXConnectedScenesForTesting=[NSSet set];
+    [b sceneDidBecomeActive:newScene];Check(LXCurrent==nil,@"disconnectedSceneStillCannotRecoverFromLateDelegateCallback");
+    LXFixtureController *routeRecovered=[LXFixtureController new];LXFixtureScene *routeScene=Scene(a,routeRecovered);
+    LXConnectedScenesForTesting=[NSSet setWithObject:routeScene];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnCarPlayReconcile" object:nil];
+    Check(LXCurrent.controller==(id)routeRecovered && routeRecovered.rootTemplate!=nil,@"newAudioRouteReconcilesAnAlreadyForegroundCarScene");
+    [a templateApplicationScene:routeScene didDisconnectInterfaceController:routeRecovered];LXConnectedScenesForTesting=[NSSet set];
+    LXReconcileLiveScenes();Check(LXCurrent==nil,@"audioRecoveryDoesNotCreateAnAbsentCarScene");
+    LXConnectedScenesForTesting=nil;
+    LXOwnInstallAudioSafety();
+    RNTrackPlayer *track=[RNTrackPlayer new];StreamingFlacPlayerModule *flac=[StreamingFlacPlayerModule new];NowPlayingModule *metadata=[NowPlayingModule new];
+    [track play:nil rejecter:nil];[flac resumeStreamWithResolver:nil rejecter:nil];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioRouteHold" object:nil userInfo:@{@"held":@YES}];
+    Check(track.pauses>0 && flac.pauses>0,@"outputLossPausesBothNativeDecodersWithoutJavaScript");
+    [track play:nil rejecter:nil];[flac resumeStreamWithResolver:nil rejecter:nil];
+    Check(track.plays==1 && flac.resumes==1,@"lateNativePlayCannotBypassOutputLossHold");
+    [metadata playNowPlaying:@{@"playbackRate":@1} resolver:nil rejecter:nil];Check(metadata.rate==0,@"lateMetadataCannotRestorePlayingDuringOutputHold");
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioRouteHold" object:nil userInfo:@{@"held":@NO}];
+    Check(track.plays==1 && flac.resumes==1,@"releasingHoldDoesNotAutoplayEitherDecoder");
+    [track play:nil rejecter:nil];[flac resumeStreamWithResolver:nil rejecter:nil];
+    Check(track.plays==2 && flac.resumes==2,@"explicitPlaybackCanResumePreservedNativeDecoders");
     // More than 120 events must not erase process/connection metadata or grow unbounded.
     for (NSUInteger i=0;i<130;i++) LXRecord(@"回归记录", @"test");
     NSDictionary *saved=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:LXDiagnosticURL()] options:0 error:nil];

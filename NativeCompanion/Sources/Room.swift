@@ -31,6 +31,13 @@ final class RoomClient {
     var active: Bool { !roomID.isEmpty && enabled && syncTracks }
     var controller: Bool { !participantID.isEmpty && text(state["controllerId"]) == participantID }
     var api: API { player.api }
+    var localRouteHeld: Bool {
+        #if LX_OWN_UI
+        return player.routeGate.held
+        #else
+        return false
+        #endif
+    }
     init(player: Player) { self.player = player }
     func diagnostic()->Object {
         ["active":active,"connected":connected,"receivedFrames":receivedFrames,
@@ -158,7 +165,7 @@ final class RoomClient {
             participantID = text((value["participant"] as? Object)?["id"]); owner = text(value["owner"]); participants = value["participants"] as? [Object] ?? []
             if let config = value["config"] as? Object { enabled = config["syncEnabled"] == nil || bool(config["syncEnabled"]); syncTracks = config["syncOnTrack"] == nil || bool(config["syncOnTrack"]) }
             if let initial = value["state"] as? Object, initial["song"] is Object { apply(initial) }
-            else if player.current != nil { sendState(reason: "join-current") }
+            else if player.current != nil && !localRouteHeld { sendState(reason: "join-current") }
         case "room:participants": participants = payload as? [Object] ?? []
         case "room:state", "room:snapshot": apply(value["state"] as? Object ?? value)
         case "room:chat-update", "room:chat-history": player.onChat?(type, value)
@@ -177,14 +184,14 @@ final class RoomClient {
     }
     func apply(_ incoming: Object) {
         let wasPending = !order.pendingID.isEmpty
-        guard active, order.accept(incoming, participant: participantID), let raw = incoming["song"] as? Object else { return }
+        guard active, let raw = incoming["song"] as? Object, order.accept(incoming, participant: participantID) else { return }
         let oldPlaybackRevision = number(state["playbackRevision"], -1)
         let oldKey = player.current?.key ?? "", song = Song(raw: raw), reason = text(incoming["reason"])
         let list = (incoming["playlist"] as? [Object] ?? []).map { Song(raw: $0) }
         let listToUse = list.isEmpty ? [song] : list
         let proposed = Int(number(incoming["index"], -1)), found = listToUse.firstIndex(where: {$0.key == song.key}) ?? 0
         let selected = listToUse.indices.contains(proposed) && listToUse[proposed].key == song.key ? proposed : found
-        let shouldPause = bool(incoming["paused"], true), wantedBefore = player.wanted
+        let shouldPause = bool(incoming["paused"], true) || localRouteHeld, wantedBefore = player.wanted
         state = incoming
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)

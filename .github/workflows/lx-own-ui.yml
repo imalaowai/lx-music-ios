@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   interface:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
           python3 OwnUI/scripts/prepare.py
           node --test OwnUI/Tests/audio-driver.test.cjs NativeCompanion/Tests/bridge.test.cjs NativeCompanion/Tests/lyrics.test.cjs NativeCompanion/Tests/engine.test.cjs
           npm install --prefix /tmp/lx-ui-review playwright@1.62.1
-          /tmp/lx-ui-review/node_modules/.bin/playwright install --with-deps chromium webkit
+          /tmp/lx-ui-review/node_modules/.bin/playwright install chromium webkit
           LX_PLAYWRIGHT=/tmp/lx-ui-review/node_modules/playwright node NativeCompanion/Tests/ui.cjs
       - uses: actions/upload-artifact@v4
         if: always()
@@ -72,6 +72,7 @@ jobs:
             build/own-ui/own-phone-launch.png
             build/own-ui/own-phone-ready.json
             build/own-ui/offline-playback.json
+            build/own-ui/player-route-checks.json
             build/own-ui/offline-checkpoint.json
             build/own-ui/carplay-lifecycle.json
             build/own-ui/own-phone-handshake.json

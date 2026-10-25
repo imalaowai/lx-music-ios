@@ -4,6 +4,7 @@
 // native FLAC decoder are the only audio outputs. No HTML/second AVPlayer runs.
 module.exports = function createDriver({player, stream, nowPlaying, State, Capability, RepeatMode, report}) {
   let setup, chain = Promise.resolve(), latest = 0, active = null, switching = false, probing = false;
+  let latestWanted = false;
   const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
   const current = item => active === item && item.generation === latest;
   function failOnce(item,error) {
@@ -61,13 +62,15 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
           await stream.openStream(args.url,{'User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 Mobile'},volume,1,false);
           if (!current(item)) {await stream.reset();return {superseded:true};}
           if (num(args.position)>0) await stream.seekTo(num(args.position));
-          if (!args.paused) await stream.resume();
+          if (!args.paused && latestWanted && current(item)) await stream.resume();
+          if (!latestWanted && current(item)) await stream.pause();
         } else {
           await player.add({id:'own-ui-'+generation,url:args.url,title:args.title||'未知歌曲',artist:args.artist||'',album:args.album||'',artwork:args.artwork||undefined});
           if (!current(item)) return {superseded:true};
           await player.setVolume(volume);
           if (num(args.position)>0) await player.seekTo(num(args.position));
-          if (!args.paused) await player.play();
+          if (!args.paused && latestWanted && current(item)) await player.play();
+          if (!latestWanted && current(item)) await player.pause();
         }
         return {engine:item.engine};
       } finally {switching = false; void sample();}
@@ -75,7 +78,8 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
     const item = active;
     if (!item || !current(item)) return {};
     const target = item.engine === 'flac' ? stream : player;
-    if (operation === 'play') {item.ended=false;await (item.engine==='flac'?target.resume():target.play());}
+    if (operation === 'play' && latestWanted) {item.ended=false;await (item.engine==='flac'?target.resume():target.play());if(!latestWanted)await target.pause();}
+    else if (operation === 'play') return {superseded:true};
     else if (operation === 'pause') await target.pause();
     else if (operation === 'seek') {item.ended=false;await target.seekTo(Math.max(0,num(args.position)));}
     else if (operation === 'volume') await target.setVolume(Math.max(0,Math.min(1,num(args.volume))));
@@ -90,6 +94,17 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
       return Promise.resolve(nowPlaying?.updateNowPlayingInfo?.(info)).then(()=>info.playbackRate>0?nowPlaying?.playNowPlaying?.({elapsedTime:info.elapsedTime,playbackRate:info.playbackRate}):nowPlaying?.pauseNowPlaying?.({elapsedTime:info.elapsedTime,playbackRate:0})).then(()=>({}));
     }
     if (['load','clear'].includes(request.operation)) latest=Math.max(latest,num(request.generation));
+    // Record intent at receipt, before an asynchronous load/seek can block the
+    // serialized decoder queue. An older captured load must not autoplay later.
+    if (request.generation===latest) {
+      if (request.operation==='load') latestWanted=!request.args?.paused;
+      else if (request.operation==='play') latestWanted=true;
+      else if (['pause','clear'].includes(request.operation)) latestWanted=false;
+    }
+    if (request.operation==='pause' && request.generation===latest && active && current(active)) {
+      const target=active.engine==='flac'?stream:player;
+      Promise.resolve().then(()=>target.pause()).catch(()=>{});
+    }
     const task=chain.then(()=>execute(request));chain=task.catch(()=>{});return task;
   }
   function nativeEvent(engine,event={}) {

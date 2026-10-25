@@ -39,6 +39,7 @@ enum OfflinePlayback {
                 let root = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
                 try! JSONSerialization.data(withJSONObject:report).write(to:root.appendingPathComponent("LX-Offline-Playback.json"))
                 audio = nil
+                DispatchQueue.main.async { PlayerRouteTests.start() }
             }
             player.load(url,song:song,quality:"flac",position:0,paused:true) { result in
                 guard case .success = result else { fatalError("Native offline FLAC did not load: \(result)") }

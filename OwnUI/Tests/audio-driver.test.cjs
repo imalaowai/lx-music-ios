@@ -50,3 +50,20 @@ test('repeated decoder errors stop at one report and a fresh track recovers',asy
  await f.load(2);await settle();
  assert.equal(f.reports.at(-1).generation,2);assert.equal(f.reports.at(-1).playing,true);
 });
+
+test('a pause received while TrackPlayer.add is pending prevents late autoplay',async()=>{
+ const f=fixture();let release;const add=f.player.add;f.player.add=async track=>{await add(track);await new Promise(r=>release=r);};
+ const loading=f.load(1);await settle();assert.equal(typeof release,'function');
+ const paused=f.driver.run({operation:'pause',generation:1});release();await Promise.all([loading,paused]);
+ assert.equal(f.calls.filter(c=>c[0]==='play').length,0,'captured unpaused load must respect the newer pause');
+});
+test('a pause received while FLAC opens prevents a delayed resume',async()=>{
+ const f=fixture();let release;const open=f.stream.openStream;f.stream.openStream=async(...args)=>{await open(...args);await new Promise(r=>release=r);};
+ const loading=f.load(1,{quality:'flac'});await settle();const paused=f.driver.run({operation:'pause',generation:1});release();await Promise.all([loading,paused]);
+ assert.equal(f.calls.filter(c=>c[0]==='flac.resume').length,0);
+});
+test('a queued play superseded by a newer pause cannot transiently restart sound',async()=>{
+ const f=fixture();await f.load(1,{paused:true});let release;const seek=f.player.seekTo;f.player.seekTo=async p=>{await seek(p);await new Promise(r=>release=r);};
+ const seeking=f.driver.run({operation:'seek',generation:1,args:{position:20}});await settle();
+ const play=f.driver.run({operation:'play',generation:1}),pause=f.driver.run({operation:'pause',generation:1});release();await Promise.all([seeking,play,pause]);assert.equal(f.calls.filter(c=>c[0]==='play').length,0);
+});

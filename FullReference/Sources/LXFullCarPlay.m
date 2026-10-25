@@ -39,6 +39,15 @@ static NSString *LXPhase = @"未连接", *LXError = @"", *LXCallback = @"";
 static NSString *LXProcessID;
 static NSMutableArray *LXHistory;
 static NSDictionary *LXHooks;
+#ifdef LX_CARPLAY_TESTING
+static NSSet *LXConnectedScenesForTesting;
+#endif
+static NSSet *LXConnectedScenesSnapshot(void) {
+#ifdef LX_CARPLAY_TESTING
+    if (LXConnectedScenesForTesting) return LXConnectedScenesForTesting;
+#endif
+    return UIApplication.sharedApplication.connectedScenes;
+}
 
 static NSURL *LXDiagnosticURL(void) {
     NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
@@ -246,12 +255,16 @@ static void LXConnect(id owner, id scene, CPInterfaceController *controller, CPW
     LXCurrent = c; LXError = @"";
     if (scene) objc_setAssociatedObject(scene, &LXRetiredSceneKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(owner, &LXConnectionKey, c, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // CarPlay can wake an existing process without waking the phone's RN view.
+    Class integration=NSClassFromString(@"LXOwnIntegration");
+    if ([integration respondsToSelector:NSSelectorFromString(@"activate")]) [integration performSelector:NSSelectorFromString(@"activate")];
     LXRecord(@"车机连接回调已触发", callback);
     @try {
         if (audio && LXReferenceAudioConnect) ((void (*)(id, SEL, id, id))LXReferenceAudioConnect)(owner, NSSelectorFromString(@"templateApplicationScene:didConnectInterfaceController:"), scene, controller);
         else if (LXReferenceConnect) ((void (*)(id, SEL, id, id, id))LXReferenceConnect)(owner, NSSelectorFromString(@"templateApplicationScene:didConnectInterfaceController:toWindow:"), scene, controller, window);
     } @catch (NSException *error) { LXError = error.reason ?: @"参考连接异常"; LXRecord(@"参考连接出现异常，直接恢复菜单", nil); }
     LXEnsureRoot(c); // Root is submitted synchronously before didConnect returns.
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnCarPlayConnected" object:scene];
 }
 static void LXConnected(id owner, SEL selector, id scene, id controller, id window) {
     LXMain(^{ LXConnect(owner, scene, controller, window, NO, @"window"); });
@@ -274,11 +287,21 @@ static void LXAudioDisconnected(id owner, SEL selector, id scene, id controller)
 }
 static void LXRecoverScene(id owner, CPTemplateApplicationScene *scene, NSString *event) {
     if (![scene isKindOfClass:CPTemplateApplicationScene.class]) return;
-    if ([objc_getAssociatedObject(scene, &LXRetiredSceneKey) boolValue]) { LXRecord(@"忽略已断开场景的恢复事件", event); return; }
+    BOOL live=[LXConnectedScenesSnapshot() containsObject:scene] && scene.activationState!=UISceneActivationStateUnattached;
+    if ([objc_getAssociatedObject(scene, &LXRetiredSceneKey) boolValue]) {
+        if (!live) { LXRecord(@"忽略已断开场景的恢复事件", event); return; }
+        // A retirement is not a permanent blacklist: iOS can reuse the same
+        // scene/controller when reopening an app that stayed in the background.
+        objc_setAssociatedObject(scene,&LXRetiredSceneKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        LXRecord(@"恢复系统当前已连接的车机场景",event);
+    }
     CPInterfaceController *controller = scene.interfaceController;
     if (!controller) { LXRecord(@"车机场景尚无控制器", event); return; }
     if (LXIsCurrent(LXCurrent) && (LXCurrent.owner != owner || LXCurrent.scene != scene || LXCurrent.controller != controller)) {
-        LXRecord(@"忽略其他连接的恢复事件", event); return;
+        BOOL controllerChanged=LXCurrent.owner==owner && LXCurrent.scene==scene && LXCurrent.controller!=controller;
+        BOOL previousLive=LXCurrent.scene && [LXConnectedScenesSnapshot() containsObject:LXCurrent.scene] && LXCurrent.scene.activationState!=UISceneActivationStateUnattached;
+        if (live && (controllerChanged || !previousLive)) LXRelease(LXCurrent);
+        else { LXRecord(@"忽略其他连接的恢复事件", event); return; }
     }
     if (!LXIsCurrent(LXCurrent))
         LXConnect(owner, scene, controller, nil, YES, event);
@@ -308,7 +331,17 @@ static void LXSceneDisconnected(id owner, SEL selector, id scene) {
 static void LXHandleSceneEvent(NSNotification *note) {
     CPTemplateApplicationScene *scene = note.object;
     Class reference = NSClassFromString(@"CPSceneDelegate");
-    if ([scene isKindOfClass:CPTemplateApplicationScene.class] && [scene.delegate isKindOfClass:reference]) LXRecoverScene(scene.delegate, scene, note.name);
+    if (![scene isKindOfClass:CPTemplateApplicationScene.class] || ![scene.delegate isKindOfClass:reference]) return;
+    if ([note.name isEqual:UISceneDidDisconnectNotification]) {
+        if (LXIsCurrent(LXCurrent) && LXCurrent.scene==scene && LXCurrent.owner==scene.delegate) LXRelease(LXCurrent);
+    } else LXRecoverScene(scene.delegate,scene,note.name);
+}
+static void LXReconcileLiveScenes(void) {
+    Class reference=NSClassFromString(@"CPSceneDelegate");
+    for (UIScene *scene in LXConnectedScenesSnapshot())
+        if ([scene isKindOfClass:CPTemplateApplicationScene.class] && [scene.delegate isKindOfClass:reference] &&
+            (scene.activationState==UISceneActivationStateForegroundActive || scene.activationState==UISceneActivationStateForegroundInactive))
+            LXRecoverScene(scene.delegate,(id)scene,@"live-scene-reconcile");
 }
 
 #ifndef LX_CARPLAY_TESTING
@@ -365,10 +398,18 @@ static void LXInstallFullCarPlay(void) {
         [NSNotificationCenter.defaultCenter addObserverForName:LXFullLibraryChanged object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { LXRefresh(); }];
         // Recover a scene even when a reference implementation doesn't forward
         // activation callbacks. This is event-driven and does not poll the car.
-        for (NSString *name in @[UISceneDidActivateNotification, UISceneWillEnterForegroundNotification])
+        for (NSString *name in @[UISceneDidActivateNotification, UISceneWillEnterForegroundNotification, UISceneDidDisconnectNotification])
             [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
                 LXHandleSceneEvent(note);
             }];
+        [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){LXReconcileLiveScenes();}];
+        [NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnCarPlayReconcile" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){
+            LXReconcileLiveScenes();
+            // Audio can become available just before UIKit attaches its car
+            // controller. Retry twice, never poll an absent/disconnected car.
+            for (NSNumber *delay in @[@0.35,@1.5])
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(),^{LXReconcileLiveScenes();});
+        }];
         dispatch_async(dispatch_get_main_queue(), ^{
             LXRecord(@"完整参考接入已加载", @"install");
             for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)

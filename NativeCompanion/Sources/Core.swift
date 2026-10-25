@@ -77,6 +77,7 @@ struct PlaybackEndGuard {
 }
 struct RoomOrder {
     var revision = -1.0
+    var acceptedKey = ""
     var pendingID = ""
     var pendingKey = ""
     mutating func accept(_ state: Object, participant: String) -> Bool {
@@ -84,6 +85,7 @@ struct RoomOrder {
         guard rev >= revision else { return false }
         let controller = text(state["controllerId"])
         let key = (state["song"] as? Object).map { Song(raw: $0).key } ?? text(state["songKey"])
+        if rev == revision, !acceptedKey.isEmpty, !key.isEmpty, acceptedKey != key { return false }
         let command = text(state["commandId"])
         let other = !controller.isEmpty && controller != participant
         if !pendingID.isEmpty, other, rev <= revision { return false }
@@ -93,8 +95,19 @@ struct RoomOrder {
         }
         if other || command == pendingID { pendingID = ""; pendingKey = "" }
         revision = rev
+        if !key.isEmpty { acceptedKey = key }
         return true
     }
+}
+
+// Output loss is a local listening decision. Room/network recovery cannot
+// authorize sound on the phone speaker; an explicit play/selection can.
+struct PlaybackRouteGate {
+    private(set) var held = false
+    private(set) var epoch = 0
+    mutating func suspend() { held = true; epoch += 1 }
+    mutating func resumeByUser() { held = false; epoch += 1 }
+    func permitsPlayback(user: Bool) -> Bool { user || !held }
 }
 enum MediaAddress {
     static func direct(_ input: String, base: URL) throws -> URL {
