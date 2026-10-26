@@ -17,6 +17,12 @@ function fixture(){
  return {driver,load,player,stream,state,calls,reports};
 }
 const settle=()=>new Promise(r=>setImmediate(r));
+test('idle preference restoration and clearing do not initialize media services',async()=>{
+ const f=fixture();
+ for(const operation of ['volume','pause','transition','clear'])await f.driver.run({operation,generation:1,args:{volume:.5}});
+ assert.equal(f.calls.length,0);
+ await f.load(2);assert.equal(f.calls.filter(x=>x[0]==='setupPlayer').length,1);
+});
 test('changing tracks does not reset the lock-screen session',async()=>{
  const f=fixture();await f.load(1);await f.load(2);
  assert.equal(f.calls.filter(x=>x[0]==='reset').length,0,'track replacement must not call the SDK reset that unregisters remote controls');

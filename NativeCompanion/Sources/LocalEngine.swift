@@ -15,7 +15,11 @@ final class LocalRequest: Cancellable {
 /// Source scripts and provider SDK run on a separate serial queue, never the UI thread.
 /// This context has network and timers, but no filesystem, account token or UIKit access.
 final class LocalEngine {
+    #if LX_OWN_UI_TESTING
+    static var shared = LocalEngine()
+    #else
     static let shared = LocalEngine()
+    #endif
     let queue = DispatchQueue(label: "net.minyue.lx.sources", qos: .userInitiated)
     let session: URLSession
     let bundleURL: URL?
@@ -26,10 +30,12 @@ final class LocalEngine {
     var callbacks: [Int: (Result<Any, Error>) -> Void] = [:]
     var tasks: [Int: URLSessionDataTask] = [:]
     var waiting: [() -> Void] = []
+    var restoringSources = false
+    var sourceWaiting: [() -> Void] = []
     var records: [Object] = []
-    init(bundleURL: URL? = nil, storageURL: URL? = nil) {
+    init(bundleURL: URL? = nil, storageURL: URL? = nil, configuration: URLSessionConfiguration? = nil) {
         self.bundleURL = bundleURL; self.storageURL = storageURL
-        let config = URLSessionConfiguration.ephemeral
+        let config = configuration ?? URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 25; config.timeoutIntervalForResource = 45
         config.httpMaximumConnectionsPerHost = 4
         session = URLSession(configuration: config)
@@ -80,13 +86,24 @@ final class LocalEngine {
         guard let file = bundleURL ?? Bundle.main.url(forResource: "LocalEngine", withExtension: "js"), let script = try? String(contentsOf: file) else { finishBootstrap(); return }
         js.evaluateScript(script)
         if let root = try? directory(), let data = try? Data(contentsOf: root.appendingPathComponent("index.json")), let saved = (try? JSONSerialization.jsonObject(with: data)) as? [Object] { records = Array(saved.prefix(20)) }
-        var remaining = records.count
-        if remaining == 0 { finishBootstrap(); return }
+        restoringSources = !records.isEmpty
+        // Built-in catalogue/search APIs do not depend on user audio sources.
+        // A slow inited handshake used to hold every page request for 8+ seconds.
+        finishBootstrap()
+        guard restoringSources else { return }
+        queue.async { [weak self] in self?.restoreSources() }
+    }
+    func restoreSources() {
+        var remaining=records.count
+        if remaining==0 { finishSourceRestore();return }
         for record in records {
-            guard let root = try? directory(), let id = record["id"] as? String, UUID(uuidString: id) != nil, let code = try? String(contentsOf: root.appendingPathComponent(id + ".js")) else { remaining -= 1; if remaining == 0 { finishBootstrap() }; continue }
-            execute("import", ["id": id, "name": text(record["name"]), "script": code, "enabled": bool(record["enabled"], true)]) { [weak self] _ in remaining -= 1; if remaining == 0 { self?.finishBootstrap() } }
+            guard let root=try? directory(),let id=record["id"] as? String,UUID(uuidString:id) != nil,let code=try? String(contentsOf:root.appendingPathComponent(id+".js")) else { remaining-=1;if remaining==0 { finishSourceRestore() };continue }
+            execute("import",["id":id,"name":text(record["name"]),"script":code,"enabled":bool(record["enabled"],true)]) { [weak self] _ in
+                remaining-=1;if remaining==0 {self?.finishSourceRestore()}
+            }
         }
     }
+    func finishSourceRestore() { restoringSources=false;let calls=sourceWaiting;sourceWaiting=[];for call in calls {call()} }
     func finishBootstrap() { ready = true; let calls = waiting; waiting = []; for call in calls { call() } }
     func execute(_ operation: String, _ values: Object, completion: @escaping (Result<Any, Error>) -> Void) {
         guard let data = try? JSONSerialization.data(withJSONObject: values), let payload = String(data: data, encoding: .utf8), let function = context?.objectForKeyedSubscript("__engineRun"), !function.isUndefined else { completion(.failure(ClientError("本地音源引擎未就绪，请重新安装完整 App"))); return }
@@ -94,11 +111,12 @@ final class LocalEngine {
         function.call(withArguments: [id, operation, payload])
         queue.asyncAfter(deadline: .now() + 60) { [weak self] in self?.callbacks.removeValue(forKey: id)?(.failure(ClientError("音源请求超时，请换源或稍后重试"))) }
     }
-    @discardableResult func call(_ operation: String, _ values: Object = [:], completion: @escaping (Result<Any, Error>) -> Void) -> Cancellable {
+    @discardableResult func call(_ operation: String, _ values: Object = [:], completionQueue: DispatchQueue = .main, completion: @escaping (Result<Any, Error>) -> Void) -> Cancellable {
         let token = LocalRequest()
         queue.async { [weak self] in
             guard let self = self else { return }
             let run = {
+                guard !token.isCancelled else { return }
                 self.execute(operation, values) { result in
                     guard !token.isCancelled else { return }
                     if case .success = result {
@@ -112,10 +130,13 @@ final class LocalEngine {
                             self.persist()
                         }
                     }
-                    DispatchQueue.main.async { completion(result) }
+                    completionQueue.async { completion(result) }
                 }
             }
-            self.bootstrap(); if self.ready { run() } else { self.waiting.append(run) }
+            self.bootstrap()
+            let needsSources = ["resolve","import","remove","enable"].contains(operation) || operation == "api" && text(values["path"]).hasPrefix("/api/music/url")
+            if needsSources && self.restoringSources { self.sourceWaiting.append(run) }
+            else if self.ready { run() } else { self.waiting.append(run) }
         }
         return token
     }

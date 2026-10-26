@@ -3,18 +3,18 @@
 static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     LXOwnInstallNowPlaying();
     LXNowPlayingCoordinator *owner=LXNowPlayingCoordinator.shared;[owner clear];
+    [owner installControls];
+    [owner receive:@{@"songId":@"restored",@"generation":@0,@"title":@"播放历史",@"wanted":@NO,@"loading":@NO}];
+    check(!atomic_load(&LXNPOwned) && !owner.controlsInstalled && !owner.placeholder && !owner.publishedInfo,@"restoredPausedQueueDoesNotInitializeMediaServices");
+    [owner enqueue:@{@"songId":@"pending",@"generation":@0,@"wanted":@YES,@"loading":@YES} clear:NO];
+    check(!atomic_load(&LXNPOwned) && owner.pendingSnapshot!=nil,@"metadataNotificationsDoNotPerformSynchronousMediaWork");
+    [owner flush];[owner clear];
     NSString *titleKey=MPMediaItemPropertyTitle,*rateKey=MPNowPlayingInfoPropertyPlaybackRate;
     NSDictionary *a=@{@"songId":@"A",@"generation":@1,@"title":@"A",@"wanted":@YES,@"loading":@NO,@"playbackRate":@1,@"duration":@180,@"elapsedTime":@30,@"artwork":@""};
     [owner receive:a];
     MPNowPlayingInfoCenter *center=MPNowPlayingInfoCenter.defaultCenter;MPRemoteCommandCenter *commands=MPRemoteCommandCenter.sharedCommandCenter;
     check([center.nowPlayingInfo[titleKey] isEqual:@"A"] && center.nowPlayingInfo[MPMediaItemPropertyArtwork]!=nil,@"nativeMetadataPublishesWithoutJavaScript");
-    center.nowPlayingInfo=nil;center.playbackState=MPNowPlayingPlaybackStateStopped;
-    commands.nextTrackCommand.enabled=NO;commands.previousTrackCommand.enabled=NO;commands.skipForwardCommand.enabled=YES;
-    [UIApplication.sharedApplication endReceivingRemoteControlEvents];
-    check([center.nowPlayingInfo[titleKey] isEqual:@"A"] && [center.nowPlayingInfo[rateKey] doubleValue]==1,@"legacyResetCannotClearOwnedLockScreenCard");
-    check(commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled && !commands.skipForwardCommand.enabled,@"legacyResetCannotDisableTrackButtonsOrRestoreSkipButtons");
-    center.nowPlayingInfo=@{titleKey:@"late legacy song"};
-    check([center.nowPlayingInfo[titleKey] isEqual:@"A"],@"legacyMetadataCannotOverwriteCurrentSong");
+    check(commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled && !commands.skipForwardCommand.enabled,@"nativeTransportKeepsTrackButtonsWithoutGlobalCommandHooks");
     NSDictionary *before=[center.nowPlayingInfo copy];
     NSMutableDictionary *b=[a mutableCopy];b[@"songId"]=@"B";b[@"title"]=@"B";b[@"generation"]=@2;b[@"loading"]=@YES;b[@"duration"]=@0;b[@"playbackRate"]=@0;
     [owner receive:b];
@@ -49,7 +49,7 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     NSDictionary *complete=[center.nowPlayingInfo copy];c[@"generation"]=@4;c[@"loading"]=@YES;c[@"duration"]=@0;c[@"elapsedTime"]=@0;[owner receive:c];
     check([center.nowPlayingInfo isEqualToDictionary:complete],@"repeatingSameTrackAlsoRetainsCompleteCardUntilReady");
     __block NSDictionary *remote;id observer=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){remote=note.userInfo;}];
-    LXNPSendRemote(@"next",nil);[NSNotificationCenter.defaultCenter removeObserver:observer];
+    LXOwnDeliverRemoteCommand(@"next",nil,NSProcessInfo.processInfo.systemUptime);[NSNotificationCenter.defaultCenter removeObserver:observer];
     check([remote[@"command"] isEqual:@"next"] && [remote[@"eventAt"] doubleValue]>0,@"nativeRemoteButtonsDeliverTimestampedCommandsWithoutJavaScript");
     [owner clear];
     check(center.nowPlayingInfo==nil && !commands.nextTrackCommand.enabled && !commands.playCommand.enabled,@"genuineClearStillReleasesLockScreenAndCommands");

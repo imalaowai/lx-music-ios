@@ -47,6 +47,9 @@ module.exports = function createDriver({player, stream, State, Capability, Repea
   async function execute(request) {
     const {operation,generation} = request, args = request.args || {};
     if (generation !== latest) return {superseded:true};
+    // Browsing/restoring preferences must not construct the audio SDK and its
+    // MediaRemote services. Volume is applied with the first actual load.
+    if(!setup && operation!=='load')return {};
     await initialize();
     if (generation !== latest) return {superseded:true};
     if (operation === 'transition') {

@@ -12,12 +12,16 @@ static atomic_bool LXOutputHeld = false;
 static __weak id LXTrackInstance, LXFlacInstance;
 static IMP LXTrackPlay, LXTrackPause, LXFlacResume, LXFlacPause, LXMetadataPlay;
 static IMP LXTrackEmit;
+extern void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterval eventAt);
 static void LXTrackEmitted(id self,SEL selector,NSString *name,id body) {
     if([name hasPrefix:@"remote-"]) {
         NSMutableDictionary *event=[body isKindOfClass:NSDictionary.class]?[body mutableCopy]:[NSMutableDictionary dictionary];
         // Stamp at the native event source. Stamping after JS wakes would turn
         // a pre-disconnect queued remote command into a seemingly new action.
         event[@"nativeEventAt"]=@(NSProcessInfo.processInfo.systemUptime);body=event;
+        NSDictionary *commands=@{@"remote-play":@"play",@"remote-pause":@"pause",@"remote-stop":@"pause",@"remote-next":@"next",@"remote-previous":@"previous",@"remote-seek":@"seek"};
+        NSString *command=commands[name];
+        if(command)LXOwnDeliverRemoteCommand(command,event[@"position"],[event[@"nativeEventAt"] doubleValue]);
     }
     ((void (*)(id,SEL,id,id))LXTrackEmit)(self,selector,name,body);
 }
