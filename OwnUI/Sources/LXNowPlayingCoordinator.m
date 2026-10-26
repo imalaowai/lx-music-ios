@@ -61,6 +61,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
 @property(nonatomic) NSInteger presentedGeneration;
 @property(nonatomic) BOOL held;
 @property(nonatomic) BOOL controlsInstalled;
+@property(nonatomic) BOOL receivingRemote;
 + (instancetype)shared;
 - (void)receive:(NSDictionary *)value;
 - (void)clear;
@@ -147,7 +148,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
     BOOL before=LXNPWriting;LXNPWriting=YES;
     if(![self.publishedInfo isEqualToDictionary:info]) { MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=info;self.publishedInfo=[info copy]; }
     MPNowPlayingInfoCenter.defaultCenter.playbackState=self.wanted?MPNowPlayingPlaybackStatePlaying:MPNowPlayingPlaybackStatePaused;
-    [UIApplication.sharedApplication beginReceivingRemoteControlEvents];
+    if(!self.receivingRemote) { [UIApplication.sharedApplication beginReceivingRemoteControlEvents];self.receivingRemote=YES; }
     LXNPWriting=before;self.presentedKey=self.targetKey;self.presentedGeneration=self.generation;[self updateControls];
 }
 - (void)finishArtwork:(MPMediaItemArtwork *)artwork epoch:(NSUInteger)epoch {
@@ -187,7 +188,9 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
     [self.coverTask cancel];self.coverTask=nil;self.coverEpoch++;self.snapshot=nil;self.publishedInfo=nil;self.targetKey=nil;self.presentedKey=nil;self.coverPath=nil;self.artwork=nil;self.generation=-1;
     atomic_store(&LXNPOwned,false);BOOL before=LXNPWriting;LXNPWriting=YES;
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=nil;MPNowPlayingInfoCenter.defaultCenter.playbackState=MPNowPlayingPlaybackStateStopped;
-    [self updateControls];[UIApplication.sharedApplication endReceivingRemoteControlEvents];LXNPWriting=before;
+    [self updateControls];
+    if(self.receivingRemote) { [UIApplication.sharedApplication endReceivingRemoteControlEvents];self.receivingRemote=NO; }
+    LXNPWriting=before;
 }
 @end
 
