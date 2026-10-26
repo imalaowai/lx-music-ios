@@ -53,14 +53,20 @@ jobs:
           build/own-ui/core-tests
           clang -fobjc-arc -fblocks -framework Foundation -I FullReference/Sources FullReference/Sources/LXFullLibrary.m FullReference/Tests/library.m -o build/own-ui/library-tests
           build/own-ui/library-tests
-      - name: Launch the owned phone root with real WebKit in iOS Simulator
-        timeout-minutes: 8
-        run: bash OwnUI/scripts/check-phone.sh
       - uses: actions/upload-artifact@v4
         with:
           name: LX-OwnUI-Native-Components
           path: build/own-ui/LX-OwnUI-Native-Components.zip
           if-no-files-found: error
+  startup-playback:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 OwnUI/scripts/prepare.py
+      - name: Verify restored-account playlist rendering and native playback in iOS Simulator
+        timeout-minutes: 10
+        run: bash OwnUI/scripts/check-phone.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
