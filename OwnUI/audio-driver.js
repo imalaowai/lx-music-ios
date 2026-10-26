@@ -2,7 +2,7 @@
 
 // The phone UI and room client own the queue. The reference's TrackPlayer and
 // native FLAC decoder are the only audio outputs. No HTML/second AVPlayer runs.
-module.exports = function createDriver({player, stream, nowPlaying, State, Capability, RepeatMode, report}) {
+module.exports = function createDriver({player, stream, State, Capability, RepeatMode, report, ready}) {
   let setup, chain = Promise.resolve(), latest = 0, active = null, switching = false, probing = false;
   let latestWanted = false;
   const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -19,6 +19,7 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
       await player.setupPlayer({autoUpdateMetadata:false, waitForBuffer:true, maxCacheSize:65536, iosCategory:'playback', iosCategoryMode:'default'});
       await player.updateOptions({capabilities:[Capability.Play,Capability.Pause,Capability.Stop,Capability.SeekTo,Capability.SkipToNext,Capability.SkipToPrevious], stopWithApp:false});
       await player.setRepeatMode(RepeatMode.Off);
+      ready?.();
     })().catch(error => {setup = null; throw error;});
     return setup;
   }
@@ -48,10 +49,19 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
     if (generation !== latest) return {superseded:true};
     await initialize();
     if (generation !== latest) return {superseded:true};
+    if (operation === 'transition') {
+      const item=active;active=null;
+      if(item?.engine==='flac') await stream.pause();
+      else if(item) await player.pause();
+      return {};
+    }
     if (operation === 'clear' || operation === 'load') {
       switching = true; active = null;
       try {
-        await player.reset();
+        // Keep the same session through a handoff. reset() unregisters remote
+        // controls; stop()/an empty queue can also retire the Now Playing app.
+        if(operation==='clear') await player.reset();
+        else await player.pause();
         if (stream?.reset) await stream.reset();
         if (generation !== latest) return {superseded:true};
         if (operation === 'clear') return {};
@@ -65,8 +75,19 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
           if (!args.paused && latestWanted && current(item)) await stream.resume();
           if (!latestWanted && current(item)) await stream.pause();
         } else {
-          await player.add({id:'own-ui-'+generation,url:args.url,title:args.title||'未知歌曲',artist:args.artist||'',album:args.album||'',artwork:args.artwork||undefined});
+          const id='own-ui-'+generation;
+          await player.add({id,url:args.url,title:args.title||'未知歌曲',artist:args.artist||'',album:args.album||'',artwork:args.artwork||undefined});
           if (!current(item)) return {superseded:true};
+          const queue=await player.getQueue(),index=queue.findIndex(track=>track.id===id);
+          if(!current(item))return {superseded:true};
+          if(index<0)throw new Error('新歌曲没有加入原生播放队列');
+          await player.skip(index);
+          if(!current(item))return {superseded:true};
+          // Remove old entries only after the new item is selected. Descending
+          // indices match the preserved SDK's sequential remove implementation.
+          const remove=queue.map((_,i)=>i).filter(i=>i!==index).reverse();
+          if(remove.length)await player.remove(remove);
+          if(!current(item))return {superseded:true};
           await player.setVolume(volume);
           if (num(args.position)>0) await player.seekTo(num(args.position));
           if (!args.paused && latestWanted && current(item)) await player.play();
@@ -88,18 +109,13 @@ module.exports = function createDriver({player, stream, nowPlaying, State, Capab
   }
   function run(request) {
     if (request.operation === 'probe') return sample().then(()=>({}));
-    if (request.operation === 'clearMetadata') return Promise.resolve(nowPlaying?.clearNowPlayingInfo?.()).then(()=>({}));
-    if (request.operation === 'metadata') {
-      const info=request.args||{};
-      return Promise.resolve(nowPlaying?.updateNowPlayingInfo?.(info)).then(()=>info.playbackRate>0?nowPlaying?.playNowPlaying?.({elapsedTime:info.elapsedTime,playbackRate:info.playbackRate}):nowPlaying?.pauseNowPlaying?.({elapsedTime:info.elapsedTime,playbackRate:0})).then(()=>({}));
-    }
-    if (['load','clear'].includes(request.operation)) latest=Math.max(latest,num(request.generation));
+    if (['load','clear','transition'].includes(request.operation)) latest=Math.max(latest,num(request.generation));
     // Record intent at receipt, before an asynchronous load/seek can block the
     // serialized decoder queue. An older captured load must not autoplay later.
     if (request.generation===latest) {
       if (request.operation==='load') latestWanted=!request.args?.paused;
       else if (request.operation==='play') latestWanted=true;
-      else if (['pause','clear'].includes(request.operation)) latestWanted=false;
+      else if (['pause','clear','transition'].includes(request.operation)) latestWanted=false;
     }
     if (request.operation==='pause' && request.generation===latest && active && current(active)) {
       const target=active.engine==='flac'?stream:player;

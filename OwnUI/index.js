@@ -7,7 +7,7 @@ import createDriver from './audio-driver.js'
 
 const bridge = NativeModules.LXOwnUIBridge
 const emitter = new NativeEventEmitter(bridge)
-const driver = createDriver({player:TrackPlayer, stream:NativeModules.StreamingFlacPlayerModule, nowPlaying:NativeModules.NowPlayingModule, State, Capability, RepeatMode, report:value=>bridge.reportState(value)})
+const driver = createDriver({player:TrackPlayer, stream:NativeModules.StreamingFlacPlayerModule, State, Capability, RepeatMode, report:value=>bridge.reportState(value),ready:()=>bridge.audioReady()})
 emitter.addListener('own-ui-audio-command', request => {
   driver.run(request).then(value=>bridge.complete(request.ticket,value||{},''), error=>bridge.complete(request.ticket,{},error.message||String(error)))
 })

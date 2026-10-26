@@ -71,10 +71,10 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
         if let completion=completion { pending[ticket]=(generation,Date().addingTimeInterval(45),completion) }
         NotificationCenter.default.post(name:Notification.Name("LXOwnAudioCommand"),object:nil,userInfo:["ticket":ticket,"operation":operation,"generation":generation,"args":args])
     }
-    func replaceCurrentItem(with unused: Item?) {
+    func replaceCurrentItem(with unused: Item?, preservingNowPlaying: Bool = false) {
         localAudio?.stop(); localAudio?.delegate = nil; localAudio = nil
         generation += 1; pending.removeAll(); currentItem=nil; sampledPosition=0; sampledAt=Date().timeIntervalSince1970; rate=0; timeControlStatus = .paused
-        send("clear")
+        send(preservingNowPlaying ? "transition" : "clear")
     }
     func load(_ url:URL,song:Song,quality:String,position:Double,paused:Bool,completion:@escaping(Result<Object,Error>)->Void) {
         generation += 1; pending.removeAll(); currentItem=Item(); sampledPosition=position; sampledAt=Date().timeIntervalSince1970; timeControlStatus = .waitingToPlayAtSpecifiedRate
@@ -117,5 +117,8 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
         sampledPosition=max(0,time.seconds); sampledAt=Date().timeIntervalSince1970
         send("seek",["position":sampledPosition]) { result in completionHandler((try? result.get()) != nil) }
     }
-    func metadata(_ value:Object) { send("metadata",value) }
+    // Publish on the native main queue. Lock-screen metadata must not wait for
+    // a backgrounded RN queue or race decoder reset / asynchronous artwork.
+    func metadata(_ value:Object) { NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlaying"),object:nil,userInfo:value) }
+    func clearMetadata() { NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingClear"),object:nil) }
 }

@@ -17,7 +17,7 @@ for p in pathlib.Path('node_modules/react-native/React').rglob('*.h'):
     if not target.exists():target.symlink_to(p.resolve())
 PY
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-for SOURCE_PATH in FullReference/Sources/LXFullLibrary.m FullReference/Sources/LXFullCarPlay.m OwnUI/Sources/LXOwnUIBridge.m OwnUI/Sources/LXAudioRouteSafety.m; do
+for SOURCE_PATH in FullReference/Sources/LXFullLibrary.m FullReference/Sources/LXFullCarPlay.m OwnUI/Sources/LXOwnUIBridge.m OwnUI/Sources/LXAudioRouteSafety.m OwnUI/Sources/LXNowPlayingCoordinator.m; do
   OBJECT_NAME="$(basename "$SOURCE_PATH" .m)"
   xcrun clang -c -arch arm64 -isysroot "$SDK" -miphoneos-version-min=15.0 -fobjc-arc -fblocks -DLX_OWN_UI=1 -I build/own-ui/include -I FullReference/Sources -I node_modules/react-native/ReactCommon/yoga "$SOURCE_PATH" -o "build/own-ui/objects/$OBJECT_NAME.o"
 done
@@ -33,7 +33,7 @@ python3 - <<'PY'
 import hashlib,json,pathlib,struct,zipfile
 d=pathlib.Path('build/own-ui');b=(d/'main.jsbundle').read_bytes()
 assert struct.unpack_from('<I',b,8)[0]==96
-metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.6','build':'89','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
+metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.7','build':'90','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
 (d/'components.json').write_text(json.dumps(metadata,indent=2)+'\n')
 with zipfile.ZipFile(d/'LX-OwnUI-Native-Components.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     for name in ['main.jsbundle','LXFullCarPlay.dylib','components.json']:z.write(d/name,name)

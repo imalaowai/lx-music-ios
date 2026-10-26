@@ -7,11 +7,11 @@ HOST_DIR=build/own-ui/LXCarPlayTests.app
 mkdir -p "$HOST_DIR"
 python3 - <<'PY'
 import pathlib,plistlib
-info={'CFBundleIdentifier':'net.minyue.lxcarplay.verify','CFBundleExecutable':'LXCarPlayTests','CFBundleName':'LXCarPlayTests','CFBundlePackageType':'APPL','CFBundleVersion':'89','CFBundleShortVersionString':'1.9.6','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{}}
+info={'CFBundleIdentifier':'net.minyue.lxcarplay.verify','CFBundleExecutable':'LXCarPlayTests','CFBundleName':'LXCarPlayTests','CFBundlePackageType':'APPL','CFBundleVersion':'90','CFBundleShortVersionString':'1.9.7','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{}}
 pathlib.Path('build/own-ui/LXCarPlayTests.app/Info.plist').write_bytes(plistlib.dumps(info))
 PY
 xcrun clang -target "$(uname -m)-apple-ios15.0-simulator" -isysroot "$SDK" -fobjc-arc -fblocks -DLX_OWN_UI=1 -I FullReference/Sources \
-  FullReference/Tests/carplay.m FullReference/Sources/LXFullLibrary.m -framework Foundation -framework UIKit -framework CarPlay -framework MediaPlayer -o "$HOST_DIR/LXCarPlayTests"
+  FullReference/Tests/carplay.m FullReference/Sources/LXFullLibrary.m -framework Foundation -framework UIKit -framework CarPlay -framework MediaPlayer -framework ImageIO -o "$HOST_DIR/LXCarPlayTests"
 codesign --force --sign - "$HOST_DIR"
 DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next(v["udid"] for g in d["devices"].values() for v in g if v["name"].startswith("iPhone")))')
 xcrun simctl boot "$DEVICE_ID" || true

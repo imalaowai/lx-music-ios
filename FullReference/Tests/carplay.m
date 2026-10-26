@@ -107,6 +107,8 @@ typedef void (^LXTestReject)(NSString *,NSString *,NSError *);
 - (void)pauseNowPlaying:(NSDictionary *)value resolver:(LXTestResolve)resolve rejecter:(LXTestReject)reject {self.rate=0;if(resolve)resolve(nil);}
 @end
 #import "../../OwnUI/Sources/LXAudioRouteSafety.m"
+#import "../../OwnUI/Sources/LXNowPlayingCoordinator.m"
+#import "../../OwnUI/Tests/NowPlayingTests.m"
 
 static NSMutableDictionary *LXResults;
 static void Check(BOOL pass, NSString *name) {
@@ -273,6 +275,7 @@ static void RunTests(void) {
     Check([saved[@"history"] count]==120 && [saved[@"hooks"][@"audio"] boolValue] && [saved[@"process"] length]>0, @"diagnosticHistoryIsBoundedAndIdentifiesProcess");
     LXHistory=nil; LXRecord(@"新进程模拟", @"test-restart");
     Check(LXHistory.count==120 && [LXHistory[LXHistory.count-2][@"phase"] isEqual:@"回归记录"], @"diagnosticsPreservePreviousProcessHistory");
+    LXRunNowPlayingTests(^(BOOL pass,NSString *name){Check(pass,name);});
 }
 
 @interface LXCarPlayTestApp : UIResponder <UIApplicationDelegate>

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild an already integrated full own-UI IPA with verified native components.
 
-update-components.py OWN_V18_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
+update-components.py OWN_V19_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
 Preserves the reference executable sections, frameworks, resources and identity.
 The own integration module and Hermes entry come from the native CI build.
 """
@@ -12,7 +12,7 @@ base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
 sha=lambda b:hashlib.sha256(b).hexdigest()
 def package(source,components,signer,output):
     source,components,signer,output=map(pathlib.Path,[source,components,signer,output])
-    assert sha(source.read_bytes())=='68c12f0e1a815d5a0631287a82d856634ac141f14f783bf0b028e1b6e9999480','Expected the complete own-UI v18 release'
+    assert sha(source.read_bytes())=='3c5303840741e4bd9bf3e4f0c58bd2452ab27402ef6218987c67ed005ae7f021','Expected the complete own-UI v19 release'
     with zipfile.ZipFile(source) as z,zipfile.ZipFile(components) as additions,tempfile.TemporaryDirectory(prefix='qiye-own-rebuild-') as work:
         assert z.testzip() is None
         prefix='Payload/LxMusicMobile.app/';app=pathlib.Path(work)/prefix
@@ -29,7 +29,7 @@ def package(source,components,signer,output):
         old_main=z.read(prefix+'LxMusicMobile');ent=base.entitlements(old_main)
         assert ent['com.apple.developer.carplay-audio'] is True
         metadata=json.loads(additions.read('components.json'))
-        assert metadata['ownUI'] is True and metadata['version']=='1.9.6' and metadata['build']=='89'
+        assert metadata['ownUI'] is True and metadata['version']=='1.9.7' and metadata['build']=='90'
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
         assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
@@ -46,7 +46,7 @@ def package(source,components,signer,output):
         (app/'main.jsbundle').write_bytes(js)
         (app/'Frameworks/LXFullCarPlay.dylib').write_bytes(module)
         info=plistlib.loads((app/'Info.plist').read_bytes())
-        info.update(CFBundleShortVersionString='1.9.6',CFBundleVersion='89')
+        info.update(CFBundleShortVersionString='1.9.7',CFBundleVersion='90')
         (app/'Info.plist').write_bytes(plistlib.dumps(info,fmt=plistlib.FMT_BINARY))
         ent_file=pathlib.Path(work)/'entitlements.plist';ent_file.write_bytes(plistlib.dumps(ent))
         env=dict(os.environ);env['LD_LIBRARY_PATH']=str(signer.resolve().parent)+':'+env.get('LD_LIBRARY_PATH','')
@@ -74,7 +74,7 @@ def package(source,components,signer,output):
                 name=p.relative_to(work).as_posix()
                 if p.is_file() and name not in old_names:
                     item=zipfile.ZipInfo(name);item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=(stat.S_IFREG|0o644)<<16;out.writestr(item,p.read_bytes())
-        report={'version':'1.9.6','build':89,'base':'own UI v18','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
+        report={'version':'1.9.7','build':90,'base':'own UI v19','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
         output.with_suffix('.verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
         print(json.dumps(report,ensure_ascii=False))
 if __name__=='__main__':package(*sys.argv[1:])

@@ -55,6 +55,7 @@ RCT_EXPORT_METHOD(ready) {
     if ([integration respondsToSelector:NSSelectorFromString(@"activate")]) [integration performSelector:NSSelectorFromString(@"activate")];
 }
 RCT_EXPORT_METHOD(reportState:(NSDictionary *)value) { [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioState" object:nil userInfo:value]; }
+RCT_EXPORT_METHOD(audioReady) { [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioReady" object:nil]; }
 RCT_EXPORT_METHOD(complete:(NSString *)ticket value:(NSDictionary *)value error:(NSString *)error) { [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioReply" object:nil userInfo:@{@"ticket":ticket?:@"",@"value":value?:@{},@"error":error?:@""}]; }
 RCT_EXPORT_METHOD(remote:(NSDictionary *)value) { [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnRemoteCommand" object:nil userInfo:value]; }
 RCT_EXPORT_METHOD(bootError:(NSString *)message) { NSLog(@"[LXOwnUI] phone bootstrap error: %@",message); }

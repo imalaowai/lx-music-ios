@@ -137,7 +137,7 @@ final class Player {
         finishTransition()
         if routeGate.held {
             resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel()
-            audio.pause(); audio.replaceCurrentItem(with:nil); currentURL = nil
+            audio.pause(); audio.replaceCurrentItem(with:nil,preservingNowPlaying:true); currentURL = nil
             persistQueue(); publish(); return
         }
         transitionTask = UIApplication.shared.beginBackgroundTask(withName: "LX Track Transition") { [weak self] in
@@ -145,7 +145,7 @@ final class Player {
         }
         let epoch = generation, song = songs[target]
         resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel(); artwork = nil
-        audio.pause(); audio.replaceCurrentItem(with: nil); currentURL = nil
+        audio.pause(); audio.replaceCurrentItem(with: nil,preservingNowPlaying:true); currentURL = nil
         if user { room.sendState(reason: "track") }
         persistQueue(); publish()
         resolution = api.resolve(song, quality: quality, allowFallback: allowFallback) { [weak self] result in
@@ -252,20 +252,19 @@ final class Player {
         if signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
     }
     func updateNowPlaying() {
-        let signature = "\(generation)|\(wanted)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(current?.key ?? "")"
+        let signature = "\(generation)|\(wanted)|\(loading)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(current?.key ?? "")"
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
         nowPlayingSignature = signature; nowPlayingAt = now
-        guard let song=current else { audio.send("clearMetadata"); return }
+        guard let song=current else { audio.clearMetadata(); return }
         var cover=text(song.raw["img"])
         if let id=song.raw["offlineId"] as? String,let folder=try? MusicLibrary.shared.folder(id) {
             let file=folder.appendingPathComponent("封面.jpg")
             // The reference module's local artwork API accepts a path, not file://.
             if FileManager.default.fileExists(atPath:file.path) { cover=file.path }
         }
-        // One native metadata owner: its cache, artwork loader and remote handlers
-        // remain authoritative. Do not overwrite them with a second InfoCenter.
-        audio.metadata(["title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":duration,"elapsedTime":position,"playbackRate":wanted ? audio.rate : 0])
+        let knownDuration = duration > 0 ? duration : number(song.raw["interval"])
+        audio.metadata(["songId":song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
     }
     func persistQueue() {
         let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]
