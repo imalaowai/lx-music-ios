@@ -45,6 +45,7 @@ final class Player {
     var library: [Object] = []
     var lastWebQueueSignature = ""
     var interruptionWanted = false
+    var interrupted = false
     var routeGate = PlaybackRouteGate()
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
     var position: Double { let n = audio.currentTime().seconds; return n.isFinite ? max(0, n) : 0 }
@@ -72,8 +73,14 @@ final class Player {
         observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.room.recoverConnection("phone-active"); self?.publish() })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
             guard let self=self else { return }
-            if number(note.userInfo?[AVAudioSessionInterruptionTypeKey]) == Double(AVAudioSession.InterruptionType.began.rawValue) { self.interruptionWanted=self.wanted; self.audio.pause(); self.publish() }
-            else if self.interruptionWanted, !self.routeGate.held, (UInt(number(note.userInfo?[AVAudioSessionInterruptionOptionKey])) & AVAudioSession.InterruptionOptions.shouldResume.rawValue) != 0 { self.interruptionWanted=false; self.play(user:false) }
+            if number(note.userInfo?[AVAudioSessionInterruptionTypeKey]) == Double(AVAudioSession.InterruptionType.began.rawValue) {
+                self.interrupted=true;self.interruptionWanted=self.wanted;self.audio.pause();self.publish()
+            } else {
+                self.interrupted=false
+                let resume=self.interruptionWanted && self.wanted && !self.routeGate.held && (UInt(number(note.userInfo?[AVAudioSessionInterruptionOptionKey])) & AVAudioSession.InterruptionOptions.shouldResume.rawValue) != 0
+                self.interruptionWanted=false
+                if resume { self.play(user:false) } else { self.pause(user:false) }
+            }
         })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification,object:nil,queue:.main) { [weak self] note in
             let reason=UInt(number(note.userInfo?[AVAudioSessionRouteChangeReasonKey]))
@@ -252,7 +259,7 @@ final class Player {
         if signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
     }
     func updateNowPlaying() {
-        let signature = "\(generation)|\(wanted)|\(loading)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(current?.key ?? "")"
+        let signature = "\(generation)|\(wanted)|\(loading)|\(interrupted)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(current?.key ?? "")"
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
         nowPlayingSignature = signature; nowPlayingAt = now
@@ -264,7 +271,7 @@ final class Player {
             if FileManager.default.fileExists(atPath:file.path) { cover=file.path }
         }
         let knownDuration = duration > 0 ? duration : number(song.raw["interval"])
-        audio.metadata(["songId":song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
+        audio.metadata(["songId":text(song.raw["source"])+"|"+song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
     }
     func persistQueue() {
         let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]

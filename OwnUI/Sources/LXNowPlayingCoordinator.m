@@ -58,6 +58,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
 @property(nonatomic,copy) NSString *coverPath;
 @property(nonatomic) NSUInteger coverEpoch;
 @property(nonatomic) NSInteger generation;
+@property(nonatomic) NSInteger presentedGeneration;
 @property(nonatomic) BOOL held;
 @property(nonatomic) BOOL controlsInstalled;
 + (instancetype)shared;
@@ -81,7 +82,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
         _placeholder=[[MPMediaItemArtwork alloc] initWithBoundsSize:image.size requestHandler:^UIImage *(CGSize size){return image;}];
     }return self;
 }
-- (BOOL)wanted { return [self.snapshot[@"wanted"] boolValue] && !self.held; }
+- (BOOL)wanted { return [self.snapshot[@"wanted"] boolValue] && ![self.snapshot[@"interrupted"] boolValue] && !self.held; }
 - (void)installControls {
     MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
     if(!LXNPCommands)LXNPCommands=[NSSet setWithArray:@[center.playCommand,center.pauseCommand,center.stopCommand,center.togglePlayPauseCommand,center.nextTrackCommand,center.previousTrackCommand,center.changePlaybackPositionCommand,center.skipForwardCommand,center.skipBackwardCommand,center.seekForwardCommand,center.seekBackwardCommand]];
@@ -129,7 +130,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
     if(!self.snapshot.count)return;
     // A new stream may take time to resolve/open. Keep the last complete card
     // until the replacement is ready; actual pause/output loss always wins.
-    if(self.wanted && [self.snapshot[@"loading"] boolValue] && self.publishedInfo.count && ![self.targetKey isEqualToString:self.presentedKey]) {
+    if(self.wanted && [self.snapshot[@"loading"] boolValue] && self.publishedInfo.count && self.generation!=self.presentedGeneration) {
         [self updateControls];return;
     }
     NSDictionary *value=self.snapshot;NSMutableDictionary *info=[NSMutableDictionary dictionary];
@@ -147,7 +148,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
     if(![self.publishedInfo isEqualToDictionary:info]) { MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=info;self.publishedInfo=[info copy]; }
     MPNowPlayingInfoCenter.defaultCenter.playbackState=self.wanted?MPNowPlayingPlaybackStatePlaying:MPNowPlayingPlaybackStatePaused;
     [UIApplication.sharedApplication beginReceivingRemoteControlEvents];
-    LXNPWriting=before;self.presentedKey=self.targetKey;[self updateControls];
+    LXNPWriting=before;self.presentedKey=self.targetKey;self.presentedGeneration=self.generation;[self updateControls];
 }
 - (void)finishArtwork:(MPMediaItemArtwork *)artwork epoch:(NSUInteger)epoch {
     if(epoch!=self.coverEpoch || !self.snapshot.count)return;
@@ -155,7 +156,7 @@ static void LXNPSendRemote(NSString *command,NSNumber *position) {
     if(artwork)[self.covers setObject:artwork forKey:self.coverPath cost:512*512*4];
     // Prefetch while resolving, but do not put the next album's cover on the
     // previous song's retained card.
-    if([self.targetKey isEqualToString:self.presentedKey])[self publish];
+    if(self.generation==self.presentedGeneration && [self.targetKey isEqualToString:self.presentedKey])[self publish];
 }
 - (MPMediaItemArtwork *)decodeArtwork:(NSData *)data {
     if(!data.length || data.length>8*1024*1024)return nil;

@@ -23,6 +23,7 @@ enum PlayerRouteTests {
             do {
                 try record(player.wanted && player.audio.localAudio?.isPlaying == true,"realLocalAudioStarted")
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
+                try record(player.interrupted && player.wanted && player.audio.localAudio?.isPlaying == false,"systemInterruptionPausesActualAudioWhileKeepingResumeIntent")
                 NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
                 try record(player.routeGate.held && !player.wanted && player.audio.localAudio?.isPlaying == false,"outputLossPausesActualAudioAndHoldsPlayback")
                 player.remote(["command":"play","eventAt":player.lastOutputLossAt-0.01])
@@ -46,6 +47,9 @@ enum PlayerRouteTests {
                 player.play()
                 try record(!player.routeGate.held && player.wanted && player.audio.localAudio?.isPlaying == true,"explicitPlayResumesActualAudio")
                 try record(player.room.order.pendingID.isEmpty && player.room.outgoing.isEmpty,"localRejoinDoesNotRestartRoomTrack")
+                NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
+                NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:0])
+                try record(!player.interrupted && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionWithoutResumeOptionStaysPaused")
                 player.room.disconnect(clear:true);player.pause(user:false);player.failure=""
                 finish()
             } catch { finish(error) }
