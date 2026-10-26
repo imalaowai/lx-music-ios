@@ -148,8 +148,7 @@ final class LocalEngine {
         for (key, value) in options["headers"] as? Object ?? [:] { request.setValue(String(describing: value), forHTTPHeaderField: key) }
         if request.value(forHTTPHeaderField: "User-Agent") == nil { request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 15_5 like Mac OS X) AppleWebKit/605.1.15 LXMusic/1.2", forHTTPHeaderField: "User-Agent") }
         if let form = options["form"] as? Object {
-            var c = URLComponents(); c.queryItems = form.map { URLQueryItem(name: $0.key, value: String(describing: $0.value)) }
-            request.httpBody = c.percentEncodedQuery?.data(using: .utf8); request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Self.formBody(form); request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         } else if let body = options["body"] as? String { request.httpBody = body.data(using: .utf8) }
         else if let body = options["body"] as? Object {
             if let encoded = body["base64"] as? String { request.httpBody = Data(base64Encoded: encoded) }
@@ -167,6 +166,21 @@ final class LocalEngine {
             self.queue.async { self.tasks.removeValue(forKey: id); self.finishHTTP(id, value: value, error: failure) }
         }
         tasks[id] = task; task.resume()
+    }
+    static func formBody(_ values: Object) -> Data {
+        // URLComponents encodes a URL query, not an HTML form: it leaves a
+        // literal '+' intact. Weapi ciphertext is Base64, so the server would
+        // decode '+' as a space and reject the request (often with an empty 200).
+        func encode(_ value: String) -> String {
+            value.utf8.map { byte -> String in
+                switch byte {
+                case 65...90, 97...122, 48...57, 42, 45, 46, 95: return String(UnicodeScalar(byte))
+                case 32: return "+"
+                default: return String(format: "%%%02X", byte)
+                }
+            }.joined()
+        }
+        return Data(values.keys.sorted().map { encode($0) + "=" + encode(String(describing: values[$0]!)) }.joined(separator: "&").utf8)
     }
     func finishHTTP(_ id: Int, value: Object?, error: String?) {
         let json = value.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"

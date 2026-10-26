@@ -81,6 +81,40 @@ jobs:
             build/own-ui/own-phone-handshake.json
             build/own-ui/own-phone-runtime.log
           if-no-files-found: ignore
+  provider-http:
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python3 OwnUI/scripts/prepare.py
+      - name: Verify native form bytes against a strict HTTP server
+        working-directory: NativeCompanion
+        run: |
+          mkdir -p build
+          git show b5573e2df5139e0b08da02ab90b94a99dccb030a:NativeCompanion/Sources/LocalEngine.swift > build/LegacyLocalEngine.swift
+          xcrun swiftc Sources/Core.swift build/LegacyLocalEngine.swift Tests/engine-native.swift -o build/legacy-form-tests
+          if node Tests/engine-http.cjs build/legacy-form-tests > build/legacy-form-regression.log 2>&1; then
+            echo 'ERROR: old encoder unexpectedly passed the strict ciphertext fixture'
+            exit 1
+          fi
+          python3 -c "from pathlib import Path; assert 'Form ciphertext changed in native HTTP bridge' in Path('build/legacy-form-regression.log').read_text()"
+          echo 'Confirmed: the previous native encoder corrupts form ciphertext.'
+          xcrun swiftc Sources/Core.swift Sources/LocalEngine.swift Tests/engine-native.swift -o build/engine-native-tests
+          node Tests/engine-http.cjs build/engine-native-tests
+      - name: Verify live playlists through production JavaScriptCore and URLSession
+        working-directory: NativeCompanion
+        run: |
+          xcrun swiftc Sources/Core.swift Sources/LocalEngine.swift ../OwnUI/Tests/LiveCatalogue.swift -o build/live-catalogue-tests
+          build/live-catalogue-tests
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: LX-OwnUI-Provider-HTTP
+          path: NativeCompanion/build/provider-live-checks.json
+          if-no-files-found: ignore
   lockscreen-carplay:
     runs-on: macos-15
     timeout-minutes: 12

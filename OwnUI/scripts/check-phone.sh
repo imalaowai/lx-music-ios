@@ -9,7 +9,7 @@ cp build/own-ui/resources/* "$HOST_DIR/"
 python3 -c "import base64,pathlib;pathlib.Path('build/own-ui/LXOwnHost.app/local-audio.flac').write_bytes(base64.b64decode(pathlib.Path('OwnUI/Tests/local-audio.flac.base64').read_text()))"
 python3 - <<'PY'
 import pathlib,plistlib
-info={'CFBundleIdentifier':'net.minyue.lxownui.verify','CFBundleExecutable':'LXOwnHost','CFBundleName':'LXOwnHost','CFBundleDisplayName':'栖页音乐验证','CFBundlePackageType':'APPL','CFBundleVersion':'91','CFBundleShortVersionString':'1.9.8','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False,'UISceneConfigurations':{'UIWindowSceneSessionRoleApplication':[{'UISceneConfigurationName':'Phone'}]}},'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True,'NSAllowsArbitraryLoads':True}}
+info={'CFBundleIdentifier':'net.minyue.lxownui.verify','CFBundleExecutable':'LXOwnHost','CFBundleName':'LXOwnHost','CFBundleDisplayName':'栖页音乐验证','CFBundlePackageType':'APPL','CFBundleVersion':'92','CFBundleShortVersionString':'1.9.9','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False,'UISceneConfigurations':{'UIWindowSceneSessionRoleApplication':[{'UISceneConfigurationName':'Phone'}]}},'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True,'NSAllowsArbitraryLoads':True}}
 pathlib.Path('build/own-ui/LXOwnHost.app/Info.plist').write_bytes(plistlib.dumps(info))
 PY
 xcrun clang -c -arch "$(uname -m)" -isysroot "$SDK" -mios-simulator-version-min=15.0 -fobjc-arc OwnUI/Tests/PhoneLookup.m -o build/own-ui/phone-lookup.o

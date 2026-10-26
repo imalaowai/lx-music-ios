@@ -33,7 +33,7 @@ python3 - <<'PY'
 import hashlib,json,pathlib,struct,zipfile
 d=pathlib.Path('build/own-ui');b=(d/'main.jsbundle').read_bytes()
 assert struct.unpack_from('<I',b,8)[0]==96
-metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.8','build':'91','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
+metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.9','build':'92','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
 (d/'components.json').write_text(json.dumps(metadata,indent=2)+'\n')
 with zipfile.ZipFile(d/'LX-OwnUI-Native-Components.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     for name in ['main.jsbundle','LXFullCarPlay.dylib','components.json']:z.write(d/name,name)
