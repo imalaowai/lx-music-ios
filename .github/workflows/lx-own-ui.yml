@@ -1,4 +1,5 @@
 name: LX Own UI Rooms Chat Native IPA Components
+# Lock-screen transition clock freeze regression is exercised by lockscreen-carplay.
 on:
   push:
     branches: [codex/native-web-carplay, fix/lockscreen-progress-clock]
