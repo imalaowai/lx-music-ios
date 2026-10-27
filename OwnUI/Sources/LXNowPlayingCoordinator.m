@@ -124,7 +124,9 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
         // elapsed time at 1x even though the old decoder has already been paused;
         // when the new track arrives, the timeline visibly jumps back to zero.
         NSMutableDictionary *frozen=[self.publishedInfo mutableCopy];
-        frozen[MPNowPlayingInfoPropertyPlaybackRate]=@0;
+        // Keep the Now Playing session in its active state so iOS continues routing lock-screen commands.
+        // 0.01x is effectively stationary during a short track transition without publishing a paused session.
+        frozen[MPNowPlayingInfoPropertyPlaybackRate]=@0.01;
         if(![self.publishedInfo isEqualToDictionary:frozen]) {
             MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=frozen;
             self.publishedInfo=[frozen copy];
