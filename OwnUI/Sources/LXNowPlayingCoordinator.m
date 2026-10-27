@@ -129,7 +129,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     double elapsed=[value[@"elapsedTime"] doubleValue];info[MPNowPlayingInfoPropertyElapsedPlaybackTime]=@(isfinite(elapsed)?MAX(0,elapsed):0);
     // Show the user's play/pause intent through buffering, without reporting
     // every transient decoder zero-rate as a pause and changing the controls.
-    double rate=[value[@"playbackRate"] doubleValue];info[MPNowPlayingInfoPropertyPlaybackRate]=self.wanted?@(isfinite(rate)&&rate>0?rate:1):@0;
+    double rate=[value[@"playbackRate"] doubleValue];
+    // Playback intent controls the buttons, but must never manufacture clock
+    // progress while the native decoder is paused or waiting for a sample.
+    BOOL clockRunning=self.wanted && ![value[@"loading"] boolValue] && ![value[@"interrupted"] boolValue] && isfinite(rate) && rate>0;
+    info[MPNowPlayingInfoPropertyPlaybackRate]=clockRunning?@(rate):@0;
     info[MPNowPlayingInfoPropertyDefaultPlaybackRate]=@1;
     info[MPMediaItemPropertyArtwork]=self.artwork?:[self defaultArtwork];
     if(![self.publishedInfo isEqualToDictionary:info]) { MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=info;self.publishedInfo=[info copy]; }
