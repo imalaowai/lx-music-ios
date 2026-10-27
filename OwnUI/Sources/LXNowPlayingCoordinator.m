@@ -119,6 +119,16 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     // A new stream may take time to resolve/open. Keep the last complete card
     // until the replacement is ready; actual pause/output loss always wins.
     if(self.wanted && [self.snapshot[@"loading"] boolValue] && self.publishedInfo.count && self.generation!=self.presentedGeneration) {
+        // Retain the last complete card while the next track resolves, but freeze
+        // its system playback clock. Otherwise iOS continues advancing the old
+        // elapsed time at 1x even though the old decoder has already been paused;
+        // when the new track arrives, the timeline visibly jumps back to zero.
+        NSMutableDictionary *frozen=[self.publishedInfo mutableCopy];
+        frozen[MPNowPlayingInfoPropertyPlaybackRate]=@0;
+        if(![self.publishedInfo isEqualToDictionary:frozen]) {
+            MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=frozen;
+            self.publishedInfo=[frozen copy];
+        }
         [self updateControls];return;
     }
     NSDictionary *value=self.snapshot;NSMutableDictionary *info=[NSMutableDictionary dictionary];
