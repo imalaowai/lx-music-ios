@@ -24,7 +24,9 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     [owner receive:a];
     check([center.nowPlayingInfo[titleKey] isEqual:@"B"],@"staleGenerationCannotRestorePreviousSong");
     b[@"playbackRate"]=@0;b[@"loading"]=@YES;[owner receive:b];
-    check([center.nowPlayingInfo[rateKey] doubleValue]==1 && commands.pauseCommand.enabled,@"bufferingDoesNotTransientlyDisplayPausedControls");
+    check([center.nowPlayingInfo[rateKey] doubleValue]==0 && commands.pauseCommand.enabled,@"bufferingFreezesLockScreenClockWithoutChangingPauseControls");
+    b[@"loading"]=@NO;b[@"playbackRate"]=@1;[owner receive:b];
+    check([center.nowPlayingInfo[rateKey] doubleValue]==1 && commands.pauseCommand.enabled,@"confirmedPlaybackResumesLockScreenClock");
     b[@"interrupted"]=@YES;[owner receive:b];
     check([center.nowPlayingInfo[rateKey] doubleValue]==0 && commands.playCommand.enabled,@"systemInterruptionStillShowsPausedControls");
     b[@"interrupted"]=@NO;
