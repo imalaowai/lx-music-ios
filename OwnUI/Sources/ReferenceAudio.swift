@@ -16,6 +16,7 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
     var hasFailed: Bool { failedGeneration == generation }
     var sampledPosition = 0.0
     var sampledAt = 0.0
+    var lastReportAt = 0.0
     var sampledLoading = false
     var didChange: (() -> Void)?
     var didEnd: (() -> Void)?
@@ -39,18 +40,32 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
                 self.sampledPosition = local.currentTime; self.sampledAt = Date().timeIntervalSince1970
                 self.rate = local.isPlaying ? 1 : 0; self.timeControlStatus = local.isPlaying ? .playing : .paused
                 self.didChange?()
-            } else if self.currentItem != nil, !self.hasFailed { self.send("probe") }
+            } else if self.currentItem != nil, !self.hasFailed {
+                // Keep foreground UI snapshots flowing even if the asynchronous
+                // decoder probe is delayed. currentTime() extrapolates from the
+                // last known native clock until an authoritative sample arrives.
+                if Date().timeIntervalSince1970 - self.lastReportAt > 0.75 { self.didChange?() }
+                self.send("probe")
+            }
         }
         timer=progressTimer;RunLoop.main.add(progressTimer,forMode:.common)
     }
+    static func interpolatedPosition(sampledPosition: Double, sampledAt: Double, rate: Double, isPlaying: Bool, duration: Double, now: Double) -> Double {
+        let base = sampledPosition.isFinite ? max(0, sampledPosition) : 0
+        let safeRate = rate.isFinite ? max(0, rate) : 0
+        let elapsed = now.isFinite && sampledAt.isFinite ? max(0, now - sampledAt) : 0
+        let position = base + (isPlaying ? elapsed * safeRate : 0)
+        return duration.isFinite && duration > 0 ? min(duration, position) : position
+    }
     func currentTime() -> CMTime {
         if let local = localAudio { return CMTime(seconds: local.currentTime, preferredTimescale: 600) }
-        let advance=timeControlStatus == .playing ? min(1.5,max(0,Date().timeIntervalSince1970-sampledAt))*Double(rate) : 0
-        let duration=currentItem?.duration.seconds ?? 0
-        return CMTime(seconds:duration>0 ? min(duration,sampledPosition+advance) : sampledPosition+advance, preferredTimescale:600)
+        let duration = currentItem?.duration.seconds ?? 0
+        let position = Self.interpolatedPosition(sampledPosition: sampledPosition, sampledAt: sampledAt, rate: Double(rate), isPlaying: timeControlStatus == .playing, duration: duration, now: Date().timeIntervalSince1970)
+        return CMTime(seconds: position, preferredTimescale: 600)
     }
     func receive(_ value:Object) {
         guard localAudio == nil, !hasFailed, Int(number(value["generation"],-1))==generation, currentItem != nil else { return }
+        lastReportAt = Date().timeIntervalSince1970
         if let position=value["position"] { sampledPosition=max(0,number(position)); sampledAt=number(value["sampledAt"],Date().timeIntervalSince1970*1000)/1000 }
         if number(value["duration"])>0 { currentItem?.duration=CMTime(seconds:number(value["duration"]),preferredTimescale:600) }
         if value["playing"] != nil {
@@ -73,11 +88,11 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
     }
     func replaceCurrentItem(with unused: Item?, preservingNowPlaying: Bool = false) {
         localAudio?.stop(); localAudio?.delegate = nil; localAudio = nil
-        generation += 1; pending.removeAll(); currentItem=nil; sampledPosition=0; sampledAt=Date().timeIntervalSince1970; rate=0; timeControlStatus = .paused
+        generation += 1; pending.removeAll(); currentItem=nil; sampledPosition=0; sampledAt=Date().timeIntervalSince1970; lastReportAt=sampledAt; rate=0; timeControlStatus = .paused
         send(preservingNowPlaying ? "transition" : "clear")
     }
     func load(_ url:URL,song:Song,quality:String,position:Double,paused:Bool,completion:@escaping(Result<Object,Error>)->Void) {
-        generation += 1; pending.removeAll(); currentItem=Item(); sampledPosition=position; sampledAt=Date().timeIntervalSince1970; timeControlStatus = .waitingToPlayAtSpecifiedRate
+        generation += 1; pending.removeAll(); currentItem=Item(); sampledPosition=position; sampledAt=Date().timeIntervalSince1970; lastReportAt=sampledAt; timeControlStatus = .waitingToPlayAtSpecifiedRate
         RuntimeTrace.record("audio.load",["generation":generation,"local":url.isFileURL,"paused":paused,"quality":quality])
         if url.isFileURL {
             do {
