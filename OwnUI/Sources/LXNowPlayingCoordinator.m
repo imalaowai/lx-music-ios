@@ -36,7 +36,6 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 @property(nonatomic) BOOL controlsInstalled;
 @property(nonatomic) BOOL receivingRemote;
 @property(nonatomic) NSInteger lastPlaybackState;
-@property(nonatomic,strong) NSNumber *controlsWanted;
 @property(nonatomic,strong) NSDictionary *pendingSnapshot;
 @property(nonatomic) BOOL pendingClear;
 @property(nonatomic) BOOL flushScheduled;
@@ -60,14 +59,14 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     // The existing SDK owns its remote command targets. Never remove unrelated
     // targets; its emitter is forwarded directly to Swift by LXAudioRouteSafety.
     if(!atomic_load(&LXNPOwned))return;
-    self.controlsInstalled=YES;self.controlsWanted=nil;[self updateControls];
+    self.controlsInstalled=YES;[self updateControls];
 }
 - (void)updateControls {
     BOOL active=atomic_load(&LXNPOwned),wanted=self.wanted;
-    NSInteger signature=active?(wanted?2:1):0;
-    if(self.controlsWanted && self.controlsWanted.integerValue==signature)return;
-    self.controlsWanted=@(signature);
     MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
+    // Another native owner or the system can change command availability while
+    // Now Playing metadata is refreshed. Reassert the desired flags every time;
+    // a cached wanted/paused signature is not proof that the flags still match.
     center.playCommand.enabled=active && !wanted;center.pauseCommand.enabled=active && wanted;
     center.stopCommand.enabled=active;center.togglePlayPauseCommand.enabled=NO;
     center.nextTrackCommand.enabled=active;center.previousTrackCommand.enabled=active;center.changePlaybackPositionCommand.enabled=active;
@@ -194,7 +193,7 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=nil;MPNowPlayingInfoCenter.defaultCenter.playbackState=MPNowPlayingPlaybackStateStopped;
     [self updateControls];
     if(self.receivingRemote) { [UIApplication.sharedApplication endReceivingRemoteControlEvents];self.receivingRemote=NO; }
-    self.controlsInstalled=NO;self.controlsWanted=nil;self.lastPlaybackState=-1;
+    self.controlsInstalled=NO;self.lastPlaybackState=-1;
 }
 @end
 
