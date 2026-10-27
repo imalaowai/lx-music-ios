@@ -1,7 +1,7 @@
 name: LX Own UI Rooms Chat Native IPA Components
 on:
   push:
-    branches: [codex/native-web-carplay]
+    branches: [codex/native-web-carplay, fix/lockscreen-progress-clock]
     paths: ['OwnUI/**', 'NativeCompanion/Sources/**', 'NativeCompanion/Resources/**', 'NativeCompanion/WebOverrides/**', 'FullReference/**', '.github/workflows/lx-own-ui.yml']
   workflow_dispatch:
 permissions:
