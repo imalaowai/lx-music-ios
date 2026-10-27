@@ -34,6 +34,8 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 @property(nonatomic) NSInteger presentedGeneration;
 @property(nonatomic) BOOL held;
 @property(nonatomic) BOOL controlsInstalled;
+@property(nonatomic,strong) id nextTrackTarget;
+@property(nonatomic,strong) id previousTrackTarget;
 @property(nonatomic) BOOL receivingRemote;
 @property(nonatomic) NSInteger lastPlaybackState;
 @property(nonatomic,strong) NSDictionary *pendingSnapshot;
@@ -55,10 +57,25 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     }return self;
 }
 - (BOOL)wanted { return [self.snapshot[@"wanted"] boolValue] && ![self.snapshot[@"interrupted"] boolValue] && !self.held; }
+- (MPRemoteCommandHandlerStatus)handleNativeTrackCommand:(NSString *)command {
+    if(!atomic_load(&LXNPOwned))return MPRemoteCommandHandlerStatusCommandFailed;
+    LXOwnDeliverRemoteCommand(command,nil,NSProcessInfo.processInfo.systemUptime);
+    return MPRemoteCommandHandlerStatusSuccess;
+}
 - (void)installControls {
-    // The existing SDK owns its remote command targets. Never remove unrelated
-    // targets; its emitter is forwarded directly to Swift by LXAudioRouteSafety.
+    // The SDK does not reliably register next/previous handlers unless its JS
+    // capabilities are configured. Install native fallbacks for those two
+    // commands so lock-screen taps still reach the native queue when JS sleeps.
+    // Keep every SDK target intact; remove only the two targets owned here.
     if(!atomic_load(&LXNPOwned))return;
+    MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
+    __weak LXNowPlayingCoordinator *weakSelf=self;
+    if(!self.nextTrackTarget)self.nextTrackTarget=[center.nextTrackCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event){
+        return [weakSelf handleNativeTrackCommand:@"next"];
+    }];
+    if(!self.previousTrackTarget)self.previousTrackTarget=[center.previousTrackCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event){
+        return [weakSelf handleNativeTrackCommand:@"previous"];
+    }];
     self.controlsInstalled=YES;[self updateControls];
 }
 - (void)updateControls {
@@ -193,6 +210,9 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=nil;MPNowPlayingInfoCenter.defaultCenter.playbackState=MPNowPlayingPlaybackStateStopped;
     [self updateControls];
     if(self.receivingRemote) { [UIApplication.sharedApplication endReceivingRemoteControlEvents];self.receivingRemote=NO; }
+    MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
+    if(self.nextTrackTarget){[center.nextTrackCommand removeTarget:self.nextTrackTarget];self.nextTrackTarget=nil;}
+    if(self.previousTrackTarget){[center.previousTrackCommand removeTarget:self.previousTrackTarget];self.previousTrackTarget=nil;}
     self.controlsInstalled=NO;self.lastPlaybackState=-1;
 }
 @end
