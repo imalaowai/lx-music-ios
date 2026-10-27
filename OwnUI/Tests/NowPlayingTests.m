@@ -18,11 +18,16 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     NSDictionary *before=[center.nowPlayingInfo copy];
     NSMutableDictionary *b=[a mutableCopy];b[@"songId"]=@"B";b[@"title"]=@"B";b[@"generation"]=@2;b[@"loading"]=@YES;b[@"duration"]=@0;b[@"playbackRate"]=@0;
     [owner receive:b];
+    // Simulate a competing native owner changing the enabled flags during the
+    // transition. The coordinator must repair them even when wanted is unchanged.
+    commands.playCommand.enabled=NO;commands.pauseCommand.enabled=NO;
+    commands.nextTrackCommand.enabled=NO;commands.previousTrackCommand.enabled=NO;
+    [owner receive:b];
     check([center.nowPlayingInfo[titleKey] isEqual:@"A"] &&
           [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[before[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
           [center.nowPlayingInfo[rateKey] doubleValue]>0 && [center.nowPlayingInfo[rateKey] doubleValue]<0.02 &&
-          commands.pauseCommand.enabled && commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled,
-          @"resolvingNextTrackKeepsCompleteCardAndActiveRemoteControlsWithNearFrozenClock");
+          !commands.playCommand.enabled && commands.pauseCommand.enabled && commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled,
+          @"resolvingNextTrackKeepsCompleteCardAndRepairsActiveRemoteControls");
     b[@"loading"]=@NO;b[@"duration"]=@240;b[@"playbackRate"]=@1;b[@"elapsedTime"]=@0;[owner receive:b];
     check([center.nowPlayingInfo[titleKey] isEqual:@"B"] && [center.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] intValue]==240,@"readyTrackReplacesMetadataWithoutEmptyIntermediateCard");
     [owner receive:a];
