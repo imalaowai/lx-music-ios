@@ -18,7 +18,10 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     NSDictionary *before=[center.nowPlayingInfo copy];
     NSMutableDictionary *b=[a mutableCopy];b[@"songId"]=@"B";b[@"title"]=@"B";b[@"generation"]=@2;b[@"loading"]=@YES;b[@"duration"]=@0;b[@"playbackRate"]=@0;
     [owner receive:b];
-    check([center.nowPlayingInfo isEqualToDictionary:before] && commands.pauseCommand.enabled,@"resolvingNextTrackKeepsCompleteCardAndPauseButton");
+    check([center.nowPlayingInfo[titleKey] isEqual:@"A"] &&
+          [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[before[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
+          [center.nowPlayingInfo[rateKey] doubleValue]==0 && commands.pauseCommand.enabled,
+          @"resolvingNextTrackKeepsCompleteCardButFreezesOldProgressClock");
     b[@"loading"]=@NO;b[@"duration"]=@240;b[@"playbackRate"]=@1;b[@"elapsedTime"]=@0;[owner receive:b];
     check([center.nowPlayingInfo[titleKey] isEqual:@"B"] && [center.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] intValue]==240,@"readyTrackReplacesMetadataWithoutEmptyIntermediateCard");
     [owner receive:a];
@@ -45,11 +48,15 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     check(owner.artwork==kept,@"staleArtworkCompletionCannotReplaceNewTrackCover");
     NSMutableDictionary *c=[b mutableCopy];c[@"songId"]=@"C";c[@"title"]=@"C";c[@"generation"]=@3;c[@"loading"]=@YES;[owner receive:c];
     NSDictionary *retained=[center.nowPlayingInfo copy];[owner finishArtwork:owner.placeholder epoch:owner.coverEpoch];
-    check([center.nowPlayingInfo isEqualToDictionary:retained],@"prefetchedNextCoverCannotAppearOnRetainedPreviousSong");
+    check([center.nowPlayingInfo isEqualToDictionary:retained] && [center.nowPlayingInfo[rateKey] doubleValue]==0,
+          @"prefetchedNextCoverCannotAppearAndOldClockStaysFrozenDuringTransition");
     c[@"loading"]=@NO;[owner receive:c];
     check(center.nowPlayingInfo[MPMediaItemPropertyArtwork]!=nil,@"missingArtworkUsesStableMusicPlaceholder");
     NSDictionary *complete=[center.nowPlayingInfo copy];c[@"generation"]=@4;c[@"loading"]=@YES;c[@"duration"]=@0;c[@"elapsedTime"]=@0;[owner receive:c];
-    check([center.nowPlayingInfo isEqualToDictionary:complete],@"repeatingSameTrackAlsoRetainsCompleteCardUntilReady");
+    check([center.nowPlayingInfo[titleKey] isEqual:@"C"] &&
+          [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[complete[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
+          [center.nowPlayingInfo[rateKey] doubleValue]==0,
+          @"repeatingSameTrackRetainsCardAndFreezesProgressUntilReady");
     __block NSDictionary *remote;id observer=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){remote=note.userInfo;}];
     LXOwnDeliverRemoteCommand(@"next",nil,NSProcessInfo.processInfo.systemUptime);[NSNotificationCenter.defaultCenter removeObserver:observer];
     check([remote[@"command"] isEqual:@"next"] && [remote[@"eventAt"] doubleValue]>0,@"nativeRemoteButtonsDeliverTimestampedCommandsWithoutJavaScript");
