@@ -122,3 +122,10 @@ test('Per-song lyric calibration never seeks audio and separates identical IDs f
  f.window.LXBridge.state({position:0});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
  assert.equal(f.messages.some(m=>m.op==='seek'),false);
 });
+
+test('Local source URL-only responses are not treated as confirmed lossless quality',()=>{
+  const engine=fs.readFileSync(require('node:path').join(__dirname,'../generated/LocalEngine.js'),'utf8');
+  assert.match(engine,/qualityReported:!!sourceQuality/);
+  assert.match(engine,/音源返回的实际格式或音质低于请求档位/);
+  assert.doesNotMatch(engine,/return\\{url:A,type:w,sourceId:p\\.id\\}/);
+});
