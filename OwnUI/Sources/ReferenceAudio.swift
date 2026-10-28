@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import UIKit
 
 // Online audio uses the reference TrackPlayer / streaming FLAC modules.
 // On-device files use AVAudioPlayer directly, without web URLs or a JS load.
@@ -42,7 +43,7 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
                 self.sampledPosition = local.currentTime; self.sampledAt = Date().timeIntervalSince1970
                 self.rate = local.isPlaying ? 1 : 0; self.timeControlStatus = local.isPlaying ? .playing : .paused
                 self.didChange?()
-            } else if self.currentItem != nil, !self.hasFailed {
+            } else if self.currentItem != nil, !self.hasFailed, UIApplication.shared.applicationState == .active {
                 // Keep foreground UI snapshots flowing even if the asynchronous
                 // decoder probe is delayed. currentTime() extrapolates from the
                 // last known native clock until an authoritative sample arrives.
