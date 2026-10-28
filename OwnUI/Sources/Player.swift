@@ -51,8 +51,6 @@ final class Player {
     var position: Double { let n = audio.currentTime().seconds; return n.isFinite ? max(0, n) : 0 }
     var duration: Double { let n = audio.currentItem?.duration.seconds ?? 0; return n.isFinite ? max(0, n) : 0 }
 
-    var remoteAt = 0.0
-    var remoteKey = ""
     var lastOutputLossAt = 0.0
     private init() {
         restoreQueue()
@@ -108,13 +106,13 @@ final class Player {
         NotificationCenter.default.post(name: Notification.Name("LXOwnAudioRouteHold"), object: nil, userInfo: ["held":false])
     }
     func remote(_ value:Object) {
-        let command=text(value["command"]), now=ProcessInfo.processInfo.systemUptime
+        let command=text(value["command"])
         let eventAt=number(value["eventAt"])
         if eventAt>0 && eventAt<lastOutputLossAt {
             RuntimeTrace.record("audio.stale-remote-ignored",["command":command]);return
         }
-        guard command != remoteKey || now-remoteAt>0.2 else { return }
-        remoteKey=command;remoteAt=now
+        // Track skipping has one native entry point. Do not debounce identical commands by
+        // wall-clock spacing: a real double tap must advance twice, not disappear within 200 ms.
         switch command { case "play":play();case "pause", "stop":pause();case "toggle":wanted ? pause() : play();case "next":move();case "previous":move(previous:true);case "seek":seek(number(value["position"]));default:break }
     }
     func configure(_ credentials: Credentials?) {
