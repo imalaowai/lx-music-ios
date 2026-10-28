@@ -50,6 +50,14 @@ enum PlayerRouteTests {
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:0])
                 try record(!player.interrupted && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionWithoutResumeOptionStaysPaused")
+                // Two intentional next taps inside the old 200 ms debounce window must
+                // advance twice. A fake deviceKey fails resolution immediately without network I/O.
+                let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\\($0)","name":"Remote \\($0)","source":"wy","deviceKey":"fixture-\\($0)"])}
+                player.queue=remoteQueue;player.index=0;player.mode="order";player.wanted=false;player.loading=false;player.failure=""
+                let commandAt=ProcessInfo.processInfo.systemUptime
+                player.remote(["command":"next","eventAt":commandAt])
+                player.remote(["command":"next","eventAt":commandAt+0.01])
+                try record(player.index==2,"rapidIntentionalNextCommandsAdvanceTwice")
                 player.room.disconnect(clear:true);player.pause(user:false);player.failure=""
                 finish()
             } catch { finish(error) }
