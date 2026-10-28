@@ -13,6 +13,7 @@ final class Player {
     var quality = "flac"
     var allowFallback = true
     var resolvedQuality = ""
+    var resolvedQualityReported = false
     var wanted = false
     var loading = false
     var failure = ""
@@ -120,7 +121,7 @@ final class Player {
         if room.active, songs[target].raw["deviceKey"] != nil || text(songs[target].raw["url"]).hasPrefix("file:") {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
-        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; resolvedQuality = ""; generation += 1
+        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; resolvedQuality = ""; resolvedQualityReported = false; generation += 1
         timelineRevision += 1; seeking = false
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()
@@ -137,10 +138,10 @@ final class Player {
         resolution = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback) { [weak self] result in
             guard let self = self, self.generation == epoch else { return }
             do {
-                let (url, resolved) = try result.get()
-                self.resolvedQuality = resolved; self.currentURL = url
-                RuntimeTrace.record("audio.quality-resolved", ["source": text(song.raw["source"]), "requested": requestedQuality, "reported": resolved])
-                let item = AVPlayerItem(url: url)
+                let media = try result.get()
+                self.resolvedQuality = media.playbackQuality; self.resolvedQualityReported = media.qualityReported; self.currentURL = media.url
+                RuntimeTrace.record("audio.quality-resolved", ["source": text(song.raw["source"]), "requested": requestedQuality, "reported": media.playbackQuality, "qualityReported": media.qualityReported])
+                let item = AVPlayerItem(url: media.url)
                 item.preferredForwardBufferDuration = 1
                 self.statusObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
                     DispatchQueue.main.async {
@@ -220,7 +221,7 @@ final class Player {
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
     func snapshot(includeQueue: Bool = true) -> Object {
-        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": audio.rate, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "qualityReported": resolvedQualityReported, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {
