@@ -14,6 +14,8 @@ let platformOnlyFLAC:Object = ["types":[["type":"flac","isPlatformQuality":true]
 check(QualityPolicy.best(for: platformOnlyFLAC, preference: "flac", allowFallback: true) == "320k", "ignore placeholder platform quality entries")
 check(QualityPolicy.best(for: compressedSong, preference: "flac24bit", allowFallback: false) == "flac24bit", "respect explicit no-fallback preference")
 check(QualityPolicy.best(for: ["name":"no metadata"], preference: "flac", allowFallback: true) == "flac", "keep requested quality when source metadata is absent")
+let nestedQuality:Object = ["types":NSNull(),"meta":["_qualitys":["128k":["size":1],"flac":["size":1]]]]
+check(QualityPolicy.best(for: nestedQuality, preference: "flac", allowFallback: true) == "flac", "null top-level quality metadata falls back to nested metadata")
 var order = RoomOrder()
 order.pendingID = "newer"; order.pendingKey = "C"
 check(!order.accept(["revision": 5, "controllerId": "me", "commandId": "older", "songKey": "B"], participant: "me"), "late own track ACK must not rewind C to B")
