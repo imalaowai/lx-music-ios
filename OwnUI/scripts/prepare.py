@@ -10,7 +10,7 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
     assert hashlib.sha256(data).hexdigest()==metadata[key],name+' integrity mismatch'
     if name=='LocalEngine':
         marker=b'return{url:A,type:w,sourceId:p.id}'
-        replacement=b'return{url:A,type:typeof E==="object"&&E!==null&&(typeof E.type==="string"||typeof E.quality==="string")?(E.type||E.quality):w,qualityReported:typeof E==="object"&&E!==null&&(typeof E.type==="string"||typeof E.quality==="string"),sourceId:p.id}'
+        replacement=b'let sourceQuality=typeof E==="object"&&E!==null?(typeof E.type==="string"?E.type:typeof E.quality==="string"?E.quality:""):"";let qualityOrder=["master","atmos_plus","atmos","hires","flac24bit","flac","320k","192k","128k"];let requestedRank=qualityOrder.indexOf(w),actualRank=qualityOrder.indexOf(sourceQuality),urlPath=new URL(A).pathname.toLowerCase();if((sourceQuality&&requestedRank>=0&&actualRank>requestedRank)||((w==="flac"||w==="flac24bit")&&/\\.(mp3|m4a|aac|ogg|opus)$/.test(urlPath)))throw new Error("音源返回的实际格式或音质低于请求档位");return{url:A,type:sourceQuality||w,qualityReported:!!sourceQuality,sourceId:p.id}'
         assert data.count(marker)==1,'Local source quality return anchor changed; review resolver before rebuilding'
         data=data.replace(marker,replacement)
     if name=='WebUI':
