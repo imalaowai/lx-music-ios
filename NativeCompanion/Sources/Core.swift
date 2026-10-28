@@ -53,6 +53,65 @@ struct Song {
     var name: String { text(raw["name"]) }
     var artist: String { text(raw["singer"]).isEmpty ? text(raw["artist"]) : text(raw["singer"]) }
 }
+
+// Mirror the bundled WebUI QualityManager before a track is handed to the native
+// resolver. The WebView's playSong hook is replaced by the native queue bridge,
+// so relying on its normal getBestQuality() call silently skipped per-song checks.
+enum QualityPolicy {
+    static let priority = ["master", "atmos_plus", "atmos", "hires", "flac24bit", "flac", "320k", "192k", "128k"]
+
+    private static func isAvailableEntry(_ entry: Any) -> Bool {
+        if entry is NSNull { return false }
+        if let value = entry as? NSNumber, !value.boolValue { return false }
+        if let value = entry as? String, value.isEmpty { return false }
+        if let value = entry as? Object, bool(value["isPlatformQuality"]) { return false }
+        return true
+    }
+
+    static func available(in song: Object) -> Set<String> {
+        let keys = ["types", "_types", "qualitys", "_qualitys"]
+        var raw: Any?
+        for key in keys {
+            if let value = song[key] { raw = value; break }
+        }
+        if raw == nil, let meta = song["meta"] as? Object {
+            for key in keys {
+                if let value = meta[key] { raw = value; break }
+            }
+        }
+        guard let raw = raw else { return [] }
+        if let entries = raw as? [Any] {
+            return Set(entries.compactMap { entry -> String? in
+                guard isAvailableEntry(entry) else { return nil }
+                if let object = entry as? Object {
+                    let type = text(object["type"])
+                    return type.isEmpty ? nil : type
+                }
+                let type = text(entry)
+                return type.isEmpty ? nil : type
+            })
+        }
+        if let entries = raw as? Object {
+            return Set(entries.compactMap { key, entry in isAvailableEntry(entry) ? key : nil })
+        }
+        return []
+    }
+
+    private static func lowToHigh(_ qualities: Set<String>) -> [String] {
+        qualities.sorted {
+            (priority.firstIndex(of: $0) ?? priority.count) > (priority.firstIndex(of: $1) ?? priority.count)
+        }
+    }
+
+    static func best(for song: Object, preference: String, allowFallback: Bool) -> String {
+        guard allowFallback else { return priority.contains(preference) ? preference : "flac" }
+        let available = available(in: song)
+        guard !available.isEmpty else { return priority.contains(preference) ? preference : "flac" }
+        guard let start = priority.firstIndex(of: preference) else { return lowToHigh(available).first ?? "128k" }
+        for quality in priority[start...] where available.contains(quality) { return quality }
+        return lowToHigh(available).first ?? "128k"
+    }
+}
 enum QueuePolicy {
     static func next(count: Int, index: Int, mode: String, previous: Bool = false, automatic: Bool = false) -> Int? {
         guard count > 0 else { return nil }
