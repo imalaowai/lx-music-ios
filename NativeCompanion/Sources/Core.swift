@@ -68,15 +68,22 @@ enum QualityPolicy {
         return true
     }
 
+    private static func isTruthyMetadata(_ value: Any) -> Bool {
+        if value is NSNull { return false }
+        if let value = value as? NSNumber, !value.boolValue { return false }
+        if let value = value as? String, value.isEmpty { return false }
+        return true
+    }
+
     static func available(in song: Object) -> Set<String> {
         let keys = ["types", "_types", "qualitys", "_qualitys"]
         var raw: Any?
         for key in keys {
-            if let value = song[key] { raw = value; break }
+            if let value = song[key], isTruthyMetadata(value) { raw = value; break }
         }
         if raw == nil, let meta = song["meta"] as? Object {
             for key in keys {
-                if let value = meta[key] { raw = value; break }
+                if let value = meta[key], isTruthyMetadata(value) { raw = value; break }
             }
         }
         guard let raw = raw else { return [] }
