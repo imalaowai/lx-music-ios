@@ -259,6 +259,16 @@ static void RunTests(void) {
     RNTrackPlayer *track=[RNTrackPlayer new];StreamingFlacPlayerModule *flac=[StreamingFlacPlayerModule new];NowPlayingModule *metadata=[NowPlayingModule new];
     [track sendEventWithName:@"remote-play" body:@{@"position":@17}];
     Check([track.lastEvent[@"nativeEventAt"] doubleValue]>0 && [track.lastEvent[@"position"] intValue]==17,@"remoteCommandsAreTimestampedBeforeJavaScriptQueuesThem");
+    LXNowPlayingCoordinator *skipOwner=LXNowPlayingCoordinator.shared;
+    [skipOwner receive:@{@"songId":@"skip-route-test",@"generation":@500,@"title":@"skip route test",@"wanted":@YES,@"loading":@NO}];
+    __block NSUInteger forwardedSkips=0;
+    id skipObserver=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){
+        NSString *command=note.userInfo[@"command"];if([command isEqual:@"next"]||[command isEqual:@"previous"])forwardedSkips++;
+    }];
+    [track sendEventWithName:@"remote-next" body:@{}];[track sendEventWithName:@"remote-previous" body:@{}];
+    [NSNotificationCenter.defaultCenter removeObserver:skipObserver];
+    Check(forwardedSkips==0,@"trackPlayerSkipEventsCannotCompeteWithDirectNativeQueueTargets");
+    [skipOwner clear];
     [track play:nil rejecter:nil];[flac resumeStreamWithResolver:nil rejecter:nil];
     [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnAudioRouteHold" object:nil userInfo:@{@"held":@YES}];
     Check(track.pauses>0 && flac.pauses>0,@"outputLossPausesBothNativeDecodersWithoutJavaScript");
