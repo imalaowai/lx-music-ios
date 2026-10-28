@@ -120,7 +120,7 @@ final class Player {
         if room.active, songs[target].raw["deviceKey"] != nil || text(songs[target].raw["url"]).hasPrefix("file:") {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
-        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; generation += 1
+        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; resolvedQuality = ""; generation += 1
         timelineRevision += 1; seeking = false
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()
@@ -128,15 +128,18 @@ final class Player {
             guard let self = self else { return }; self.generation += 1; self.resolution?.cancel(); self.fail(ClientError("后台播放链接请求超时，请恢复网络后播放"))
         }
         let epoch = generation, song = songs[target]
+        let requestedQuality = QualityPolicy.best(for: song.raw, preference: quality, allowFallback: allowFallback)
+        RuntimeTrace.record("audio.quality-request", ["source": text(song.raw["source"]), "preference": quality, "requested": requestedQuality, "fallback": allowFallback])
         resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel(); artwork = nil
         audio.pause(); audio.replaceCurrentItem(with: nil); currentURL = nil
         if user { room.sendState(reason: "track") }
         persistQueue(); publish(); updateArtwork(song)
-        resolution = api.resolve(song, quality: quality, allowFallback: allowFallback) { [weak self] result in
+        resolution = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback) { [weak self] result in
             guard let self = self, self.generation == epoch else { return }
             do {
                 let (url, resolved) = try result.get()
                 self.resolvedQuality = resolved; self.currentURL = url
+                RuntimeTrace.record("audio.quality-resolved", ["source": text(song.raw["source"]), "requested": requestedQuality, "reported": resolved])
                 let item = AVPlayerItem(url: url)
                 item.preferredForwardBufferDuration = 1
                 self.statusObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
@@ -165,7 +168,8 @@ final class Player {
         let song = queue[next]
         guard song.raw["deviceKey"] == nil, song.raw["openlist"] == nil, !bool(song.raw["isLocal"]) else { return }
         // Resolve one future address only. AVPlayer opens audio when selected.
-        prefetchTask = api.resolve(song, quality: quality, allowFallback: allowFallback) { _ in }
+        let requestedQuality = QualityPolicy.best(for: song.raw, preference: quality, allowFallback: allowFallback)
+        prefetchTask = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback) { _ in }
     }
     func play(user: Bool = true) {
         guard current != nil else { return }
