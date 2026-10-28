@@ -52,7 +52,7 @@ enum PlayerRouteTests {
                 try record(!player.interrupted && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionWithoutResumeOptionStaysPaused")
                 // Two intentional next taps inside the old 200 ms debounce window must
                 // advance twice. A fake deviceKey fails resolution immediately without network I/O.
-                let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\\($0)","name":"Remote \\($0)","source":"wy","deviceKey":"fixture-\\($0)"])}
+                let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\($0)","name":"Remote \($0)","source":"wy","deviceKey":"fixture-\($0)"])}
                 player.queue=remoteQueue;player.index=0;player.mode="order";player.wanted=false;player.loading=false;player.failure=""
                 let commandAt=ProcessInfo.processInfo.systemUptime
                 player.remote(["command":"next","eventAt":commandAt])
