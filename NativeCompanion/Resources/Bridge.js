@@ -108,7 +108,8 @@
       currentQuality = state.quality || null; playbackProgressReady = state.duration > 0;
       shouldAutoRecoverPlayback = !state.paused; currentLoadingSongId = null;
       const changedSong = key(state.song) !== renderedSong;
-      if (state.song?.name && (changedSong || renderedQuality !== state.quality)) { updatePlayerInfo(state.song, state.quality); renderedQuality = state.quality; }
+      const qualityLabel = state.quality && state.qualityReported === false ? '音质未确认' : state.quality;
+      if (state.song?.name && (changedSong || renderedQuality !== qualityLabel)) { updatePlayerInfo(state.song, qualityLabel); renderedQuality = qualityLabel; }
       if (changedSong && state.song?.name) { renderedSong = key(state.song); try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {} }
       const playing = state.playing === true;
       if (renderedPlaying !== playing) {updatePlayButton(playing); renderedPlaying = playing;}
