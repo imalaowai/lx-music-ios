@@ -45,8 +45,33 @@ RCT_EXPORT_MODULE();
 - (void)startObserving { self.listening=YES; for (NSDictionary *command in self.pending) [self sendEventWithName:@"own-ui-audio-command" body:command]; [self.pending removeAllObjects]; }
 - (void)stopObserving { self.listening=NO; }
 - (void)command:(NSNotification *)note {
-    if (self.listening) [self sendEventWithName:@"own-ui-audio-command" body:note.userInfo];
-    else if (self.pending.count<128) [self.pending addObject:note.userInfo];
+    NSDictionary *command=[note.userInfo isKindOfClass:NSDictionary.class]?note.userInfo:@{};
+    NSString *operation=[command[@"operation"] isKindOfClass:NSString.class]?command[@"operation"]:@"";
+    if(self.listening){[self sendEventWithName:@"own-ui-audio-command" body:command];return;}
+    // Probes are disposable snapshots, not playback commands. Never queue them while
+    // JavaScript is not listening: they can otherwise fill the 128-entry queue and block a track load.
+    if([operation isEqualToString:@"probe"])return;
+    NSInteger generation=[command[@"generation"] integerValue];
+    NSInteger newest=-1;
+    for(NSDictionary *queued in self.pending) newest=MAX(newest,[queued[@"generation"] integerValue]);
+    if(generation<newest)return;
+    if([@[@"load",@"clear",@"transition"] containsObject:operation]){
+        NSIndexSet *stale=[self.pending indexesOfObjectsPassingTest:^BOOL(NSDictionary *queued,NSUInteger idx,BOOL *stop){return [queued[@"generation"] integerValue]<=generation;}];
+        [self.pending removeObjectsAtIndexes:stale];
+    }else if([@[@"play",@"pause"] containsObject:operation]){
+        NSIndexSet *superseded=[self.pending indexesOfObjectsPassingTest:^BOOL(NSDictionary *queued,NSUInteger idx,BOOL *stop){
+            NSString *queuedOperation=[queued[@"operation"] isKindOfClass:NSString.class]?queued[@"operation"]:@"";
+            return [queued[@"generation"] integerValue]==generation && [@[@"play",@"pause"] containsObject:queuedOperation];
+        }];
+        [self.pending removeObjectsAtIndexes:superseded];
+    }else if([@[@"seek",@"volume"] containsObject:operation]){
+        NSIndexSet *superseded=[self.pending indexesOfObjectsPassingTest:^BOOL(NSDictionary *queued,NSUInteger idx,BOOL *stop){
+            return [queued[@"generation"] integerValue]==generation && [queued[@"operation"] isEqual:operation];
+        }];
+        [self.pending removeObjectsAtIndexes:superseded];
+    }
+    if(self.pending.count>=128)[self.pending removeObjectAtIndex:0];
+    [self.pending addObject:command];
 }
 - (void)library:(NSNotification *)note { [LXFullLibrary.shared update:note.userInfo error:nil]; }
 - (void)drain:(NSNotification *)note { for (NSDictionary *action in [LXFullLibrary.shared drain]) [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnCarPlayAction" object:nil userInfo:action]; }

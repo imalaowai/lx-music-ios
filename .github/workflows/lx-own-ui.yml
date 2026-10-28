@@ -1,13 +1,14 @@
 name: LX Own UI Rooms Chat Native IPA Components
+# Lock-screen transition clock and remote-command recovery regressions are exercised by lockscreen-carplay.
 on:
   push:
-    branches: [codex/native-web-carplay]
+    branches: [codex/native-web-carplay, fix/lockscreen-progress-clock]
     paths: ['OwnUI/**', 'NativeCompanion/Sources/**', 'NativeCompanion/Resources/**', 'NativeCompanion/WebOverrides/**', 'FullReference/**', '.github/workflows/lx-own-ui.yml']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: lx-own-ui-${{ github.ref }}
+  group: lx-own-ui-remote-control-fix-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   interface:

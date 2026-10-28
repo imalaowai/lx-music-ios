@@ -14,17 +14,30 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     [owner receive:a];
     MPNowPlayingInfoCenter *center=MPNowPlayingInfoCenter.defaultCenter;MPRemoteCommandCenter *commands=MPRemoteCommandCenter.sharedCommandCenter;
     check([center.nowPlayingInfo[titleKey] isEqual:@"A"] && center.nowPlayingInfo[MPMediaItemPropertyArtwork]!=nil,@"nativeMetadataPublishesWithoutJavaScript");
-    check(commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled && !commands.skipForwardCommand.enabled,@"nativeTransportKeepsTrackButtonsWithoutGlobalCommandHooks");
+    check(commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled &&
+          owner.nextTrackTarget!=nil && owner.previousTrackTarget!=nil && !commands.skipForwardCommand.enabled,
+          @"nativeTransportRegistersDirectNextAndPreviousHandlers");
     NSDictionary *before=[center.nowPlayingInfo copy];
     NSMutableDictionary *b=[a mutableCopy];b[@"songId"]=@"B";b[@"title"]=@"B";b[@"generation"]=@2;b[@"loading"]=@YES;b[@"duration"]=@0;b[@"playbackRate"]=@0;
     [owner receive:b];
-    check([center.nowPlayingInfo isEqualToDictionary:before] && commands.pauseCommand.enabled,@"resolvingNextTrackKeepsCompleteCardAndPauseButton");
+    // Simulate a competing native owner changing the enabled flags during the
+    // transition. The coordinator must repair them even when wanted is unchanged.
+    commands.playCommand.enabled=NO;commands.pauseCommand.enabled=NO;
+    commands.nextTrackCommand.enabled=NO;commands.previousTrackCommand.enabled=NO;
+    [owner receive:b];
+    check([center.nowPlayingInfo[titleKey] isEqual:@"A"] &&
+          [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[before[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
+          [center.nowPlayingInfo[rateKey] doubleValue]>0 && [center.nowPlayingInfo[rateKey] doubleValue]<0.02 &&
+          !commands.playCommand.enabled && commands.pauseCommand.enabled && commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled,
+          @"resolvingNextTrackKeepsCompleteCardAndRepairsActiveRemoteControls");
     b[@"loading"]=@NO;b[@"duration"]=@240;b[@"playbackRate"]=@1;b[@"elapsedTime"]=@0;[owner receive:b];
     check([center.nowPlayingInfo[titleKey] isEqual:@"B"] && [center.nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] intValue]==240,@"readyTrackReplacesMetadataWithoutEmptyIntermediateCard");
     [owner receive:a];
     check([center.nowPlayingInfo[titleKey] isEqual:@"B"],@"staleGenerationCannotRestorePreviousSong");
     b[@"playbackRate"]=@0;b[@"loading"]=@YES;[owner receive:b];
-    check([center.nowPlayingInfo[rateKey] doubleValue]==1 && commands.pauseCommand.enabled,@"bufferingDoesNotTransientlyDisplayPausedControls");
+    check([center.nowPlayingInfo[rateKey] doubleValue]==0 && commands.pauseCommand.enabled,@"bufferingFreezesLockScreenClockWithoutChangingPauseControls");
+    b[@"loading"]=@NO;b[@"playbackRate"]=@1;[owner receive:b];
+    check([center.nowPlayingInfo[rateKey] doubleValue]==1 && commands.pauseCommand.enabled,@"confirmedPlaybackResumesLockScreenClock");
     b[@"interrupted"]=@YES;[owner receive:b];
     check([center.nowPlayingInfo[rateKey] doubleValue]==0 && commands.playCommand.enabled,@"systemInterruptionStillShowsPausedControls");
     b[@"interrupted"]=@NO;
@@ -43,14 +56,30 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     check(owner.artwork==kept,@"staleArtworkCompletionCannotReplaceNewTrackCover");
     NSMutableDictionary *c=[b mutableCopy];c[@"songId"]=@"C";c[@"title"]=@"C";c[@"generation"]=@3;c[@"loading"]=@YES;[owner receive:c];
     NSDictionary *retained=[center.nowPlayingInfo copy];[owner finishArtwork:owner.placeholder epoch:owner.coverEpoch];
-    check([center.nowPlayingInfo isEqualToDictionary:retained],@"prefetchedNextCoverCannotAppearOnRetainedPreviousSong");
+    check([center.nowPlayingInfo isEqualToDictionary:retained] &&
+          [center.nowPlayingInfo[rateKey] doubleValue]>0 && [center.nowPlayingInfo[rateKey] doubleValue]<0.02 &&
+          commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled,
+          @"prefetchedNextCoverCannotAppearAndRemoteControlsStayActiveDuringTransition");
     c[@"loading"]=@NO;[owner receive:c];
     check(center.nowPlayingInfo[MPMediaItemPropertyArtwork]!=nil,@"missingArtworkUsesStableMusicPlaceholder");
     NSDictionary *complete=[center.nowPlayingInfo copy];c[@"generation"]=@4;c[@"loading"]=@YES;c[@"duration"]=@0;c[@"elapsedTime"]=@0;[owner receive:c];
-    check([center.nowPlayingInfo isEqualToDictionary:complete],@"repeatingSameTrackAlsoRetainsCompleteCardUntilReady");
-    __block NSDictionary *remote;id observer=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){remote=note.userInfo;}];
-    LXOwnDeliverRemoteCommand(@"next",nil,NSProcessInfo.processInfo.systemUptime);[NSNotificationCenter.defaultCenter removeObserver:observer];
-    check([remote[@"command"] isEqual:@"next"] && [remote[@"eventAt"] doubleValue]>0,@"nativeRemoteButtonsDeliverTimestampedCommandsWithoutJavaScript");
+    check([center.nowPlayingInfo[titleKey] isEqual:@"C"] &&
+          [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[complete[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
+          [center.nowPlayingInfo[rateKey] doubleValue]>0 && [center.nowPlayingInfo[rateKey] doubleValue]<0.02 &&
+          commands.nextTrackCommand.enabled && commands.previousTrackCommand.enabled,
+          @"repeatingSameTrackRetainsCardAndRemoteControlsStayActiveUntilReady");
+    __block NSMutableArray *remoteEvents=[NSMutableArray array];
+    id observer=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){[remoteEvents addObject:note.userInfo?:@{}];}];
+    MPRemoteCommandHandlerStatus nextStatus=[owner handleNativeTrackCommand:@"next"];
+    MPRemoteCommandHandlerStatus previousStatus=[owner handleNativeTrackCommand:@"previous"];
+    [NSNotificationCenter.defaultCenter removeObserver:observer];
+    check(nextStatus==MPRemoteCommandHandlerStatusSuccess && previousStatus==MPRemoteCommandHandlerStatusSuccess &&
+          [remoteEvents count]==2 && [remoteEvents[0][@"command"] isEqual:@"next"] &&
+          [remoteEvents[1][@"command"] isEqual:@"previous"] && [remoteEvents[0][@"eventAt"] doubleValue]>0 &&
+          [remoteEvents[1][@"eventAt"] doubleValue]>0,
+          @"nativeNextAndPreviousHandlersDeliverTimestampedCommandsWithoutJavaScript");
     [owner clear];
-    check(center.nowPlayingInfo==nil && !commands.nextTrackCommand.enabled && !commands.playCommand.enabled,@"genuineClearStillReleasesLockScreenAndCommands");
+    check(center.nowPlayingInfo==nil && !commands.nextTrackCommand.enabled && !commands.previousTrackCommand.enabled &&
+          owner.nextTrackTarget==nil && owner.previousTrackTarget==nil && !commands.playCommand.enabled,
+          @"genuineClearReleasesOnlyOwnedLockScreenTargetsAndCommands");
 }

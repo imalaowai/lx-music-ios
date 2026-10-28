@@ -122,3 +122,10 @@ test('Per-song lyric calibration never seeks audio and separates identical IDs f
  f.window.LXBridge.state({position:0});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
  assert.equal(f.messages.some(m=>m.op==='seek'),false);
 });
+
+test('Local source URL-only responses are not treated as confirmed lossless quality',()=>{
+  const engine=fs.readFileSync(require('node:path').join(__dirname,'../generated/LocalEngine.js'),'utf8');
+  assert.match(engine,/qualityReported:!!sourceQuality/);
+  assert.match(engine,/\\u97F3\\u6E90\\u8FD4\\u56DE\\u7684/);
+  assert.doesNotMatch(engine,/return\\{url:A,type:w,sourceId:p\\.id\\}/);
+});

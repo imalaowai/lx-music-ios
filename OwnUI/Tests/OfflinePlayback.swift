@@ -46,6 +46,13 @@ enum OfflinePlayback {
                 player.play()
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {
                     began = player.currentTime().seconds > 0.08;precondition(began)
+                    let sample=Date().timeIntervalSince1970
+                    let continuous=ReferenceAudio.interpolatedPosition(sampledPosition:2,sampledAt:sample,rate:1,isPlaying:true,duration:180,now:sample+8)
+                    precondition(abs(continuous-10)<0.001,"The playback clock must keep advancing after a delayed native sample")
+                    let frozen=ReferenceAudio.interpolatedPosition(sampledPosition:2,sampledAt:sample,rate:0,isPlaying:false,duration:180,now:sample+8)
+                    precondition(abs(frozen-2)<0.001,"A paused clock must never extrapolate")
+                    let bounded=ReferenceAudio.interpolatedPosition(sampledPosition:179,sampledAt:sample,rate:1,isPlaying:true,duration:180,now:sample+8)
+                    precondition(abs(bounded-180)<0.001,"The clock must stop at track duration")
                     player.pause();let paused = player.currentTime().seconds
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.15) {
                         precondition(abs(player.currentTime().seconds-paused)<0.03)

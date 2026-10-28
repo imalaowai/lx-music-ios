@@ -79,7 +79,7 @@ def package(reference,components,signer,output):
         new_sections=sections(signed)
         for name,(off,size) in sections(old_exe).items():
             next_off,next_size=new_sections[name];assert size==next_size and old_exe[off:off+size]==signed[next_off:next_off+next_size], 'Original native section changed: '+name
-        info['CFBundleVersion']='92' if own_ui else '82'
+        info['CFBundleVersion']='97' if own_ui else '82'
         if own_ui:
             info['CFBundleShortVersionString']='1.9.9'
             info['MinimumOSVersion']='15.0'

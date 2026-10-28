@@ -6,7 +6,7 @@
   // Installed pages own their version and never register a web service worker.
   const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
-  // Native time is authoritative; interpolate locally so karaoke does not step at 2 Hz.
+  // Native time is authoritative; interpolate locally between snapshots so karaoke remains smooth.
   // Never extrapolate indefinitely if the app stops sending foreground snapshots.
   let clock = {position: 0, at: performance.now(), running: false, rate: 1, correction: 0};
   let foregroundSync = false;
@@ -108,7 +108,8 @@
       currentQuality = state.quality || null; playbackProgressReady = state.duration > 0;
       shouldAutoRecoverPlayback = !state.paused; currentLoadingSongId = null;
       const changedSong = key(state.song) !== renderedSong;
-      if (state.song?.name && (changedSong || renderedQuality !== state.quality)) { updatePlayerInfo(state.song, state.quality); renderedQuality = state.quality; }
+      const qualityLabel = state.quality && state.qualityReported === false ? '音质未确认' : state.quality;
+      if (state.song?.name && (changedSong || renderedQuality !== qualityLabel)) { updatePlayerInfo(state.song, qualityLabel); renderedQuality = qualityLabel; }
       if (changedSong && state.song?.name) { renderedSong = key(state.song); try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {} }
       const playing = state.playing === true;
       if (renderedPlaying !== playing) {updatePlayButton(playing); renderedPlaying = playing;}

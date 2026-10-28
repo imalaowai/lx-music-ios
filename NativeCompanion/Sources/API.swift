@@ -27,7 +27,7 @@ enum Vault {
 }
 final class API {
     var credentials: Credentials?
-    var sourceCache: [String: (URL, String, Date)] = [:]
+    var sourceCache: [String: (ResolvedAudio, Date)] = [:]
     let session: URLSession
     init() {
         credentials = Vault.load()
@@ -63,10 +63,36 @@ final class API {
         return task
     }
     func cacheKey(_ song: Song, _ quality: String, _ allowFallback: Bool) -> String { "\(credentials?.server ?? "")|\(credentials?.username ?? "")|\(text(song.raw["source"]))|\(song.key)|\(quality)|\(allowFallback)" }
-    @discardableResult func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<(URL, String), Error>) -> Void) -> Cancellable? {
-        if let local = MusicLibrary.shared.localURL(song) { completion(.success((local, text(song.raw["quality"]).isEmpty ? local.pathExtension : text(song.raw["quality"])))); return nil }
+    private func formatHint(_ url: URL) -> String? {
+        switch url.pathExtension.lowercased() {
+        case "flac": return "flac"
+        case "mp3": return "mp3"
+        case "wav": return "wav"
+        case "m4a", "aac", "mp4": return "aac"
+        case "ogg", "opus": return "opus"
+        default: return nil
+        }
+    }
+    private func resolvedAudio(url: URL, reportedQuality: String, requestedQuality: String, qualityReported: Bool) -> ResolvedAudio {
+        let hint = formatHint(url), reported = reportedQuality.lowercased()
+        let conflictsWithFLAC = ["flac", "flac24bit"].contains(reported) && hint != nil && hint != "flac"
+        let playbackQuality = conflictsWithFLAC ? (hint ?? requestedQuality) : (!reportedQuality.isEmpty ? reportedQuality : (hint ?? requestedQuality))
+        let reportedOK = qualityReported && !conflictsWithFLAC
+        if conflictsWithFLAC {
+            RuntimeTrace.record("audio.quality-format-conflict", ["sourceReported": reportedQuality, "urlFormat": hint ?? "unknown"])
+        } else if !reportedOK {
+            RuntimeTrace.record("audio.quality-unverified", ["source": "unreported", "requested": requestedQuality, "urlFormat": hint ?? "unknown"])
+        }
+        return ResolvedAudio(url: url, playbackQuality: playbackQuality, qualityReported: reportedOK)
+    }
+    @discardableResult func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) -> Cancellable? {
+        if let local = MusicLibrary.shared.localURL(song) {
+            let reported = text(song.raw["quality"]).isEmpty ? local.pathExtension.lowercased() : text(song.raw["quality"])
+            completion(.success(ResolvedAudio(url: local, playbackQuality: reported.isEmpty ? "unknown" : reported, qualityReported: !reported.isEmpty)))
+            return nil
+        }
         let key = cacheKey(song, quality, allowFallback)
-        if let cached = sourceCache[key], Date().timeIntervalSince(cached.2) < 180 { completion(.success((cached.0, cached.1))); return nil }
+        if let cached = sourceCache[key], Date().timeIntervalSince(cached.1) < 180 { completion(.success(cached.0)); return nil }
         if song.raw["openlist"] is Object {
             return request("/api/openlist/play", method: "POST", body: song.raw["openlist"] as? Object) { [weak self] result in
                 do {
@@ -75,7 +101,8 @@ final class API {
                     var components = URLComponents(url: try MediaAddress.direct(text(value["url"]), base: base), resolvingAgainstBaseURL: false)!
                     components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "token", value: self.credentials?.token)]
                     guard let url = components.url else { throw ClientError("网盘播放地址无效") }
-                    completion(.success((url, text(song.raw["quality"]))))
+                    let reported = text(song.raw["quality"])
+                    completion(.success(self.resolvedAudio(url: url, reportedQuality: reported, requestedQuality: quality, qualityReported: !reported.isEmpty)))
                 } catch { completion(.failure(error)) }
             }
         }
@@ -89,7 +116,8 @@ final class API {
                     let downloads = try MusicLibrary.shared.directory().standardizedFileURL.path + "/"
                     guard address.standardizedFileURL.path.hasPrefix(folder) || address.standardizedFileURL.path.hasPrefix(downloads) else { throw ClientError("设备文件不在 App 音乐库中") }
                 }
-                completion(.success((address, text(song.raw["quality"]))))
+                let reported = text(song.raw["quality"])
+                completion(.success(resolvedAudio(url: address, reportedQuality: reported, requestedQuality: quality, qualityReported: !reported.isEmpty)))
             } catch { completion(.failure(error)) }
             return nil
         }
@@ -98,10 +126,13 @@ final class API {
                 guard let value = try result.get() as? Object else { throw ClientError("音源没有返回播放地址") }
                 let base = self?.base ?? URL(string: "https://lx-device.invalid/")!
                 guard !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
-                let url = try MediaAddress.direct(text(value["url"]), base: base), actual = text(value["type"]).isEmpty ? quality : text(value["type"])
+                let url = try MediaAddress.direct(text(value["url"]), base: base)
+                let reported = text(value["type"]).isEmpty ? text(value["quality"]) : text(value["type"])
+                let qualityReported = bool(value["qualityReported"], !reported.isEmpty)
+                let media = self?.resolvedAudio(url: url, reportedQuality: reported, requestedQuality: quality, qualityReported: qualityReported) ?? ResolvedAudio(url: url, playbackQuality: reported.isEmpty ? quality : reported, qualityReported: qualityReported)
                 if (self?.sourceCache.count ?? 0) > 24 { self?.sourceCache.removeAll() }
-                self?.sourceCache[key] = (url, actual, Date())
-                completion(.success((url, actual)))
+                self?.sourceCache[key] = (media, Date())
+                completion(.success(media))
             } catch {
                 if error.localizedDescription.hasPrefix("请在"), self?.credentials != nil, !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback") {
                     self?.resolveOnServer(song, quality: quality, allowFallback: allowFallback, completion: completion)
@@ -109,12 +140,15 @@ final class API {
             }
         }
     }
-    func resolveOnServer(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<(URL, String), Error>) -> Void) {
+    func resolveOnServer(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) {
         request("/api/music/url", method: "POST", body: ["songInfo": song.raw, "quality": quality, "allowQualityFallback": allowFallback, "enableAutoSwitchApiSource": true]) { [weak self] result in
             do {
                 let value = try result.get()
-                guard let base = self?.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
-                completion(.success((try MediaAddress.direct(text(value["url"]), base: base), text(value["type"]).isEmpty ? quality : text(value["type"]))))
+                guard let self = self, let base = self.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
+                let url = try MediaAddress.direct(text(value["url"]), base: base)
+                let reported = text(value["type"]).isEmpty ? text(value["quality"]) : text(value["type"])
+                let media = self.resolvedAudio(url: url, reportedQuality: reported, requestedQuality: quality, qualityReported: bool(value["qualityReported"], !reported.isEmpty))
+                completion(.success(media))
             } catch { completion(.failure(error)) }
         }
     }

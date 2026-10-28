@@ -6,6 +6,16 @@ check(QueuePolicy.next(count: 3, index: 2, mode: "order") == nil, "order stops")
 check(QueuePolicy.next(count: 3, index: 0, mode: "list", previous: true) == 2, "previous wraps")
 check(QueuePolicy.next(count: 3, index: 1, mode: "single", automatic: true) == 1, "single repeats on EOF")
 check(QueuePolicy.next(count: 0, index: -1, mode: "list") == nil, "empty queue does not play")
+let losslessSong:Object = ["source":"tx","meta":["_qualitys":["128k":["size":1],"320k":["size":1],"flac":["size":1]]]]
+check(QualityPolicy.best(for: losslessSong, preference: "flac", allowFallback: true) == "flac", "prefer advertised lossless quality")
+let compressedSong:Object = ["source":"kw","meta":["_qualitys":["128k":["size":1],"320k":["size":1]]]]
+check(QualityPolicy.best(for: compressedSong, preference: "flac", allowFallback: true) == "320k", "do not request unsupported FLAC when song advertises MP3 only")
+let platformOnlyFLAC:Object = ["types":[["type":"flac","isPlatformQuality":true],["type":"320k"]]]
+check(QualityPolicy.best(for: platformOnlyFLAC, preference: "flac", allowFallback: true) == "320k", "ignore placeholder platform quality entries")
+check(QualityPolicy.best(for: compressedSong, preference: "flac24bit", allowFallback: false) == "flac24bit", "respect explicit no-fallback preference")
+check(QualityPolicy.best(for: ["name":"no metadata"], preference: "flac", allowFallback: true) == "flac", "keep requested quality when source metadata is absent")
+let nestedQuality:Object = ["types":NSNull(),"meta":["_qualitys":["128k":["size":1],"flac":["size":1]]]]
+check(QualityPolicy.best(for: nestedQuality, preference: "flac", allowFallback: true) == "flac", "null top-level quality metadata falls back to nested metadata")
 var order = RoomOrder()
 order.pendingID = "newer"; order.pendingKey = "C"
 check(!order.accept(["revision": 5, "controllerId": "me", "commandId": "older", "songKey": "B"], participant: "me"), "late own track ACK must not rewind C to B")

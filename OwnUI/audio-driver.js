@@ -17,7 +17,9 @@ module.exports = function createDriver({player, stream, State, Capability, Repea
   async function initialize() {
     if (!setup) setup = (async () => {
       await player.setupPlayer({autoUpdateMetadata:false, waitForBuffer:true, maxCacheSize:65536, iosCategory:'playback', iosCategoryMode:'default'});
-      await player.updateOptions({capabilities:[Capability.Play,Capability.Pause,Capability.Stop,Capability.SeekTo,Capability.SkipToNext,Capability.SkipToPrevious], stopWithApp:false});
+      // Swift Player owns the song queue; TrackPlayer intentionally holds only the active decoder item.
+      // Registering its own next/previous handlers would compete with LXNowPlayingCoordinator.
+      await player.updateOptions({capabilities:[Capability.Play,Capability.Pause,Capability.Stop,Capability.SeekTo], stopWithApp:false});
       await player.setRepeatMode(RepeatMode.Off);
       ready?.();
     })().catch(error => {setup = null; throw error;});

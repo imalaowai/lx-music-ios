@@ -34,9 +34,10 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 @property(nonatomic) NSInteger presentedGeneration;
 @property(nonatomic) BOOL held;
 @property(nonatomic) BOOL controlsInstalled;
+@property(nonatomic,strong) id nextTrackTarget;
+@property(nonatomic,strong) id previousTrackTarget;
 @property(nonatomic) BOOL receivingRemote;
 @property(nonatomic) NSInteger lastPlaybackState;
-@property(nonatomic,strong) NSNumber *controlsWanted;
 @property(nonatomic,strong) NSDictionary *pendingSnapshot;
 @property(nonatomic) BOOL pendingClear;
 @property(nonatomic) BOOL flushScheduled;
@@ -56,18 +57,33 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     }return self;
 }
 - (BOOL)wanted { return [self.snapshot[@"wanted"] boolValue] && ![self.snapshot[@"interrupted"] boolValue] && !self.held; }
+- (MPRemoteCommandHandlerStatus)handleNativeTrackCommand:(NSString *)command {
+    if(!atomic_load(&LXNPOwned))return MPRemoteCommandHandlerStatusCommandFailed;
+    LXOwnDeliverRemoteCommand(command,nil,NSProcessInfo.processInfo.systemUptime);
+    return MPRemoteCommandHandlerStatusSuccess;
+}
 - (void)installControls {
-    // The existing SDK owns its remote command targets. Never remove unrelated
-    // targets; its emitter is forwarded directly to Swift by LXAudioRouteSafety.
+    // Swift Player owns the song queue; TrackPlayer intentionally keeps only the active
+    // decoder item and is configured without SkipToNext/SkipToPrevious capabilities.
+    // These direct native targets are the single lock-screen track-skip path, even while
+    // the RN JavaScript queue is asleep. Keep unrelated SDK targets intact.
     if(!atomic_load(&LXNPOwned))return;
-    self.controlsInstalled=YES;self.controlsWanted=nil;[self updateControls];
+    MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
+    __weak LXNowPlayingCoordinator *weakSelf=self;
+    if(!self.nextTrackTarget)self.nextTrackTarget=[center.nextTrackCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event){
+        return [weakSelf handleNativeTrackCommand:@"next"];
+    }];
+    if(!self.previousTrackTarget)self.previousTrackTarget=[center.previousTrackCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event){
+        return [weakSelf handleNativeTrackCommand:@"previous"];
+    }];
+    self.controlsInstalled=YES;[self updateControls];
 }
 - (void)updateControls {
     BOOL active=atomic_load(&LXNPOwned),wanted=self.wanted;
-    NSInteger signature=active?(wanted?2:1):0;
-    if(self.controlsWanted && self.controlsWanted.integerValue==signature)return;
-    self.controlsWanted=@(signature);
     MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
+    // Another native owner or the system can change command availability while
+    // Now Playing metadata is refreshed. Reassert the desired flags every time;
+    // a cached wanted/paused signature is not proof that the flags still match.
     center.playCommand.enabled=active && !wanted;center.pauseCommand.enabled=active && wanted;
     center.stopCommand.enabled=active;center.togglePlayPauseCommand.enabled=NO;
     center.nextTrackCommand.enabled=active;center.previousTrackCommand.enabled=active;center.changePlaybackPositionCommand.enabled=active;
@@ -119,6 +135,18 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     // A new stream may take time to resolve/open. Keep the last complete card
     // until the replacement is ready; actual pause/output loss always wins.
     if(self.wanted && [self.snapshot[@"loading"] boolValue] && self.publishedInfo.count && self.generation!=self.presentedGeneration) {
+        // Retain the last complete card while the next track resolves, but freeze
+        // its system playback clock. Otherwise iOS continues advancing the old
+        // elapsed time at 1x even though the old decoder has already been paused;
+        // when the new track arrives, the timeline visibly jumps back to zero.
+        NSMutableDictionary *frozen=[self.publishedInfo mutableCopy];
+        // Keep the Now Playing session in its active state so iOS continues routing lock-screen commands.
+        // 0.01x is effectively stationary during a short track transition without publishing a paused session.
+        frozen[MPNowPlayingInfoPropertyPlaybackRate]=@0.01;
+        if(![self.publishedInfo isEqualToDictionary:frozen]) {
+            MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=frozen;
+            self.publishedInfo=[frozen copy];
+        }
         [self updateControls];return;
     }
     NSDictionary *value=self.snapshot;NSMutableDictionary *info=[NSMutableDictionary dictionary];
@@ -129,7 +157,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     double elapsed=[value[@"elapsedTime"] doubleValue];info[MPNowPlayingInfoPropertyElapsedPlaybackTime]=@(isfinite(elapsed)?MAX(0,elapsed):0);
     // Show the user's play/pause intent through buffering, without reporting
     // every transient decoder zero-rate as a pause and changing the controls.
-    double rate=[value[@"playbackRate"] doubleValue];info[MPNowPlayingInfoPropertyPlaybackRate]=self.wanted?@(isfinite(rate)&&rate>0?rate:1):@0;
+    double rate=[value[@"playbackRate"] doubleValue];
+    // Playback intent controls the buttons, but must never manufacture clock
+    // progress while the native decoder is paused or waiting for a sample.
+    BOOL clockRunning=self.wanted && ![value[@"loading"] boolValue] && ![value[@"interrupted"] boolValue] && isfinite(rate) && rate>0;
+    info[MPNowPlayingInfoPropertyPlaybackRate]=clockRunning?@(rate):@0;
     info[MPNowPlayingInfoPropertyDefaultPlaybackRate]=@1;
     info[MPMediaItemPropertyArtwork]=self.artwork?:[self defaultArtwork];
     if(![self.publishedInfo isEqualToDictionary:info]) { MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=info;self.publishedInfo=[info copy]; }
@@ -178,7 +210,10 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=nil;MPNowPlayingInfoCenter.defaultCenter.playbackState=MPNowPlayingPlaybackStateStopped;
     [self updateControls];
     if(self.receivingRemote) { [UIApplication.sharedApplication endReceivingRemoteControlEvents];self.receivingRemote=NO; }
-    self.controlsInstalled=NO;self.controlsWanted=nil;self.lastPlaybackState=-1;
+    MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
+    if(self.nextTrackTarget){[center.nextTrackCommand removeTarget:self.nextTrackTarget];self.nextTrackTarget=nil;}
+    if(self.previousTrackTarget){[center.previousTrackCommand removeTarget:self.previousTrackTarget];self.previousTrackTarget=nil;}
+    self.controlsInstalled=NO;self.lastPlaybackState=-1;
 }
 @end
 
