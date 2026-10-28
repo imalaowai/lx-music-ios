@@ -33,7 +33,9 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
             let error=text(value["error"])
             item.2(error.isEmpty ? .success(value["value"] as? Object ?? [:]) : .failure(ClientError(error)))
         })
-        let progressTimer=Timer(timeInterval:0.5, repeats:true) { [weak self] _ in
+        // The Web UI interpolates the native clock between snapshots, so 1 Hz is enough
+        // for authoritative correction and halves foreground bridge/probe traffic.
+        let progressTimer=Timer(timeInterval:1.0, repeats:true) { [weak self] _ in
             guard let self=self else { return }
             for (id,item) in self.pending where item.1 < Date() { self.pending.removeValue(forKey:id); if item.0==self.generation { item.2(.failure(ClientError("原生播放核心响应超时，请重新打开 App"))) } }
             if let local = self.localAudio {
@@ -44,7 +46,7 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
                 // Keep foreground UI snapshots flowing even if the asynchronous
                 // decoder probe is delayed. currentTime() extrapolates from the
                 // last known native clock until an authoritative sample arrives.
-                if Date().timeIntervalSince1970 - self.lastReportAt > 0.75 { self.didChange?() }
+                if Date().timeIntervalSince1970 - self.lastReportAt > 1.25 { self.didChange?() }
                 self.send("probe")
             }
         }
