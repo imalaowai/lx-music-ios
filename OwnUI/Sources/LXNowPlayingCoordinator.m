@@ -63,10 +63,10 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     return MPRemoteCommandHandlerStatusSuccess;
 }
 - (void)installControls {
-    // The SDK does not reliably register next/previous handlers unless its JS
-    // capabilities are configured. Install native fallbacks for those two
-    // commands so lock-screen taps still reach the native queue when JS sleeps.
-    // Keep every SDK target intact; remove only the two targets owned here.
+    // Swift Player owns the song queue; TrackPlayer intentionally keeps only the active
+    // decoder item and is configured without SkipToNext/SkipToPrevious capabilities.
+    // These direct native targets are the single lock-screen track-skip path, even while
+    // the RN JavaScript queue is asleep. Keep unrelated SDK targets intact.
     if(!atomic_load(&LXNPOwned))return;
     MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
     __weak LXNowPlayingCoordinator *weakSelf=self;
