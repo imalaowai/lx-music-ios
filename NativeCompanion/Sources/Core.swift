@@ -112,6 +112,13 @@ enum QualityPolicy {
         return lowToHigh(available).first ?? "128k"
     }
 }
+struct ResolvedAudio {
+    let url: URL
+    // playbackQuality selects the correct decoder; qualityReported controls whether
+    // the UI may present it as source-reported rather than merely requested.
+    let playbackQuality: String
+    let qualityReported: Bool
+}
 enum QueuePolicy {
     static func next(count: Int, index: Int, mode: String, previous: Bool = false, automatic: Bool = false) -> Int? {
         guard count > 0 else { return nil }
