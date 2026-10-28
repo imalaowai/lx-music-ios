@@ -47,10 +47,10 @@ RCT_EXPORT_MODULE();
 - (void)command:(NSNotification *)note {
     NSDictionary *command=[note.userInfo isKindOfClass:NSDictionary.class]?note.userInfo:@{};
     NSString *operation=[command[@"operation"] isKindOfClass:NSString.class]?command[@"operation"]:@"";
-    // Probes are disposable snapshots, not playback commands. Never queue them while
-    // JavaScript is suspended: they can otherwise fill the 128-entry queue and block a track load.
-    if([operation isEqualToString:@"probe"])return;
     if(self.listening){[self sendEventWithName:@"own-ui-audio-command" body:command];return;}
+    // Probes are disposable snapshots, not playback commands. Never queue them while
+    // JavaScript is not listening: they can otherwise fill the 128-entry queue and block a track load.
+    if([operation isEqualToString:@"probe"])return;
     NSInteger generation=[command[@"generation"] integerValue];
     NSInteger newest=-1;
     for(NSDictionary *queued in self.pending) newest=MAX(newest,[queued[@"generation"] integerValue]);
