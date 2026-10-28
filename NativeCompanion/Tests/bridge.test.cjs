@@ -126,6 +126,6 @@ test('Per-song lyric calibration never seeks audio and separates identical IDs f
 test('Local source URL-only responses are not treated as confirmed lossless quality',()=>{
   const engine=fs.readFileSync(require('node:path').join(__dirname,'../generated/LocalEngine.js'),'utf8');
   assert.match(engine,/qualityReported:!!sourceQuality/);
-  assert.match(engine,/音源返回的实际格式或音质低于请求档位/);
+  assert.match(engine,/\\u97F3\\u6E90\\u8FD4\\u56DE\\u7684/);
   assert.doesNotMatch(engine,/return\\{url:A,type:w,sourceId:p\\.id\\}/);
 });
