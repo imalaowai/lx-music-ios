@@ -8,6 +8,11 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
     data=lzma.decompress((old/f'Resources/{name}.{extension}.xz').read_bytes())
     metadata=json.loads((old/f'Resources/{name}.manifest.json').read_text())
     assert hashlib.sha256(data).hexdigest()==metadata[key],name+' integrity mismatch'
+    if name=='LocalEngine':
+        marker=b'return{url:A,type:w,sourceId:p.id}'
+        replacement=b'return{url:A,type:typeof E==="object"&&E!==null&&(typeof E.type==="string"||typeof E.quality==="string")?(E.type||E.quality):w,qualityReported:typeof E==="object"&&E!==null&&(typeof E.type==="string"||typeof E.quality==="string"),sourceId:p.id}'
+        assert data.count(marker)==1,'Local source quality return anchor changed; review resolver before rebuilding'
+        data=data.replace(marker,replacement)
     if name=='WebUI':
         html=data.decode()
         for override in sorted((old/'WebOverrides').glob('*.js')):
