@@ -144,7 +144,7 @@ final class API {
         request("/api/music/url", method: "POST", body: ["songInfo": song.raw, "quality": quality, "allowQualityFallback": allowFallback, "enableAutoSwitchApiSource": true]) { [weak self] result in
             do {
                 let value = try result.get()
-                guard let base = self?.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
+                guard let self = self, let base = self.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
                 let url = try MediaAddress.direct(text(value["url"]), base: base)
                 let reported = text(value["type"]).isEmpty ? text(value["quality"]) : text(value["type"])
                 let media = self.resolvedAudio(url: url, reportedQuality: reported, requestedQuality: quality, qualityReported: bool(value["qualityReported"], !reported.isEmpty))
