@@ -98,7 +98,12 @@ final class API {
                 guard let value = try result.get() as? Object else { throw ClientError("音源没有返回播放地址") }
                 let base = self?.base ?? URL(string: "https://lx-device.invalid/")!
                 guard !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
-                let url = try MediaAddress.direct(text(value["url"]), base: base), actual = text(value["type"]).isEmpty ? quality : text(value["type"])
+                let url = try MediaAddress.direct(text(value["url"]), base: base)
+                let reported = text(value["type"]).isEmpty ? text(value["quality"]) : text(value["type"])
+                let actual = reported.isEmpty ? quality : reported
+                if reported.isEmpty {
+                    RuntimeTrace.record("audio.quality-unreported", ["source": text(song.raw["source"]), "requested": quality])
+                }
                 if (self?.sourceCache.count ?? 0) > 24 { self?.sourceCache.removeAll() }
                 self?.sourceCache[key] = (url, actual, Date())
                 completion(.success((url, actual)))
@@ -114,7 +119,12 @@ final class API {
             do {
                 let value = try result.get()
                 guard let base = self?.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
-                completion(.success((try MediaAddress.direct(text(value["url"]), base: base), text(value["type"]).isEmpty ? quality : text(value["type"]))))
+                let reported = text(value["type"]).isEmpty ? text(value["quality"]) : text(value["type"])
+                let actual = reported.isEmpty ? quality : reported
+                if reported.isEmpty {
+                    RuntimeTrace.record("audio.quality-unreported", ["source": text(song.raw["source"]), "requested": quality, "resolver": "server"])
+                }
+                completion(.success((try MediaAddress.direct(text(value["url"]), base: base), actual)))
             } catch { completion(.failure(error)) }
         }
     }
