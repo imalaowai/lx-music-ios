@@ -222,11 +222,12 @@ final class RoomClient {
             if listToUse.map(\.key) != player.queue.map(\.key) { player.queue = listToUse; player.queueRevision += 1 }; player.index = selected
             // Correct once after reconnect, including a missed seek whose newest
             // snapshot is now a progress event. Routine snapshots stay smooth.
-            if reason == "seek" || (resynchronizing && !localRouteHeld && !player.loading && abs(player.position - target(incoming)) > 1) { player.seek(target(incoming), user: false) }
+            if reason == "seek" || ((resynchronizing || wasPending) && !localRouteHeld && !player.loading && abs(player.position - target(incoming)) > 1) { player.seek(target(incoming), user: false) }
             if shouldPause, wantedBefore { player.pause(user: false) }
             else if !shouldPause, !wantedBefore, !player.endGuard.handled, resynchronizing || ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
         }
         player.publish(); publish()
+        if wasPending && !player.loading { mediaReady() }
     }
     func sendState(reason: String, position: Double? = nil) {
         guard active, let song = player.current else { return }
@@ -281,7 +282,7 @@ final class RoomClient {
         }
     }
     func progress() {
-        guard active, connected, controller, player.wanted, !player.loading, let song = player.current else { return }
+        guard active, connected, controller, player.wanted, !player.loading, !player.seeking, let song = player.current else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastProgressAt >= 4 else { return }; lastProgressAt = now
         var progress: Object = ["reason": "progress", "origin": "auto", "userInitiated": false, "songKey": wireSongKey(song), "currentTime": player.position, "duration": player.duration, "paused": false]
@@ -295,6 +296,11 @@ final class RoomClient {
     }
     func mediaReady() {
         guard active, let song = player.current else { return }
+        // Resolving/buffering can take seconds after the track's room snapshot.
+        // Join the current timeline once ready, before the first progress report.
+        if !localRouteHeld && player.wanted && !player.loading && !player.seeking && !bool(state["paused"],true),
+           let raw = state["song"] as? Object, Song(raw:raw).key == song.key,
+           abs(player.position - target(state)) > 1 { player.seek(target(state), user:false) }
         var value: Object = ["type": "room:media-ready", "songKey": wireSongKey(song), "duration": player.duration]
         if state["playbackRevision"] != nil { value["playbackRevision"] = state["playbackRevision"] }
         exchange(value)

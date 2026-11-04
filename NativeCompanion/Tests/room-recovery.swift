@@ -22,7 +22,7 @@ final class Player {
     var queue = [Song(raw:["id":"A","songmid":"rawA","source":"wy","name":"A"])]
     var index = 0, queueRevision = 0, generation = 1
     var mode = "list", failure = "", routeGate = PlaybackRouteGate(), endGuard = PlaybackEndGuard()
-    var wanted = true, loading = false
+    var wanted = true, loading = false, seeking = false
     var position = 10.0, duration = 180.0
     var seeks: [Double] = []
     var selections = 0
@@ -78,6 +78,15 @@ final class Player {
         p.endGuard.reset(p.generation,now:0); _ = p.endGuard.claim(p.generation)
         room.needsSnapshotSync = true; room.apply(incoming(p,revision:6))
         check(p.selections == 1, "rejoining an ongoing song repairs a locally ended decoder")
+        let delayed = Player(), delayedRoom = RoomClient(player:delayed)
+        delayedRoom.binding = ["roomId":"delayed"]; delayedRoom.state = incoming(delayed)
+        delayedRoom.mediaReady()
+        check(delayed.seeks.count == 1 && delayed.position >= 70, "decoder readiness compensates for elapsed source-resolution time")
+        delayed.position = 10; delayed.seeking = true; delayedRoom.mediaReady()
+        check(delayed.seeks.count == 1, "decoder readiness cannot supersede an in-flight user seek")
+        delayedRoom.connected = true; delayedRoom.participantID = "me"; delayedRoom.progress()
+        check(delayedRoom.lastProgressAt == -.infinity, "an unfinished seek cannot publish stale progress to the room")
+        delayedRoom.disconnect(clear:true)
 
         let retryPlayer = Player(), retryRoom = RoomClient(player:retryPlayer)
         var bindings = 0
