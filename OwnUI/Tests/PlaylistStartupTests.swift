@@ -113,12 +113,16 @@ enum PlaylistStartupTests {
     }
     static func poll() {
         guard !completed,let web=web else{return}
-        web.evaluateJavaScript("typeof window.SongListManager?.openDetail==='function'") { value,error in
+        // The script defines SongListManager before HTML parsing and bridge
+        // installation finish. Do not simulate a tap against an unfinished DOM.
+        web.evaluateJavaScript("document.readyState!=='loading' && window.LXBridge?.isReady?.()===true && window.NativeShell?.ready===true && typeof window.SongListManager?.openDetail==='function' && typeof window.ListSearch?.init==='function' && !!document.getElementById('sl-detail-list')") { value,error in
             guard !completed else{return}
             if value as? Bool == true {
                 if !opened {
                     opened=true
-                    web.evaluateJavaScript("window.SongListManager.openDetail('123','wy');true",completionHandler:nil)
+                    web.evaluateJavaScript("window.SongListManager.openDetail('123','wy');true") { _,error in
+                        if let error=error {metrics["detailOpenError"]=error.localizedDescription;opened=false}
+                    }
                 }
                 web.evaluateJavaScript("!!document.getElementById('sl-detail-list')?.textContent.includes('启动歌单测试曲')") { result,error in
                     if result as? Bool == true {checks["playlistSongsRenderThroughRealWebKitNativeBridge"]=true;checks["browsingPlaylistDoesNotStartMediaServices"]=LXOwnMediaIsIdle();finishIfReady()}
