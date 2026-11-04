@@ -1,0 +1,66 @@
+name: Build Qiye 1.9.10 background recovery components
+on:
+  push:
+    branches: [fix/background-carplay-room-recovery-20261104]
+    paths: ['OwnUI/scripts/build.sh', 'OwnUI/scripts/update-components.py', '.github/workflows/build-background-ipa-components.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: qiye-background-components-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned native bridge and bundler dependencies
+        run: |
+          git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+          git config --global --add url.https://github.com/.insteadOf git@github.com:
+          npm ci
+      - name: Compile device arm64 native integration and Hermes 96 bundle
+        run: bash OwnUI/scripts/build.sh
+      - name: Validate device architecture and native code signature
+        run: |
+          lipo -verify_arch arm64 build/own-ui/LXFullCarPlay.dylib
+          codesign --verify --strict build/own-ui/LXFullCarPlay.dylib
+          otool -L build/own-ui/LXFullCarPlay.dylib
+          python3 - <<'PY'
+          import json,pathlib,subprocess
+          root=pathlib.Path('build/own-ui')
+          meta=json.loads((root/'components.json').read_text())
+          assert meta['version']=='1.9.10' and meta['build']=='98'
+          assert meta['sourceCommit']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QiyeMusic-v1.9.10-Native-Components
+          path: build/own-ui/LX-OwnUI-Native-Components.zip
+          if-no-files-found: error
+  signer:
+    runs-on: ubuntu-latest
+    container: debian:bookworm-slim
+    timeout-minutes: 15
+    steps:
+      - name: Build pinned local IPA packaging signer
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git ca-certificates build-essential pkg-config libplist-dev libssl-dev
+          git clone https://github.com/ProcursusTeam/ldid.git /tmp/ldid
+          cd /tmp/ldid
+          git checkout af86971
+          make -j2 VERSION=2.1.5-procursus7
+          mkdir -p /tmp/signing-tool
+          cp ldid /tmp/signing-tool/
+          cp /usr/lib/x86_64-linux-gnu/libplist-2.0.so.3 /tmp/signing-tool/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QiyeMusic-IPA-Packaging-Signer
+          path: /tmp/signing-tool/
+          if-no-files-found: error

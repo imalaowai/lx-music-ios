@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild an already integrated full own-UI IPA with verified native components.
 
-update-components.py OWN_V19_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
+update-components.py OWN_V22_2_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
 Preserves the reference executable sections, frameworks, resources and identity.
 The own integration module and Hermes entry come from the native CI build.
 """
@@ -12,9 +12,10 @@ base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
 sha=lambda b:hashlib.sha256(b).hexdigest()
 def package(source,components,signer,output):
     source,components,signer,output=map(pathlib.Path,[source,components,signer,output])
-    assert sha(source.read_bytes())=='3c5303840741e4bd9bf3e4f0c58bd2452ab27402ef6218987c67ed005ae7f021','Expected the complete own-UI v19 release'
+    source_sha=sha(source.read_bytes())
+    assert source_sha=='cfc47c8a65027fbd80c7a5cc303dfdb4c8cad5e37f39d90fe69b20308a5493d1','Expected the user-provided complete v22.2 / build 94 IPA'
     with zipfile.ZipFile(source) as z,zipfile.ZipFile(components) as additions,tempfile.TemporaryDirectory(prefix='qiye-own-rebuild-') as work:
-        assert z.testzip() is None
+        assert z.testzip() is None and additions.testzip() is None
         prefix='Payload/LxMusicMobile.app/';app=pathlib.Path(work)/prefix
         for info in z.infolist():
             relative=pathlib.PurePosixPath(info.filename)
@@ -22,17 +23,21 @@ def package(source,components,signer,output):
             p=pathlib.Path(work)/info.filename;p.parent.mkdir(parents=True,exist_ok=True)
             if info.is_dir():p.mkdir(exist_ok=True);continue
             mode=info.external_attr>>16
-            if stat.S_ISLNK(mode):p.symlink_to(z.read(info).decode());continue
+            if stat.S_ISLNK(mode):
+                target=z.read(info).decode();resolved=(p.parent/target).resolve()
+                assert resolved.is_relative_to(pathlib.Path(work).resolve()),'Archive symlink escapes app'
+                p.symlink_to(target);continue
             p.write_bytes(z.read(info));p.chmod(mode&0o777 or 0o644)
         old_manifest=json.loads((app/'OwnUI.manifest.json').read_text())
         assert old_manifest['phoneUI']=='own-local-ui'
         old_main=z.read(prefix+'LxMusicMobile');ent=base.entitlements(old_main)
         assert ent['com.apple.developer.carplay-audio'] is True
         metadata=json.loads(additions.read('components.json'))
-        assert metadata['ownUI'] is True and metadata['version']=='1.9.9' and metadata['build']=='92'
+        assert metadata['ownUI'] is True and metadata['version']=='1.9.10' and metadata['build']=='98'
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
         assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
+        assert __import__('struct').unpack_from('<I',js,8)[0]==96,'Hermes bytecode must match the retained runtime'
         assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js
         manifest=json.loads(additions.read('OwnUIResources/OwnUI.manifest.json'))
         assert manifest['phoneUI']=='own-local-ui' and manifest['entry']=='OwnUI/index.js'
@@ -46,7 +51,8 @@ def package(source,components,signer,output):
         (app/'main.jsbundle').write_bytes(js)
         (app/'Frameworks/LXFullCarPlay.dylib').write_bytes(module)
         info=plistlib.loads((app/'Info.plist').read_bytes())
-        info.update(CFBundleShortVersionString='1.9.9',CFBundleVersion='92')
+        assert info['CFBundleIdentifier']=='cn.toside.music.cplay3' and info['CFBundleVersion']=='94'
+        info.update(CFBundleShortVersionString=metadata['version'],CFBundleVersion=metadata['build'])
         (app/'Info.plist').write_bytes(plistlib.dumps(info,fmt=plistlib.FMT_BINARY))
         ent_file=pathlib.Path(work)/'entitlements.plist';ent_file.write_bytes(plistlib.dumps(ent))
         env=dict(os.environ);env['LD_LIBRARY_PATH']=str(signer.resolve().parent)+':'+env.get('LD_LIBRARY_PATH','')
@@ -74,7 +80,8 @@ def package(source,components,signer,output):
                 name=p.relative_to(work).as_posix()
                 if p.is_file() and name not in old_names:
                     item=zipfile.ZipInfo(name);item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=(stat.S_IFREG|0o644)<<16;out.writestr(item,p.read_bytes())
-        report={'version':'1.9.9','build':92,'base':'own UI v19','baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
+        with zipfile.ZipFile(output) as rebuilt:assert rebuilt.testzip() is None
+        report={'version':metadata['version'],'build':int(metadata['build']),'base':'user-provided full v22.2 / build 94','baseSha256':source_sha,'baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
         output.with_suffix('.verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
         print(json.dumps(report,ensure_ascii=False))
 if __name__=='__main__':package(*sys.argv[1:])
