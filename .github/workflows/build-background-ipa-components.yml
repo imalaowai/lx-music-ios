@@ -28,7 +28,7 @@ jobs:
         run: bash OwnUI/scripts/build.sh
       - name: Validate device architecture and native code signature
         run: |
-          lipo -verify_arch arm64 build/own-ui/LXFullCarPlay.dylib
+          lipo build/own-ui/LXFullCarPlay.dylib -verify_arch arm64
           codesign --verify --strict build/own-ui/LXFullCarPlay.dylib
           otool -L build/own-ui/LXFullCarPlay.dylib
           python3 - <<'PY'
