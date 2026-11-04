@@ -1,4 +1,5 @@
 import Foundation
+extension Notification.Name { static let lxRoom = Notification.Name("LXNativeRoom") }
 
 // Compile the production RoomClient with a deterministic audio/API boundary.
 // Network and audio timing can be controlled without running phone JavaScript.

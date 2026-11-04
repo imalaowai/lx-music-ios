@@ -87,7 +87,7 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         api.resolve(song, quality: quality, allowFallback: true) { [weak self] result in
             guard let self = self, self.records.contains(where: {text($0["id"]) == id && text($0["status"]) == "resolving"}) else { completion(.failure(ClientError("下载已取消"))); return }
             do {
-                let (url, actual) = try result.get()
+                let media = try result.get(), url = media.url, actual = media.playbackQuality
                 guard ["http", "https"].contains(url.scheme ?? "") else { throw ClientError("这首歌曲已在设备中，无需再次下载") }
                 self.patch(id, ["status": "downloading", "quality": actual])
                 let task = self.session.downloadTask(with: url); task.taskDescription = id; task.resume()
