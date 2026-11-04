@@ -1,4 +1,4 @@
-name: Build Qiye 1.9.10 background recovery components
+name: Build Qiye 1.9.11 native transport and artwork components
 on:
   push:
     branches: [fix/background-carplay-room-recovery-20261104]
@@ -35,12 +35,12 @@ jobs:
           import json,pathlib,subprocess
           root=pathlib.Path('build/own-ui')
           meta=json.loads((root/'components.json').read_text())
-          assert meta['version']=='1.9.10' and meta['build']=='98'
+          assert meta['version']=='1.9.11' and meta['build']=='99'
           assert meta['sourceCommit']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: QiyeMusic-v1.9.10-Native-Components
+          name: QiyeMusic-v1.9.11-Native-Components
           path: build/own-ui/LX-OwnUI-Native-Components.zip
           if-no-files-found: error
   signer:
