@@ -55,7 +55,7 @@ final class API {
                 else { result = .failure(ClientError(text(value["message"]).isEmpty ? (text(value["error"]).isEmpty ? "请求失败（\(code)）" : text(value["error"])) : text(value["message"]))) }
             } else { result = .failure(ClientError("服务返回了无法读取的数据")) }
             DispatchQueue.main.async { [weak self] in
-                guard self?.credentials == identity else { return }
+                guard self?.credentials == identity else { completion(.failure(URLError(.cancelled))); return }
                 completion(result)
             }
         }

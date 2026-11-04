@@ -20,6 +20,10 @@ final class RoomClient {
     var offset = 0.0
     var bestRTT = Double.infinity
     var refreshing = false
+    var refreshRetry: DispatchWorkItem?
+    var refreshFailures = 0
+    var needsSnapshotSync = false
+    var lastProgressAt = -Double.infinity
     var outgoing: [(Object, Int)] = []
     var sending = false
     var lastError = ""
@@ -58,6 +62,8 @@ final class RoomClient {
             recoverConnection("heartbeat-timeout");return
         }
         send(["type":"room:ping","time":Date().timeIntervalSince1970*1000])
+        // Audio state callbacks/phone JavaScript are not a background clock.
+        progress()
     }
     func publish() {
         let visible: Object = ["room": roomID, "connected": connected, "enabled": enabled, "sync": syncTracks, "members": participants, "participantId": participantID, "controller": text(state["controllerId"]), "paused": bool(state["paused"], true), "song": (state["song"] as? Object).map { Song(raw: $0).key } ?? "", "error": lastError]
@@ -75,6 +81,7 @@ final class RoomClient {
         let originalEpoch = epoch
         api.request("/api/music/config") { [weak self] result in
             guard let self = self else { return }
+            guard self.epoch == originalEpoch else { return }
             if case let .success(config) = result { self.enabled = config["room.syncEnabled"] == nil || bool(config["room.syncEnabled"]); self.syncTracks = config["room.syncOnTrack"] == nil || bool(config["room.syncOnTrack"]) }
         }
         api.request("/api/room/binding") { [weak self] result in
@@ -82,15 +89,24 @@ final class RoomClient {
             guard self.epoch == originalEpoch else { return }
             switch result {
             case .success(let value):
+                self.refreshRetry?.cancel(); self.refreshRetry = nil; self.refreshFailures = 0
                 self.lastError = ""
                 let next = value["binding"] as? Object
                 let changed = self.roomID != text(next?["roomId"]) || text(self.binding?["password"]) != text(next?["password"])
                 if changed { self.disconnect(clear: true) }
                 self.binding = next
-                if self.active { if !self.connected { self.connect() } else { self.exchange(["type": "room:sync-request"]) } }
+                if self.active { if !self.connected { self.connect() } else { self.needsSnapshotSync = true; self.exchange(["type": "room:sync-request"]) } }
                 else { self.disconnect(clear: false) }
                 self.publish()
-            case .failure(let error): self.lastError = error.localizedDescription; self.publish()
+            case .failure(let error):
+                self.lastError = error.localizedDescription; self.publish()
+                self.refreshRetry?.cancel()
+                let delay = min(30, pow(2, Double(min(self.refreshFailures, 5)))); self.refreshFailures += 1
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self = self, self.epoch == originalEpoch else { return }
+                    self.refreshRetry = nil; self.refresh()
+                }
+                self.refreshRetry = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
             }
         }
     }
@@ -104,12 +120,14 @@ final class RoomClient {
     func disconnect(clear: Bool) {
         epoch += 1; commandEpoch += 1; refreshing = false; socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false
         reconnect?.cancel(); reconnect = nil; ping?.invalidate(); ping = nil; outgoing = []; sending = false
+        refreshRetry?.cancel(); refreshRetry = nil; needsSnapshotSync = false; lastProgressAt = -.infinity
         if clear { binding = nil; state = [:]; participants = []; participantID = ""; owner = ""; order = RoomOrder(); offset = 0; bestRTT = .infinity; retry = 0 }
     }
     func connect() {
         guard active, let url = api.url("/api/room/ws"), let credentials = api.credentials else { return }
         socket?.cancel(with: .goingAway, reason: nil); ping?.invalidate(); reconnect?.cancel(); reconnect=nil;connected=false;epoch += 1
         health.opened(at:ProcessInfo.processInfo.systemUptime)
+        needsSnapshotSync = true
         RuntimeTrace.record("room.connect",["epoch":epoch])
         let version = epoch
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
@@ -185,6 +203,7 @@ final class RoomClient {
     func apply(_ incoming: Object) {
         let wasPending = !order.pendingID.isEmpty
         guard active, let raw = incoming["song"] as? Object, order.accept(incoming, participant: participantID) else { return }
+        let resynchronizing = needsSnapshotSync; needsSnapshotSync = false
         let oldPlaybackRevision = number(state["playbackRevision"], -1)
         let oldKey = player.current?.key ?? "", song = Song(raw: raw), reason = text(incoming["reason"])
         let list = (incoming["playlist"] as? [Object] ?? []).map { Song(raw: $0) }
@@ -200,17 +219,20 @@ final class RoomClient {
             player.select(listToUse, index: selected, paused: shouldPause, user: false, time: target(incoming))
         } else {
             if listToUse.map(\.key) != player.queue.map(\.key) { player.queue = listToUse; player.queueRevision += 1 }; player.index = selected
-            // Ordinary room snapshots never move an already playing device's clock.
-            if reason == "seek" { player.seek(target(incoming), user: false) }
+            // Correct once after reconnect, including a missed seek whose newest
+            // snapshot is now a progress event. Routine snapshots stay smooth.
+            if reason == "seek" || (resynchronizing && !localRouteHeld && !player.loading && abs(player.position - target(incoming)) > 1) { player.seek(target(incoming), user: false) }
             if shouldPause, wantedBefore { player.pause(user: false) }
-            else if !shouldPause, !wantedBefore, !player.endGuard.handled, ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
+            else if !shouldPause, !wantedBefore, !player.endGuard.handled, resynchronizing || ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
         }
         player.publish(); publish()
     }
     func sendState(reason: String, position: Double? = nil) {
         guard active, let song = player.current else { return }
         let command = reason == "track" ? UUID().uuidString : ""
-        var value: Object = ["reason": reason, "origin": "user", "userInitiated": true, "sentAt": Date().timeIntervalSince1970 * 1000, "song": song.raw, "playlist": player.queue.map(\.raw), "index": player.index, "songKey": song.key, "paused": !player.wanted, "currentTime": reason == "track" ? 0 : (position ?? player.position), "duration": reason == "track" ? 0 : player.duration, "playMode": player.mode]
+        var value: Object = ["reason": reason, "origin": "user", "userInitiated": true, "sentAt": Date().timeIntervalSince1970 * 1000, "song": song.raw, "index": player.index, "songKey": song.key, "paused": !player.wanted, "currentTime": reason == "track" ? 0 : (position ?? player.position), "duration": reason == "track" ? 0 : player.duration, "playMode": player.mode]
+        if ["track", "queue", "join-current", "manual"].contains(reason) { value["playlist"] = player.queue.map(\.raw) }
+        if state["playbackRevision"] != nil { value["playbackRevision"] = state["playbackRevision"] }
         if !command.isEmpty { value["commandId"] = command; order.pendingID = command; order.pendingKey = song.key }
         outgoing.append((["type": "room:state", "state": value], commandEpoch)); drain()
     }
@@ -236,19 +258,36 @@ final class RoomClient {
                     if text((values["state"] as? Object)?["commandId"]) == self.order.pendingID { self.order.pendingID = ""; self.order.pendingKey = "" }; self.player.failure = "房间未接受这次控制，请重新连接房间"; self.player.publish(); return
                 }
                 if type != "room:media-ready", let incoming = response["state"] as? Object { self.apply(incoming) }
-            case .failure(let error): self.player.failure = error.localizedDescription; self.player.publish()
+            case .failure(let error):
+                let command = text((values["state"] as? Object)?["commandId"])
+                if !command.isEmpty && command == self.order.pendingID { self.order.pendingID = ""; self.order.pendingKey = ""; self.needsSnapshotSync = true }
+                self.lastError = error.localizedDescription; self.publish()
             }
         }
     }
     func progress() {
         guard active, connected, controller, player.wanted, !player.loading, let song = player.current else { return }
-        send(["type": "room:state", "state": ["reason": "progress", "origin": "auto", "userInitiated": false, "songKey": song.key, "currentTime": player.position, "duration": player.duration, "paused": false]])
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastProgressAt >= 4 else { return }; lastProgressAt = now
+        var progress: Object = ["reason": "progress", "origin": "auto", "userInitiated": false, "songKey": wireSongKey(song), "currentTime": player.position, "duration": player.duration, "paused": false]
+        if state["playbackRevision"] != nil { progress["playbackRevision"] = state["playbackRevision"] }
+        send(["type": "room:state", "state": progress])
     }
-    func mediaReady() { guard active, let song = player.current else { return }; exchange(["type": "room:media-ready", "songKey": song.key, "duration": player.duration]) }
+    // Use the server's negotiated key for telemetry, including older servers.
+    func wireSongKey(_ song: Song) -> String {
+        if let raw = state["song"] as? Object, Song(raw:raw).key == song.key, !text(state["songKey"]).isEmpty { return text(state["songKey"]) }
+        return song.key
+    }
+    func mediaReady() {
+        guard active, let song = player.current else { return }
+        var value: Object = ["type": "room:media-ready", "songKey": wireSongKey(song), "duration": player.duration]
+        if state["playbackRevision"] != nil { value["playbackRevision"] = state["playbackRevision"] }
+        exchange(value)
+    }
     func ended(attempt: Int = 0) {
         guard active, let song = player.current else { player.finishTransition(); return }
         let generation = player.generation, version = commandEpoch
-        let body: Object = ["type": "room:ended", "roomId": roomID, "songKey": song.key, "currentTime": max(player.position, player.duration), "duration": player.duration, "playbackRevision": number(state["playbackRevision"]), "immediateStart": true]
+        let body: Object = ["type": "room:ended", "roomId": roomID, "songKey": wireSongKey(song), "currentTime": max(player.position, player.duration), "duration": player.duration, "playbackRevision": number(state["playbackRevision"]), "immediateStart": true]
         api.request("/api/room/playback", method: "POST", body: body) { [weak self] result in
             guard let self = self, self.commandEpoch == version, self.player.generation == generation, self.active else { return }
             if case .success(let response) = result {

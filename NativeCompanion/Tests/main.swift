@@ -1,6 +1,17 @@
 import Foundation
 
 func check(_ condition: @autoclosure () -> Bool, _ message: String) { if !condition() { fatalError(message) } }
+check(Song(raw:["id":"kg_47_hashA","songmid":47,"source":"kg"]).key == "kg_47_hashA", "canonical song identity wins over a raw provider ID")
+check(Song(raw:["songmid":47,"source":"wy"]).key != Song(raw:["songmid":47,"source":"tx"]).key, "bare numeric IDs remain provider scoped")
+var pageRecovery = PageRecovery()
+pageRecovery.loading(at:10); let pageGeneration = pageRecovery.generation
+pageRecovery.acknowledged(); pageRecovery.terminated()
+check(!pageRecovery.canReload(active:false,at:100), "a background content process loss waits for the phone scene")
+check(pageRecovery.needsReload && pageRecovery.canReload(active:true,at:100), "foreground recovery remembers the background termination")
+pageRecovery.loading(at:100)
+check(pageRecovery.generation != pageGeneration && !pageRecovery.canReload(active:true,at:110), "a reload invalidates old callbacks without starting a reload loop")
+check(pageRecovery.canReload(active:true,at:115), "an unacknowledged page has a finite readiness deadline")
+pageRecovery.acknowledged(); check(!pageRecovery.canReload(active:true,at:1000), "a healthy page is retained")
 check(QueuePolicy.next(count: 3, index: 2, mode: "list") == 0, "list wraps")
 check(QueuePolicy.next(count: 3, index: 2, mode: "order") == nil, "order stops")
 check(QueuePolicy.next(count: 3, index: 0, mode: "list", previous: true) == 2, "previous wraps")

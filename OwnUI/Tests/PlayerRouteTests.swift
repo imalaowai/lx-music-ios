@@ -14,6 +14,7 @@ enum PlayerRouteTests {
         else { results["passed"]=true }
         let root=FileManager.default.urls(for:.documentDirectory,in:.userDomainMask)[0]
         try? JSONSerialization.data(withJSONObject:results,options:.prettyPrinted).write(to:root.appendingPathComponent("LX-Player-Route-Checks.json"),options:.atomic)
+        WebRecoveryTests.start()
     }
     static func start() {
         let player=Player.shared

@@ -18,6 +18,7 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
     var sampledPosition = 0.0
     var sampledAt = 0.0
     var lastReportAt = 0.0
+    var lastProbeAt = -Double.infinity
     var sampledLoading = false
     var didChange: (() -> Void)?
     var didEnd: (() -> Void)?
@@ -43,12 +44,14 @@ final class ReferenceAudio: NSObject, AVAudioPlayerDelegate {
                 self.sampledPosition = local.currentTime; self.sampledAt = Date().timeIntervalSince1970
                 self.rate = local.isPlaying ? 1 : 0; self.timeControlStatus = local.isPlaying ? .playing : .paused
                 self.didChange?()
-            } else if self.currentItem != nil, !self.hasFailed, UIApplication.shared.applicationState == .active {
+            } else if self.currentItem != nil, !self.hasFailed {
                 // Keep foreground UI snapshots flowing even if the asynchronous
                 // decoder probe is delayed. currentTime() extrapolates from the
                 // last known native clock until an authoritative sample arrives.
-                if Date().timeIntervalSince1970 - self.lastReportAt > 1.25 { self.didChange?() }
-                self.send("probe")
+                let foreground = UIApplication.shared.applicationState == .active
+                if Date().timeIntervalSince1970 - self.lastReportAt > 1.25, foreground { self.didChange?() }
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - self.lastProbeAt >= (foreground ? 1 : 4) { self.lastProbeAt = now; self.send("probe") }
             }
         }
         timer=progressTimer;RunLoop.main.add(progressTimer,forMode:.common)

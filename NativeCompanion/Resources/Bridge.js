@@ -159,7 +159,7 @@
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
-    publishLibrary, state: receiveState, room: receiveRoom,
+    publishLibrary, state: receiveState, room: receiveRoom, isReady: () => installed && document.readyState !== 'loading',
     keyboard(value) {window.dispatchEvent(new CustomEvent('lx-native-keyboard', {detail:value}));},
     download(value) {window.dispatchEvent(new CustomEvent('lx-native-download', {detail: value}));},
     sources(value) {window.dispatchEvent(new CustomEvent('lx-native-sources', {detail: value}));},

@@ -16,6 +16,18 @@ struct RoomConnectionHealth {
     mutating func received(at now: Double) { lastReceived = now }
     func expired(at now: Double) -> Bool { now - lastReceived >= 20 }
 }
+// The UI process can be reclaimed while the native audio process is still alive.
+// Remember that event until the phone scene becomes active again.
+struct PageRecovery {
+    private(set) var generation = 0
+    private(set) var needsReload = false
+    private(set) var ready = false
+    private(set) var startedAt = 0.0
+    mutating func loading(at now: Double) { generation += 1; startedAt = now; ready = false; needsReload = false }
+    mutating func terminated() { needsReload = true; ready = false }
+    mutating func acknowledged() { ready = true; needsReload = false }
+    func canReload(active: Bool, at now: Double) -> Bool { active && (needsReload || (!ready && now - startedAt >= 15)) }
+}
 enum RuntimeTrace {
     private static let lock = NSLock()
     private static let io = DispatchQueue(label:"net.minyue.lx.runtime-trace",qos:.utility)
@@ -49,7 +61,11 @@ enum RuntimeTrace {
 }
 struct Song {
     var raw: Object
-    var key: String { for k in ["songmid", "mid", "id"] { if let v = raw[k], !(v is NSNull) { return String(describing: v) } }; return name + "-" + artist }
+    var key: String {
+        if let id = raw["id"], !(id is NSNull), !String(describing:id).isEmpty { return String(describing:id) }
+        for k in ["songmid", "mid"] { if let v = raw[k], !(v is NSNull), !String(describing:v).isEmpty { return text(raw["source"]) + ":" + String(describing:v) } }
+        return name + "-" + artist
+    }
     var name: String { text(raw["name"]) }
     var artist: String { text(raw["singer"]).isEmpty ? text(raw["artist"]) : text(raw["singer"]) }
 }

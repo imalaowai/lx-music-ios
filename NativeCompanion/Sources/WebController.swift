@@ -2,6 +2,12 @@ import UIKit
 import WebKit
 import UniformTypeIdentifiers
 
+private final class WeakScriptHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: WKScriptMessageHandler?
+    init(_ owner: WKScriptMessageHandler) { self.owner = owner }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) { owner?.userContentController(controller, didReceive: message) }
+}
+
 final class WebController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate, UIDocumentPickerDelegate {
     let player = Player.shared
     var web: WKWebView!
@@ -10,6 +16,13 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     var smokeReloadRequested = false
     var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
     var keyboardObserver: NSObjectProtocol?
+    var lifecycleObservers: [NSObjectProtocol] = []
+    var recoveryTimer: Timer?
+    var pageRecovery = PageRecovery()
+    var pageProbeInFlight = false
+    #if LX_OWN_UI_TESTING
+    var testPhoneInactive = false
+    #endif
     var lastSong = ""
     var pickerPurpose = ""
     static let deviceOrigin = URL(string: "https://lx-device.invalid/")!
@@ -20,7 +33,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
-        config.userContentController.add(self, name: "lxNative")
+        config.userContentController.add(WeakScriptHandler(self), name: "lxNative")
         config.setURLSchemeHandler(MusicLibrary.shared, forURLScheme: "lx-local")
         let bootstrap: Object = ["server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil]
         if let value = script(bootstrap) { config.userContentController.addUserScript(WKUserScript(source: "window.__LX_NATIVE_BOOTSTRAP__=" + value + ";", injectionTime: .atDocumentStart, forMainFrameOnly: true)) }
@@ -49,6 +62,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         player.onChat = { [weak self] type, value in self?.emitChat(type, value) }
         MusicLibrary.shared.onChange = { [weak self] value in self?.emit("download", value) }
         MusicLibrary.shared.restoreTasks()
+        for name in [UIApplication.didBecomeActiveNotification, UIScene.didActivateNotification] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(forName:name, object:nil, queue:.main) { [weak self] _ in self?.recoverForegroundPage() })
+        }
+        let timer = Timer(timeInterval:5, repeats:true) { [weak self] _ in self?.recoverForegroundPage() }
+        recoveryTimer = timer; RunLoop.main.add(timer, forMode:.common)
         let rules: [Object] = ["listen_room", "queue_audio", "pwa_update", "ios-background-audio", "ios_audio_output", "room_start"].map { name in
             ["trigger": ["url-filter": ".*/js/" + name + "[.]js.*", "resource-type": ["script"]], "action": ["type": "block"]]
         }
@@ -76,6 +94,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated); emit("state", player.snapshot()); emit("room", player.room.snapshot())
+        recoverForegroundPage()
         #if DEBUG
         // Native regressions do not depend on a third WebKit process becoming ready.
         // The separate UI launch above already verifies the real bundled page/reload.
@@ -109,8 +128,52 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         address = url; view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
         guard let file = Bundle.main.url(forResource: "WebUI", withExtension: "html"), let data = try? Data(contentsOf: file) else { alert("内置界面缺失，请重新安装完整安装包。"); return }
         let response = URLResponse(url: url, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8")
+        pageRecovery.loading(at:ProcessInfo.processInfo.systemUptime); pageProbeInFlight = false
+        RuntimeTrace.record("ui.loading", ["generation":pageRecovery.generation])
         loadingBundledPage = true
         web.loadSimulatedRequest(URLRequest(url: url), response: response, responseData: data)
+    }
+    var phoneForeground: Bool {
+        #if LX_OWN_UI_TESTING
+        if testPhoneInactive { return false }
+        #endif
+        return isViewLoaded && view.window?.windowScene?.activationState == .foregroundActive
+    }
+    func recoverForegroundPage() {
+        guard phoneForeground, let address = address else { return }
+        if pageRecovery.canReload(active:true, at:ProcessInfo.processInfo.systemUptime) {
+            showRecovery("正在恢复音乐页面…"); open(address); return
+        }
+        guard pageRecovery.ready, !pageProbeInFlight else { return }
+        pageProbeInFlight = true
+        let generation = pageRecovery.generation
+        web.evaluateJavaScript("window.LXBridge?.isReady?.() === true") { [weak self] value, error in
+            guard let self = self, self.pageRecovery.generation == generation, self.pageProbeInFlight else { return }
+            self.pageProbeInFlight = false
+            if error != nil || value as? Bool != true {
+                self.pageRecovery.terminated(); self.recoverForegroundPage()
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline:.now()+3) { [weak self] in
+            guard let self = self, self.pageRecovery.generation == generation, self.pageProbeInFlight else { return }
+            self.pageProbeInFlight = false; self.pageRecovery.terminated(); self.recoverForegroundPage()
+        }
+    }
+    func showRecovery(_ message: String) {
+        guard phoneForeground else { return }
+        view.viewWithTag(214)?.removeFromSuperview()
+        let panel = UIView(); panel.tag = 214; panel.backgroundColor = .systemBackground; panel.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel(); label.text = message; label.numberOfLines = 0; label.textAlignment = .center
+        let button = UIButton(type:.system); button.setTitle("重新加载", for:.normal); button.addTarget(self, action:#selector(retryPage), for:.touchUpInside)
+        let stack = UIStackView(arrangedSubviews:[label,button]); stack.axis = .vertical; stack.spacing = 20; stack.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(stack); view.addSubview(panel)
+        NSLayoutConstraint.activate([panel.leadingAnchor.constraint(equalTo:view.leadingAnchor),panel.trailingAnchor.constraint(equalTo:view.trailingAnchor),panel.topAnchor.constraint(equalTo:view.safeAreaLayoutGuide.topAnchor),panel.bottomAnchor.constraint(equalTo:view.bottomAnchor),stack.centerYAnchor.constraint(equalTo:panel.centerYAnchor),stack.leadingAnchor.constraint(equalTo:panel.leadingAnchor,constant:28),stack.trailingAnchor.constraint(equalTo:panel.trailingAnchor,constant:-28)])
+    }
+    @objc func retryPage() { if let address = address { showRecovery("正在恢复音乐页面…"); open(address) } }
+    deinit {
+        if let observer = keyboardObserver { NotificationCenter.default.removeObserver(observer) }
+        for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
+        recoveryTimer?.invalidate(); cancelImport()
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
     func scrollViewDidScroll(_ scrollView: UIScrollView) { if scrollView === web.scrollView, abs(scrollView.contentOffset.y) > 0.5 || abs(scrollView.contentOffset.x) > 0.5 { scrollView.setContentOffset(.zero, animated: false) } }
@@ -122,7 +185,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, allowed(message.frameInfo.securityOrigin), let value = message.body as? Object, let id = value["id"] as? NSNumber else { return }
         let op = text(value["op"])
-        func done(_ result: Any = true, _ error: String? = nil) { self.reply(id.intValue, result, error) }
+        let pageGeneration = pageRecovery.generation
+        func done(_ result: Any = true, _ error: String? = nil) {
+            guard self.pageRecovery.generation == pageGeneration else { return }
+            self.reply(id.intValue, result, error)
+        }
         switch op {
         case "editServer": done(); editAddress()
         case "appInfo":
@@ -135,8 +202,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             do { try data.write(to: file, options: .atomic); let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil); sheet.popoverPresentationController?.sourceView = view; sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 100, width: 1, height: 1); present(sheet, animated: true); done() } catch { done(false, error.localizedDescription) }
         case "uiReady":
             #if LX_OWN_UI
-            done(OwnIntegration.uiReady(value))
+            let ready = OwnIntegration.uiReady(value)
+            if ready { pageRecovery.acknowledged(); view.viewWithTag(214)?.removeFromSuperview() }
+            done(ready)
             #else
+            pageRecovery.acknowledged(); view.viewWithTag(214)?.removeFromSuperview()
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
                 smokeReloadRequested = true
@@ -293,7 +363,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         guard isViewLoaded, view.window?.windowScene?.activationState == .foregroundActive, let data = script(value) else { return }
         web.evaluateJavaScript("window.LXBridge?.\(method)(\(data))", completionHandler: nil)
     }
-    func emitChat(_ type: String, _ value: Object) { guard let a = script(type), let b = script(value) else { return }; web.evaluateJavaScript("window.LXBridge?.chat(\(a),\(b))", completionHandler: nil) }
+    func emitChat(_ type: String, _ value: Object) { guard phoneForeground, pageRecovery.ready, let a = script(type), let b = script(value) else { return }; web.evaluateJavaScript("window.LXBridge?.chat(\(a),\(b))", completionHandler: nil) }
     func alert(_ message: String) { guard presentedViewController == nil else { return }; let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default)); present(dialog, animated: true) }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
@@ -315,8 +385,15 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         }
         else { decisionHandler(.cancel); if navigationAction.navigationType == .linkActivated { UIApplication.shared.open(url) } }
     }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { alert("连接失败：\(error.localizedDescription)") }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if view.window?.windowScene?.activationState == .foregroundActive, let address = address { open(address) } }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard (error as NSError).code != NSURLErrorCancelled else { return }
+        pageRecovery.terminated(); showRecovery("页面暂时无法加载，请重试。")
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { self.webView(webView, didFailProvisionalNavigation:navigation, withError:error) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageRecovery.terminated(); RuntimeTrace.record("ui.process-terminated")
+        recoverForegroundPage()
+    }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() }); present(dialog, animated: true)
     }

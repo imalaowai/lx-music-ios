@@ -21,6 +21,10 @@ function fixture({readyFailures=0}={}){
   context.currentPlaylist=queue.slice();context.currentIndex=0;
   return {window,context,audio,messages,intervals,storage,renders,advance:ms=>{now+=ms;},visibility:value=>{document.visibilityState=value;listeners.visibilitychange();},htmlPlays:()=>htmlPlays,settle:async()=>{await initialized;await new Promise(setImmediate);}};
 }
+test('Foreground native recovery can distinguish an installed UI from a loading document',async()=>{
+  const f=fixture();await f.settle();assert.equal(f.window.LXBridge.isReady(),false);
+  f.context.document.readyState='complete';assert.equal(f.window.LXBridge.isReady(),true);
+});
 test('Page selections transfer a complete queue; playback never starts HTML audio',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;
   await f.window.playSong(f.context.currentPlaylist[1],1);
