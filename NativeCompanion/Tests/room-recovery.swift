@@ -8,10 +8,12 @@ final class API {
     var credentials: Credentials? = Credentials()
     let session = URLSession.shared
     var requests: [(String, Object)] = []
+    var postpone = false
+    var deferred: [(Result<Object, Error>) -> Void] = []
     var respond: (String, Object) -> Result<Object, Error> = { _, _ in .success([:]) }
     func url(_ path: String) -> URL? { nil }
     func request(_ path: String, method: String = "GET", body: Object? = nil, completion: @escaping (Result<Object, Error>) -> Void) {
-        requests.append((path, body ?? [:])); completion(respond(path, body ?? [:]))
+        requests.append((path, body ?? [:])); if postpone { deferred.append(completion) } else { completion(respond(path, body ?? [:])) }
     }
 }
 final class TestAudio { var currentItem: NSObject? = NSObject() }
@@ -69,6 +71,13 @@ final class Player {
         room.order.pendingID = "newer"; room.order.pendingKey = "A"
         room.exchange(["type":"room:state","state":["commandId":"older"]])
         check(room.order.pendingID == "newer", "an older HTTP failure cannot cancel a newer user command")
+        room.order.pendingID = "rejected"; room.order.pendingKey = "A"
+        p.api.respond = { _, _ in .success(["accepted":false,"state":incoming(p,revision:5)]) }
+        room.exchange(["type":"room:state","state":["commandId":"rejected"]])
+        check(room.order.pendingID.isEmpty && room.order.revision == 5, "a rejected control immediately reconciles the returned authoritative snapshot")
+        p.endGuard.reset(p.generation,now:0); _ = p.endGuard.claim(p.generation)
+        room.needsSnapshotSync = true; room.apply(incoming(p,revision:6))
+        check(p.selections == 1, "rejoining an ongoing song repairs a locally ended decoder")
 
         let retryPlayer = Player(), retryRoom = RoomClient(player:retryPlayer)
         var bindings = 0
@@ -81,6 +90,15 @@ final class Player {
         let deadline = Date().addingTimeInterval(2)
         while bindings < 2 && Date() < deadline { RunLoop.main.run(until:Date().addingTimeInterval(0.02)) }
         check(bindings == 2 && retryRoom.lastError.isEmpty, "the scheduled binding retry restores room discovery")
+        let rapid = Player(), rapidRoom = RoomClient(player:rapid)
+        rapidRoom.binding = ["roomId":"rapid"]; rapid.api.postpone = true
+        rapidRoom.sendState(reason:"track")
+        rapid.queue = [Song(raw:["id":"B"])]; rapidRoom.sendState(reason:"track")
+        rapid.queue = [Song(raw:["id":"C"])]; rapidRoom.sendState(reason:"track")
+        check(rapidRoom.outgoing.count == 1 && text((rapidRoom.outgoing[0].0["state"] as? Object)?["songKey"]) == "C", "network recovery keeps the latest queued selection instead of replaying old tracks")
+        rapid.api.deferred.removeFirst()(.failure(ClientError("first request timed out")))
+        check(rapid.api.requests.count == 2 && text((rapid.api.requests.last!.1["state"] as? Object)?["songKey"]) == "C", "the latest queued selection drains after the old in-flight request finishes")
+        rapidRoom.disconnect(clear:true)
         retryRoom.disconnect(clear:true); room.disconnect(clear:true)
         print(String(data:try! JSONSerialization.data(withJSONObject:checks,options:[.prettyPrinted,.sortedKeys]),encoding:.utf8)!)
     }

@@ -50,6 +50,7 @@ cp "$CONTAINER_DIR/Documents/LX-Playlist-Startup-Checks.json" build/own-ui/playl
 cp "$CONTAINER_DIR/Documents/LX-Web-Recovery-Checks.json" build/own-ui/web-recovery-checks.json
 cat build/own-ui/playlist-startup-checks.json
 cat build/own-ui/player-route-checks.json
+cat build/own-ui/web-recovery-checks.json
 python3 - <<'PY'
 import json,pathlib
 d=json.loads(pathlib.Path('build/own-ui/own-phone-ready.json').read_text())

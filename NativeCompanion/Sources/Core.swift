@@ -143,6 +143,11 @@ struct ResolvedAudio {
     let qualityReported: Bool
 }
 enum QueuePolicy {
+    static func matchingIndex(in songs: [Song], key: String?, proposed: Int) -> Int? {
+        guard let key = key else { return nil }
+        if songs.indices.contains(proposed), songs[proposed].key == key { return proposed }
+        return songs.firstIndex { $0.key == key }
+    }
     static func next(count: Int, index: Int, mode: String, previous: Bool = false, automatic: Bool = false) -> Int? {
         guard count > 0 else { return nil }
         if mode == "single", automatic { return max(0, min(index, count - 1)) }

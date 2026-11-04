@@ -292,7 +292,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         case "queue":
             guard let list = value["queue"] as? [Object], list.count <= 20000 else { done(false, "播放队列无效"); return }
             let selected = player.current?.key
-            let songs = list.map { Song(raw: $0) }, found = songs.firstIndex(where: {$0.key == selected})
+            let songs = list.map { Song(raw: $0) }, found = QueuePolicy.matchingIndex(in:songs,key:selected,proposed:Int(number(value["index"],-1)))
             if !songs.isEmpty, selected != nil, found == nil {
                 player.select(songs, index: max(0, min(Int(number(value["index"])), songs.count - 1)), paused: !player.wanted)
             } else {

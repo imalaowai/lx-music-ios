@@ -17,6 +17,9 @@ check(QueuePolicy.next(count: 3, index: 2, mode: "order") == nil, "order stops")
 check(QueuePolicy.next(count: 3, index: 0, mode: "list", previous: true) == 2, "previous wraps")
 check(QueuePolicy.next(count: 3, index: 1, mode: "single", automatic: true) == 1, "single repeats on EOF")
 check(QueuePolicy.next(count: 0, index: -1, mode: "list") == nil, "empty queue does not play")
+let repeatedQueue = ["A","B","A","C"].map { Song(raw:["id":$0]) }
+check(QueuePolicy.matchingIndex(in:repeatedQueue,key:"A",proposed:2) == 2, "a Web queue edit preserves the second occurrence of the active song")
+check(QueuePolicy.matchingIndex(in:repeatedQueue,key:"A",proposed:99) == 0, "an invalid Web queue position falls back to a matching entry")
 let losslessSong:Object = ["source":"tx","meta":["_qualitys":["128k":["size":1],"320k":["size":1],"flac":["size":1]]]]
 check(QualityPolicy.best(for: losslessSong, preference: "flac", allowFallback: true) == "flac", "prefer advertised lossless quality")
 let compressedSong:Object = ["source":"kw","meta":["_qualitys":["128k":["size":1],"320k":["size":1]]]]

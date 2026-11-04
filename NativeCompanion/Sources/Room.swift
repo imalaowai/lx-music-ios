@@ -214,7 +214,8 @@ final class RoomClient {
         state = incoming
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
-        if song.key != oldKey || (player.audio.currentItem == nil && !localRouteHeld) || restarted {
+        let recoverEnded = resynchronizing && !shouldPause && player.endGuard.handled && target(incoming) < max(0, player.duration - 1)
+        if song.key != oldKey || (player.audio.currentItem == nil && !localRouteHeld) || restarted || recoverEnded {
             RuntimeTrace.record("room.track",["revision":number(incoming["revision"]),"paused":shouldPause,"reason":reason])
             player.select(listToUse, index: selected, paused: shouldPause, user: false, time: target(incoming))
         } else {
@@ -234,6 +235,14 @@ final class RoomClient {
         if ["track", "queue", "join-current", "manual"].contains(reason) { value["playlist"] = player.queue.map(\.raw) }
         if state["playbackRevision"] != nil { value["playbackRevision"] = state["playbackRevision"] }
         if !command.isEmpty { value["commandId"] = command; order.pendingID = command; order.pendingKey = song.key }
+        // Keep the in-flight request ordered, but never replay a backlog of old
+        // song selections after the network wakes. A track contains the full queue.
+        if reason == "track" { outgoing.removeAll() }
+        else { outgoing.removeAll { item in
+            guard let old = item.0["state"] as? Object, text(old["songKey"]) == song.key else { return false }
+            let oldReason = text(old["reason"])
+            return oldReason == reason || (["play", "pause"].contains(reason) && ["play", "pause"].contains(oldReason))
+        } }
         outgoing.append((["type": "room:state", "state": value], commandEpoch)); drain()
     }
     func drain() {
@@ -252,10 +261,16 @@ final class RoomClient {
             defer { completion?() }
             switch result {
             case .success(let response):
+                self.lastError = ""
                 if let id = response["participantId"] as? String { self.participantID = id }
                 let type = text(values["type"])
                 if type == "room:state", !bool(response["accepted"]) {
-                    if text((values["state"] as? Object)?["commandId"]) == self.order.pendingID { self.order.pendingID = ""; self.order.pendingKey = "" }; self.player.failure = "房间未接受这次控制，请重新连接房间"; self.player.publish(); return
+                    let command = text((values["state"] as? Object)?["commandId"])
+                    if command == self.order.pendingID {
+                        self.order.pendingID = ""; self.order.pendingKey = ""; self.needsSnapshotSync = true
+                        if let incoming = response["state"] as? Object { self.apply(incoming) }
+                    }
+                    self.lastError = "房间未接受这次控制，请重新连接房间"; self.publish(); return
                 }
                 if type != "room:media-ready", let incoming = response["state"] as? Object { self.apply(incoming) }
             case .failure(let error):
