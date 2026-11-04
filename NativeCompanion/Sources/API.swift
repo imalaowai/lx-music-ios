@@ -63,6 +63,19 @@ final class API {
         return task
     }
     func cacheKey(_ song: Song, _ quality: String, _ allowFallback: Bool) -> String { "\(credentials?.server ?? "")|\(credentials?.username ?? "")|\(text(song.raw["source"]))|\(song.key)|\(quality)|\(allowFallback)" }
+    @discardableResult func cover(_ song: Song, completion: @escaping (Result<String, Error>) -> Void) -> Cancellable? {
+        let source=text(song.raw["source"])
+        guard ["kw","kg","tx","wy","mg"].contains(source),song.raw["offlineId"] == nil,
+              song.raw["deviceKey"] == nil,song.raw["openlist"] == nil,!bool(song.raw["isLocal"]) else { return nil }
+        return LocalEngine.shared.call("api",["path":"/api/music/pic?source="+source,"body":["songInfo":ArtworkAddress.providerSong(song)]]) { [weak self] result in
+            do {
+                let response=try result.get() as? Object ?? [:]
+                let address=ArtworkAddress.normalize(text(response["url"]),base:self?.base)
+                guard !address.isEmpty else { throw ClientError("音源没有返回封面地址") }
+                completion(.success(address))
+            } catch { completion(.failure(error)) }
+        }
+    }
     private func formatHint(_ url: URL) -> String? {
         switch url.pathExtension.lowercased() {
         case "flac": return "flac"

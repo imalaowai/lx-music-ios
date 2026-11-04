@@ -3,6 +3,12 @@ import Foundation
 func check(_ condition: @autoclosure () -> Bool, _ message: String) { if !condition() { fatalError(message) } }
 check(Song(raw:["id":"kg_47_hashA","songmid":47,"source":"kg"]).key == "kg_47_hashA", "canonical song identity wins over a raw provider ID")
 check(Song(raw:["songmid":47,"source":"wy"]).key != Song(raw:["songmid":47,"source":"tx"]).key, "bare numeric IDs remain provider scoped")
+check(ArtworkAddress.embedded(Song(raw:["img":"","picUrl":"//image.invalid/cover.jpg"]),base:nil)=="https://image.invalid/cover.jpg","missing img falls back to picUrl and protocol-relative CDN")
+check(ArtworkAddress.normalize("https://image.invalid/{size}/cover.jpg",base:nil)=="https://image.invalid/500/cover.jpg","provider cover size templates resolve before fetching")
+check(ArtworkAddress.normalize("/covers/a.jpg",base:URL(string:"https://music.invalid/"))=="https://music.invalid/covers/a.jpg","relative covers resolve against the configured server")
+check(ArtworkAddress.normalize("lx-local://cover/file",base:nil).isEmpty && ArtworkAddress.normalize("javascript:alert(1)",base:nil).isEmpty,"WebKit-only cover schemes never reach native image loading")
+check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","id":"wy_123"]))["songmid"])=="123","synced provider IDs normalize for native cover lookup")
+check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","songmid":123]))["songmid"])=="123","numeric provider IDs survive native cover lookup")
 var pageRecovery = PageRecovery()
 pageRecovery.loading(at:10); let pageGeneration = pageRecovery.generation
 pageRecovery.acknowledged(); pageRecovery.terminated()

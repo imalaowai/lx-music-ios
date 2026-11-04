@@ -19,6 +19,13 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     });
 }
 
+@class LXNowPlayingCoordinator;
+@interface LXNativeRemoteTarget:NSObject
+@property(nonatomic,weak) LXNowPlayingCoordinator *owner;
+@property(nonatomic,copy) NSString *command;
+- (MPRemoteCommandHandlerStatus)invoke:(MPRemoteCommandEvent *)event;
+@end
+
 @interface LXNowPlayingCoordinator:NSObject
 @property(nonatomic,strong) NSDictionary *snapshot;
 @property(nonatomic,strong) NSDictionary *publishedInfo;
@@ -34,8 +41,7 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 @property(nonatomic) NSInteger presentedGeneration;
 @property(nonatomic) BOOL held;
 @property(nonatomic) BOOL controlsInstalled;
-@property(nonatomic,strong) id nextTrackTarget;
-@property(nonatomic,strong) id previousTrackTarget;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,LXNativeRemoteTarget *> *remoteTargets;
 @property(nonatomic) BOOL receivingRemote;
 @property(nonatomic) NSInteger lastPlaybackState;
 @property(nonatomic,strong) NSDictionary *pendingSnapshot;
@@ -47,7 +53,19 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 - (void)installControls;
 - (void)publish;
 - (void)finishArtwork:(MPMediaItemArtwork *)artwork epoch:(NSUInteger)epoch;
+- (MPRemoteCommandHandlerStatus)handleRemote:(NSString *)command event:(MPRemoteCommandEvent *)event;
 @end
+@implementation LXNativeRemoteTarget
+- (MPRemoteCommandHandlerStatus)invoke:(MPRemoteCommandEvent *)event {
+    LXNowPlayingCoordinator *owner=self.owner;
+    return owner?[owner handleRemote:self.command event:event]:MPRemoteCommandHandlerStatusCommandFailed;
+}
+@end
+static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
+    MPRemoteCommandCenter *c=MPRemoteCommandCenter.sharedCommandCenter;
+    return @{@"play":c.playCommand,@"pause":c.pauseCommand,@"toggle":c.togglePlayPauseCommand,@"stop":c.stopCommand,
+             @"next":c.nextTrackCommand,@"previous":c.previousTrackCommand,@"seek":c.changePlaybackPositionCommand};
+}
 @implementation LXNowPlayingCoordinator
 + (instancetype)shared { static id owner;static dispatch_once_t once;dispatch_once(&once,^{owner=[self new];});return owner; }
 - (instancetype)init {
@@ -57,35 +75,42 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     }return self;
 }
 - (BOOL)wanted { return [self.snapshot[@"wanted"] boolValue] && ![self.snapshot[@"interrupted"] boolValue] && !self.held; }
-- (MPRemoteCommandHandlerStatus)handleNativeTrackCommand:(NSString *)command {
+- (MPRemoteCommandHandlerStatus)handleRemote:(NSString *)command event:(MPRemoteCommandEvent *)event {
     if(!atomic_load(&LXNPOwned))return MPRemoteCommandHandlerStatusCommandFailed;
-    LXOwnDeliverRemoteCommand(command,nil,NSProcessInfo.processInfo.systemUptime);
+    NSNumber *position=nil;
+    if([command isEqualToString:@"seek"]) {
+        if(![event isKindOfClass:MPChangePlaybackPositionCommandEvent.class])return MPRemoteCommandHandlerStatusCommandFailed;
+        double seconds=((MPChangePlaybackPositionCommandEvent *)event).positionTime;
+        if(!isfinite(seconds) || seconds<0)return MPRemoteCommandHandlerStatusCommandFailed;
+        position=@(seconds);
+    }
+    LXOwnDeliverRemoteCommand(command,position,NSProcessInfo.processInfo.systemUptime);
     return MPRemoteCommandHandlerStatusSuccess;
 }
 - (void)installControls {
-    // Swift Player owns the song queue; TrackPlayer intentionally keeps only the active
-    // decoder item and is configured without SkipToNext/SkipToPrevious capabilities.
-    // These direct native targets are the single lock-screen track-skip path, even while
-    // the RN JavaScript queue is asleep. Keep unrelated SDK targets intact.
+    // One native transport for TrackPlayer, FLAC and local audio. In particular,
+    // FLAC/local playback must not depend on TrackPlayer having an active item.
+    // TrackPlayer is configured with no remote capabilities; JS never replays them.
     if(!atomic_load(&LXNPOwned))return;
-    MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
-    __weak LXNowPlayingCoordinator *weakSelf=self;
-    if(!self.nextTrackTarget)self.nextTrackTarget=[center.nextTrackCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event){
-        return [weakSelf handleNativeTrackCommand:@"next"];
-    }];
-    if(!self.previousTrackTarget)self.previousTrackTarget=[center.previousTrackCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event){
-        return [weakSelf handleNativeTrackCommand:@"previous"];
+    if(!self.remoteTargets)self.remoteTargets=[NSMutableDictionary dictionary];
+    [LXNativeCommands() enumerateKeysAndObjectsUsingBlock:^(NSString *name,MPRemoteCommand *command,BOOL *stop){
+        if(self.remoteTargets[name])return;
+        LXNativeRemoteTarget *target=[LXNativeRemoteTarget new];target.owner=self;target.command=name;
+        [command addTarget:target action:@selector(invoke:)];self.remoteTargets[name]=target;
     }];
     self.controlsInstalled=YES;[self updateControls];
 }
 - (void)updateControls {
-    BOOL active=atomic_load(&LXNPOwned),wanted=self.wanted;
+    BOOL active=atomic_load(&LXNPOwned);
     MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
     // Another native owner or the system can change command availability while
     // Now Playing metadata is refreshed. Reassert the desired flags every time;
     // a cached wanted/paused signature is not proof that the flags still match.
-    center.playCommand.enabled=active && !wanted;center.pauseCommand.enabled=active && wanted;
-    center.stopCommand.enabled=active;center.togglePlayPauseCommand.enabled=NO;
+    // iOS, head units and Bluetooth accessories choose play, pause OR toggle.
+    // Availability describes supported actions, not the decoder's transient rate.
+    // Disabling play while buffering (rate=0, wanted=YES) greys the system button.
+    center.playCommand.enabled=active;center.pauseCommand.enabled=active;
+    center.stopCommand.enabled=active;center.togglePlayPauseCommand.enabled=active;
     center.nextTrackCommand.enabled=active;center.previousTrackCommand.enabled=active;center.changePlaybackPositionCommand.enabled=active;
     center.skipForwardCommand.enabled=NO;center.skipBackwardCommand.enabled=NO;center.seekForwardCommand.enabled=NO;center.seekBackwardCommand.enabled=NO;
 }
@@ -114,6 +139,7 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 - (void)receive:(NSDictionary *)value {
     NSString *key=[value[@"songId"] isKindOfClass:NSString.class]?value[@"songId"]:@"";if(!key.length)return;
     NSInteger generation=[value[@"generation"] integerValue];if(generation<self.generation)return;
+    BOOL artworkRefreshed=[value[@"artworkResolved"] boolValue]!=[self.snapshot[@"artworkResolved"] boolValue];
     self.generation=generation;self.snapshot=[value copy];self.targetKey=key;
     // Restoring a paused queue or reading a playlist must not initialize
     // MediaRemote, render artwork, or acquire a lock-screen session.
@@ -121,12 +147,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     atomic_store(&LXNPOwned,true);
     if(!self.controlsInstalled)[self installControls];
     NSString *path=[value[@"artwork"] isKindOfClass:NSString.class]?value[@"artwork"]:@"";
-    if(![self.coverPath isEqualToString:path]) {
+    if(![self.coverPath isEqualToString:path] || artworkRefreshed) {
         [self.coverTask cancel];self.coverTask=nil;self.coverPath=path;NSUInteger epoch=++self.coverEpoch;
         MPMediaItemArtwork *cached=[self.covers objectForKey:path];
-        if(cached)self.artwork=cached;
-        else if(!path.length)self.artwork=[self defaultArtwork];
-        else [self fetchArtwork:path epoch:epoch];
+        self.artwork=cached?:[self defaultArtwork];
+        if(!cached && path.length)[self fetchArtwork:path epoch:epoch];
     }
     [self publish];
 }
@@ -143,7 +168,7 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
         // Keep the Now Playing session in its active state so iOS continues routing lock-screen commands.
         // 0.01x is effectively stationary during a short track transition without publishing a paused session.
         frozen[MPNowPlayingInfoPropertyPlaybackRate]=@0.01;
-        if(![self.publishedInfo isEqualToDictionary:frozen]) {
+        if(![MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo isEqualToDictionary:frozen]) {
             MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=frozen;
             self.publishedInfo=[frozen copy];
         }
@@ -164,9 +189,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     info[MPNowPlayingInfoPropertyPlaybackRate]=clockRunning?@(rate):@0;
     info[MPNowPlayingInfoPropertyDefaultPlaybackRate]=@1;
     info[MPMediaItemPropertyArtwork]=self.artwork?:[self defaultArtwork];
-    if(![self.publishedInfo isEqualToDictionary:info]) { MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=info;self.publishedInfo=[info copy]; }
+    // Repair artwork/metadata if a late legacy SDK write cleared the system card.
+    if(![MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo isEqualToDictionary:info]) { MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=info; }
+    self.publishedInfo=[info copy];
     MPNowPlayingPlaybackState state=self.wanted?MPNowPlayingPlaybackStatePlaying:MPNowPlayingPlaybackStatePaused;
-    if(self.lastPlaybackState!=state){MPNowPlayingInfoCenter.defaultCenter.playbackState=state;self.lastPlaybackState=state;}
+    if(MPNowPlayingInfoCenter.defaultCenter.playbackState!=state){MPNowPlayingInfoCenter.defaultCenter.playbackState=state;}self.lastPlaybackState=state;
     if(!self.receivingRemote) { [UIApplication.sharedApplication beginReceivingRemoteControlEvents];self.receivingRemote=YES; }
     self.presentedKey=self.targetKey;self.presentedGeneration=self.generation;[self updateControls];
 }
@@ -177,6 +204,9 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     // Prefetch while resolving, but do not put the next album's cover on the
     // previous song's retained card.
     if(self.generation==self.presentedGeneration && [self.targetKey isEqualToString:self.presentedKey])[self publish];
+    if(!artwork && self.coverPath.length) {
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnArtworkMissing" object:nil userInfo:@{@"songId":self.targetKey?:@"",@"artwork":self.coverPath}];
+    }
 }
 - (MPMediaItemArtwork *)decodeArtwork:(NSData *)data {
     if(!data.length || data.length>8*1024*1024)return nil;
@@ -187,6 +217,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     return [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size requestHandler:^UIImage *(CGSize size){return image;}];
 }
 - (void)fetchArtwork:(NSString *)path epoch:(NSUInteger)epoch {
+    if([path hasPrefix:@"data:image/"]) {
+        NSRange comma=[path rangeOfString:@","];
+        NSData *data=comma.location!=NSNotFound && path.length<=12*1024*1024?[[NSData alloc] initWithBase64EncodedString:[path substringFromIndex:comma.location+1] options:0]:nil;
+        [self finishArtwork:[self decodeArtwork:data] epoch:epoch];return;
+    }
     NSURL *url=[NSURL URLWithString:path];
     if(![url.scheme.lowercaseString isEqual:@"http"] && ![url.scheme.lowercaseString isEqual:@"https"]) {
         NSString *file=url.isFileURL?url.path:path;
@@ -197,9 +232,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
         });return;
     }
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url];request.timeoutInterval=12;
+    [request setValue:@"Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15" forHTTPHeaderField:@"User-Agent"];
     __weak LXNowPlayingCoordinator *weak=self;
     self.coverTask=[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){
-        LXNowPlayingCoordinator *owner=weak;MPMediaItemArtwork *artwork=error?nil:[owner decodeArtwork:data];
+        NSInteger status=[response isKindOfClass:NSHTTPURLResponse.class]?((NSHTTPURLResponse *)response).statusCode:0;
+        LXNowPlayingCoordinator *owner=weak;MPMediaItemArtwork *artwork=error || status<200 || status>=300?nil:[owner decodeArtwork:data];
         LXNPMain(^{[weak finishArtwork:artwork epoch:epoch];});
     }];[self.coverTask resume];
 }
@@ -210,9 +247,11 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=nil;MPNowPlayingInfoCenter.defaultCenter.playbackState=MPNowPlayingPlaybackStateStopped;
     [self updateControls];
     if(self.receivingRemote) { [UIApplication.sharedApplication endReceivingRemoteControlEvents];self.receivingRemote=NO; }
-    MPRemoteCommandCenter *center=MPRemoteCommandCenter.sharedCommandCenter;
-    if(self.nextTrackTarget){[center.nextTrackCommand removeTarget:self.nextTrackTarget];self.nextTrackTarget=nil;}
-    if(self.previousTrackTarget){[center.previousTrackCommand removeTarget:self.previousTrackTarget];self.previousTrackTarget=nil;}
+    NSDictionary *commands=LXNativeCommands();
+    [self.remoteTargets enumerateKeysAndObjectsUsingBlock:^(NSString *name,LXNativeRemoteTarget *target,BOOL *stop){
+        [commands[name] removeTarget:target];
+    }];
+    [self.remoteTargets removeAllObjects];
     self.controlsInstalled=NO;self.lastPlaybackState=-1;
 }
 @end

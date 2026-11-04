@@ -70,6 +70,38 @@ struct Song {
     var artist: String { text(raw["singer"]).isEmpty ? text(raw["artist"]) : text(raw["singer"]) }
 }
 
+enum ArtworkAddress {
+    static func normalize(_ value: String, base: URL?) -> String {
+        let value=value.trimmingCharacters(in:.whitespacesAndNewlines)
+            .replacingOccurrences(of:"{size}",with:"500")
+        guard !value.isEmpty else { return "" }
+        if value.hasPrefix("data:image/"),value.utf8.count<=12*1024*1024 { return value }
+        if value.hasPrefix("//") { return normalize("https:"+value,base:base) }
+        if value.hasPrefix("/"), !value.hasPrefix("//"), base == nil { return value }
+        guard let url=URL(string:value,relativeTo:base)?.absoluteURL,
+              ["http","https","file"].contains(url.scheme?.lowercased() ?? "") else { return "" }
+        return url.absoluteString
+    }
+    static func embedded(_ song: Song, base: URL?) -> String {
+        for field in ["img","picUrl","cover","artwork","albumPic"] {
+            let value=normalize(text(song.raw[field]),base:base)
+            if !value.isEmpty { return value }
+        }
+        return ""
+    }
+    static func providerSong(_ song: Song) -> Object {
+        var raw=song.raw
+        var id=""
+        for field in ["songmid","songId","id"] {
+            if let value=raw[field],!(value is NSNull),!String(describing:value).isEmpty { id=String(describing:value);break }
+        }
+        let prefix=text(raw["source"])+"_"
+        if id.hasPrefix(prefix) { id=String(id.dropFirst(prefix.count)) }
+        raw["songmid"]=id
+        return raw
+    }
+}
+
 // Mirror the bundled WebUI QualityManager before a track is handed to the native
 // resolver. The WebView's playSong hook is replaced by the native queue bridge,
 // so relying on its normal getBestQuality() call silently skipped per-song checks.

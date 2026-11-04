@@ -23,6 +23,13 @@ enum PlayerRouteTests {
         DispatchQueue.main.asyncAfter(deadline:.now()+0.12) {
             do {
                 try record(player.wanted && player.audio.localAudio?.isPlaying == true,"realLocalAudioStarted")
+                let index=player.index
+                try record(LXOwnInvokeTransport("pause") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredLockScreenPauseStopsActualLocalAudioWithoutJavaScript")
+                try record(LXOwnInvokeTransport("play") && player.wanted && player.audio.localAudio?.isPlaying == true,"registeredLockScreenPlayResumesActualLocalAudioWithoutJavaScript")
+                try record(LXOwnInvokeTransport("toggle") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredHeadUnitTogglePausesActualLocalAudioOnce")
+                try record(LXOwnInvokeTransport("toggle") && player.wanted && player.audio.localAudio?.isPlaying == true && player.index==index,"registeredHeadUnitToggleResumesActualLocalAudioOnceWithoutChangingTrack")
+                try record(LXOwnInvokeTransport("stop") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredStopPreservesResumableLocalTrack")
+                _=LXOwnInvokeTransport("play")
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
                 try record(player.interrupted && player.wanted && player.audio.localAudio?.isPlaying == false,"systemInterruptionPausesActualAudioWhileKeepingResumeIntent")
                 NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
@@ -45,7 +52,7 @@ enum PlayerRouteTests {
                 try record(player.current?.key=="B","staleAndConflictingSameRevisionCannotRewindTrack")
                 try record(player.room.outgoing.isEmpty && !player.room.sending && player.room.order.pendingID.isEmpty,"localOutputLossDoesNotSendRoomPause")
                 player.room.apply(["revision":3,"playbackRevision":3,"reason":"track","song":raw,"paused":false,"currentTime":0,"updatedAt":Date().timeIntervalSince1970*1000])
-                player.play()
+                try record(LXOwnInvokeTransport("play"),"registeredSystemPlayRemainsUsableDuringOutputHold")
                 try record(!player.routeGate.held && player.wanted && player.audio.localAudio?.isPlaying == true,"explicitPlayResumesActualAudio")
                 try record(player.room.order.pendingID.isEmpty && player.room.outgoing.isEmpty,"localRejoinDoesNotRestartRoomTrack")
                 NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])

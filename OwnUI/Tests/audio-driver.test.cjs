@@ -23,10 +23,10 @@ test('idle preference restoration and clearing do not initialize media services'
  assert.equal(f.calls.length,0);
  await f.load(2);assert.equal(f.calls.filter(x=>x[0]==='setupPlayer').length,1);
 });
-test('Swift owns track skipping; TrackPlayer does not register competing next/previous handlers',async()=>{
+test('native transport owns play, pause, toggle, seek and skips without competing SDK handlers',async()=>{
  const f=fixture();await f.load(1);
  const options=f.calls.find(x=>x[0]==='updateOptions')[1];
- assert.deepEqual(options.capabilities,[Capability.Play,Capability.Pause,Capability.Stop,Capability.SeekTo]);
+ assert.deepEqual(options.capabilities,[]);
 });
 test('changing tracks does not reset the lock-screen session',async()=>{
  const f=fixture();await f.load(1);await f.load(2);

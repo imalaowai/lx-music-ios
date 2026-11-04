@@ -37,8 +37,10 @@ final class Player {
     var resolution: Cancellable?
     var transitionTask: UIBackgroundTaskIdentifier = .invalid
     var prefetchTask: Cancellable?
-    var artworkTask: URLSessionDataTask?
-    var artwork: MPMediaItemArtwork?
+    var artworkLookup: Cancellable?
+    var artworkIdentity = ""
+    var artworkLookupAttempted = false
+    var resolvedArtwork = ""
     var currentURL: URL?
     var remoteTargets: [(MPRemoteCommand, Any)] = []
     var resumeTime = 0.0
@@ -69,6 +71,10 @@ final class Player {
         for name in ["LXRemoteCommand", "LXOwnRemoteCommand"] {
             observers.append(NotificationCenter.default.addObserver(forName:Notification.Name(name),object:nil,queue:.main) { [weak self] note in self?.remote(note.userInfo as? Object ?? [:]) })
         }
+        observers.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnArtworkMissing"),object:nil,queue:.main) { [weak self] note in
+            guard let self=self,let song=self.current,text(note.userInfo?["songId"]) == text(song.raw["source"])+"|"+song.key else { return }
+            self.resolveArtwork(song)
+        })
         observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.room.recoverConnection("phone-active"); self?.publish() })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
             guard let self=self else { return }
@@ -123,7 +129,7 @@ final class Player {
             api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true); room.refresh(); return
         }
         finishTransition(); pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
-        room.disconnect(clear: true); queue = []; queueRevision += 1; index = -1; failure = ""; artwork = nil
+        room.disconnect(clear: true); queue = []; queueRevision += 1; index = -1; failure = ""
         library = []; libraryRevision += 1; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
     }
     func activate() throws {
@@ -142,7 +148,7 @@ final class Player {
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()
         if routeGate.held {
-            resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel()
+            resolution?.cancel(); prefetchTask?.cancel()
             audio.pause(); audio.replaceCurrentItem(with:nil,preservingNowPlaying:true); currentURL = nil
             persistQueue(); publish(); return
         }
@@ -152,7 +158,7 @@ final class Player {
         let epoch = generation, song = songs[target]
         let requestedQuality = QualityPolicy.best(for: song.raw, preference: quality, allowFallback: allowFallback)
         RuntimeTrace.record("audio.quality-request", ["source": text(song.raw["source"]), "preference": quality, "requested": requestedQuality, "fallback": allowFallback])
-        resolution?.cancel(); prefetchTask?.cancel(); artworkTask?.cancel(); artwork = nil
+        resolution?.cancel(); prefetchTask?.cancel()
         audio.pause(); audio.replaceCurrentItem(with: nil,preservingNowPlaying:true); currentURL = nil
         if user { room.sendState(reason: "track") }
         persistQueue(); publish()
@@ -261,20 +267,38 @@ final class Player {
         let signature = "\(generation)|\(wanted)|\(loading)|\(failure)|\(queueRevision)|\(audio.timeControlStatus.rawValue)"
         if signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
     }
+    func resetArtwork() {
+        artworkLookup?.cancel();artworkLookup=nil;artworkIdentity="";artworkLookupAttempted=false;resolvedArtwork=""
+    }
+    func resolveArtwork(_ song: Song) {
+        guard !artworkLookupAttempted,(wanted || currentURL != nil) else { return }
+        artworkLookupAttempted=true
+        let identity=artworkIdentity
+        artworkLookup=api.cover(song) { [weak self] result in
+            guard let self=self,self.artworkIdentity==identity else { return }
+            self.artworkLookup=nil
+            if case .success(let address)=result {
+                self.resolvedArtwork=address;self.nowPlayingSignature="";self.publish()
+            }
+        }
+    }
+    func nowPlayingArtwork(_ song: Song) -> String {
+        let identity=text(song.raw["source"])+"|"+song.key
+        if artworkIdentity != identity { resetArtwork();artworkIdentity=identity }
+        if let file=MusicLibrary.shared.coverURL(text(song.raw["offlineId"])) { return file.absoluteString }
+        let embedded=ArtworkAddress.embedded(song,base:api.base)
+        if embedded.isEmpty { resolveArtwork(song) }
+        return resolvedArtwork.isEmpty ? embedded : resolvedArtwork
+    }
     func updateNowPlaying() {
-        let signature = "\(generation)|\(wanted)|\(loading)|\(interrupted)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(current?.key ?? "")"
+        guard let song=current else { resetArtwork();audio.clearMetadata();return }
+        let cover=nowPlayingArtwork(song)
+        let signature = "\(generation)|\(wanted)|\(loading)|\(interrupted)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(song.key)|\(cover)"
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
         nowPlayingSignature = signature; nowPlayingAt = now
-        guard let song=current else { audio.clearMetadata(); return }
-        var cover=text(song.raw["img"])
-        if let id=song.raw["offlineId"] as? String,let folder=try? MusicLibrary.shared.folder(id) {
-            let file=folder.appendingPathComponent("封面.jpg")
-            // The reference module's local artwork API accepts a path, not file://.
-            if FileManager.default.fileExists(atPath:file.path) { cover=file.path }
-        }
         let knownDuration = duration > 0 ? duration : number(song.raw["interval"])
-        audio.metadata(["songId":text(song.raw["source"])+"|"+song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
+        audio.metadata(["songId":text(song.raw["source"])+"|"+song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"artworkResolved":!resolvedArtwork.isEmpty,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
     }
     func persistQueue() {
         let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]

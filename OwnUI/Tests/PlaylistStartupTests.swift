@@ -80,6 +80,12 @@ enum PlaylistStartupTests {
             }else{checks["realProviderSDKAndURLSessionReturnPlaylistSongs"]=false}
             finishIfReady()
         }
+        player.api.cover(Song(raw:["source":"wy","id":"wy_1231"])) { result in
+            if case .success(let address)=result {
+                checks["nativeCoverLookupUsesProviderSDKWithoutPhoneWebView"]=address.hasPrefix("data:image/png;base64,")
+            } else {checks["nativeCoverLookupUsesProviderSDKWithoutPhoneWebView"]=false}
+            finishIfReady()
+        }
         engine.call("resolve",["song":["source":"kw","songmid":"123"],"quality":"128k"]) { result in
             if case .success(let response)=result,let value=response as? Object {
                 checks["playbackResolutionWaitsForSavedSourceInitialization"]=text(value["url"])=="https://audio.invalid/restored.mp3" && ProcessInfo.processInfo.systemUptime-began>=3.5
@@ -121,7 +127,7 @@ enum PlaylistStartupTests {
             }else{DispatchQueue.main.asyncAfter(deadline:.now()+0.15){poll()}}
         }
     }
-    static func finishIfReady(){if checks.count>=7 {finish()}}
+    static func finishIfReady(){if checks.count>=8 {finish()}}
     static func finish(error:String?=nil) {
         guard !completed else{return};completed=true
         var report:Object=["checks":checks,"metrics":metrics]

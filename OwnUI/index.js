@@ -14,8 +14,8 @@ emitter.addListener('own-ui-audio-command', request => {
 TrackPlayer.addEventListener(Event.PlaybackState, value=>driver.nativeEvent('track-player',value))
 TrackPlayer.addEventListener(Event.PlaybackError, value=>driver.nativeEvent('track-player',{...value,type:'error'}))
 TrackPlayer.addEventListener(Event.PlaybackQueueEnded, value=>driver.nativeEvent('track-player',{...value,type:'ended'}))
-// Remote transport is delivered once at the native SDK emitter, before a
-// backgrounded JS queue can delay/replay the same command.
+// LXNowPlayingCoordinator delivers remote transport directly to Swift Player;
+// a backgrounded RN JS queue never receives or replays transport commands.
 if (NativeModules.StreamingFlacPlayerModule) new NativeEventEmitter(NativeModules.StreamingFlacPlayerModule).addListener('streaming-flac-event',event=>driver.nativeEvent('flac',event))
 
 const OwnRoot = requireNativeComponent('LXOwnUIRoot')

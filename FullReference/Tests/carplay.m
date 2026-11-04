@@ -282,11 +282,13 @@ static void RunTests(void) {
     [skipOwner receive:@{@"songId":@"skip-route-test",@"generation":@500,@"title":@"skip route test",@"wanted":@YES,@"loading":@NO}];
     __block NSUInteger forwardedSkips=0;
     id skipObserver=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){
-        NSString *command=note.userInfo[@"command"];if([command isEqual:@"next"]||[command isEqual:@"previous"])forwardedSkips++;
+        forwardedSkips++;
     }];
-    [track sendEventWithName:@"remote-next" body:@{}];[track sendEventWithName:@"remote-previous" body:@{}];
+    for(NSString *event in @[@"remote-next",@"remote-previous",@"remote-play",@"remote-pause",@"remote-stop",@"remote-seek"]) {
+        [track sendEventWithName:event body:@{@"position":@20}];
+    }
     [NSNotificationCenter.defaultCenter removeObserver:skipObserver];
-    Check(forwardedSkips==0,@"trackPlayerSkipEventsCannotCompeteWithDirectNativeQueueTargets");
+    Check(forwardedSkips==0,@"trackPlayerTransportEventsCannotDuplicateDirectNativeTargets");
     [skipOwner clear];
 }
 

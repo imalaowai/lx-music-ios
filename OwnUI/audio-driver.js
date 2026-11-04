@@ -17,9 +17,9 @@ module.exports = function createDriver({player, stream, State, Capability, Repea
   async function initialize() {
     if (!setup) setup = (async () => {
       await player.setupPlayer({autoUpdateMetadata:false, waitForBuffer:true, maxCacheSize:65536, iosCategory:'playback', iosCategoryMode:'default'});
-      // Swift Player owns the song queue; TrackPlayer intentionally holds only the active decoder item.
-      // Registering its own next/previous handlers would compete with LXNowPlayingCoordinator.
-      await player.updateOptions({capabilities:[Capability.Play,Capability.Pause,Capability.Stop,Capability.SeekTo], stopWithApp:false});
+      // Native Swift Player owns every transport action for all three decoders.
+      // SDK remote handlers otherwise compete with it and don't work for local/FLAC audio.
+      await player.updateOptions({capabilities:[], stopWithApp:false});
       await player.setRepeatMode(RepeatMode.Off);
       ready?.();
     })().catch(error => {setup = null; throw error;});
