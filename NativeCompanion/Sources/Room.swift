@@ -53,7 +53,7 @@ final class RoomClient {
         let now=ProcessInfo.processInfo.systemUptime
         guard now-lastRecovery>=1 else{return};lastRecovery=now
         RuntimeTrace.record("room.recover",["reason":reason,"epoch":epoch])
-        connect();exchange(["type":"room:sync-request"]);publish()
+        connect();exchange(["type":"room:sync-request"]);refresh();publish()
     }
     func heartbeat() {
         guard active else{return}

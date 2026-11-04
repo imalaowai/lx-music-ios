@@ -90,6 +90,12 @@ final class Player {
         let deadline = Date().addingTimeInterval(2)
         while bindings < 2 && Date() < deadline { RunLoop.main.run(until:Date().addingTimeInterval(0.02)) }
         check(bindings == 2 && retryRoom.lastError.isEmpty, "the scheduled binding retry restores room discovery")
+        let changedPlayer = Player(), changedRoom = RoomClient(player:changedPlayer)
+        changedRoom.binding = ["roomId":"old-room"]
+        changedPlayer.api.respond = { path, _ in .success(path == "/api/room/binding" ? ["binding":["roomId":"current-room"]] : [:]) }
+        changedRoom.recoverConnection("carplay-connected")
+        check(changedRoom.roomID == "current-room", "CarPlay wake rechecks the account binding instead of reconnecting a stale room forever")
+        changedRoom.disconnect(clear:true)
         let rapid = Player(), rapidRoom = RoomClient(player:rapid)
         rapidRoom.binding = ["roomId":"rapid"]; rapid.api.postpone = true
         rapidRoom.sendState(reason:"track")
