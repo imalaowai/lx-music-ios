@@ -20,9 +20,14 @@ static NSData *LXCoverFixtureBytes;
 }
 - (void)stopLoading {}
 @end
-static void LXWaitForArtwork(LXNowPlayingCoordinator *owner) {
+static void LXAwaitArtwork(LXNowPlayingCoordinator *owner,void (^complete)(void)) {
     NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:2];
-    while(owner.coverTask && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    __block void (^poll)(void);
+    poll=^{
+        if(!owner.coverTask || limit.timeIntervalSinceNow<=0){poll=nil;complete();return;}
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_MSEC),dispatch_get_main_queue(),poll);
+    };
+    poll();
 }
 static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     LXOwnInstallNowPlaying();
@@ -118,31 +123,6 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     NSMutableDictionary *erased=[center.nowPlayingInfo mutableCopy];[erased removeObjectForKey:MPMediaItemPropertyArtwork];center.nowPlayingInfo=erased;
     [owner receive:c];
     check(center.nowPlayingInfo[MPMediaItemPropertyArtwork]==owner.artwork,@"lateLegacyMetadataWriteCannotPermanentlyEraseLockScreenCover");
-    // Run the real URLSession -> HTTP status -> image decoder -> system card path,
-    // rather than manually injecting an artwork completion.
-    LXCoverFixtureBytes=png;
-    NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;configuration.protocolClasses=@[LXCoverFixtureProtocol.class];
-    NSURLSession *session=[NSURLSession sessionWithConfiguration:configuration];owner.coverSession=session;
-    c[@"artwork"]=@"https://artwork.fixture.invalid/ok";[owner receive:c];LXWaitForArtwork(owner);
-    UIImage *downloaded=[owner.artwork imageWithSize:CGSizeMake(48,48)];
-    check(owner.coverTask==nil && owner.artwork!=owner.placeholder &&
-          center.nowPlayingInfo[MPMediaItemPropertyArtwork]==owner.artwork && downloaded.size.width>=48 &&
-          [owner.artworkDiagnostic[@"httpStatus"] intValue]==200,
-          @"realHTTPImageDownloadReachesSystemArtworkAtItsRequestedSize");
-    NSMutableDictionary *exported=[NSMutableDictionary dictionary];
-    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnNowPlayingDiagnostic" object:exported];
-    check([exported[@"systemHasArtwork"] boolValue] && [exported[@"systemRate"] doubleValue]==1 &&
-          [exported[@"lastImageRequest"][@"width"] doubleValue]>0 && [exported[@"systemDuration"] doubleValue]==240,
-          @"exportedPlaybackDiagnosticContainsImageRequestAndAuthoritativeClockWithoutMediaURLs");
-    c[@"artwork"]=@"https://artwork.fixture.invalid/denied";[owner receive:c];LXWaitForArtwork(owner);
-    check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"httpStatus"] intValue]==403 &&
-          [owner.artworkDiagnostic[@"state"] isEqual:@"http-failed"],@"imageAccessFailureIsDistinguishedFromDecoderAndSystemDisplayFailures");
-    c[@"artwork"]=@"https://artwork.fixture.invalid/invalid";[owner receive:c];LXWaitForArtwork(owner);
-    check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"invalid-image"],@"invalidImageResponseCannotBecomeSystemArtwork");
-    c[@"artwork"]=@"https://artwork.fixture.invalid/ok";[owner receive:c];
-    check(owner.coverTask==nil && owner.artwork!=owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"cached"],
-          @"validatedCoverIsReusedWithoutAnotherDownload");
-    owner.coverSession=nil;[session invalidateAndCancel];
     NSDictionary *complete=[center.nowPlayingInfo copy];c[@"generation"]=@4;c[@"loading"]=@YES;c[@"duration"]=@0;c[@"elapsedTime"]=@0;[owner receive:c];
     check([center.nowPlayingInfo[titleKey] isEqual:@"C"] &&
           [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[complete[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
@@ -183,4 +163,39 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     check([oldPlay invoke:nil]==MPRemoteCommandHandlerStatusCommandFailed && !commands.togglePlayPauseCommand.enabled,
           @"releasedSessionCannotAcceptLatePlayCommands");
     check(![[owner diagnostic][@"owned"] boolValue],@"idleDiagnosticsDoNotAcquireASystemMediaSession");
+}
+
+// Keep the main queue free: a nested RunLoop inside RunTests' dispatch block
+// cannot service the downloader's dispatch_async(main) completion reliably.
+static void LXRunArtworkHTTPTests(void (^check)(BOOL,NSString *),void (^complete)(void)) {
+    LXNowPlayingCoordinator *owner=LXNowPlayingCoordinator.shared;
+    UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(96,96)];
+    LXCoverFixtureBytes=[renderer PNGDataWithActions:^(UIGraphicsImageRendererContext *ctx){[UIColor.blueColor setFill];UIRectFill(CGRectMake(0,0,96,96));}];
+    NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;configuration.protocolClasses=@[LXCoverFixtureProtocol.class];
+    NSURLSession *session=[NSURLSession sessionWithConfiguration:configuration];owner.coverSession=session;
+    NSMutableDictionary *value=[@{@"songId":@"http-cover-test",@"generation":@1000,@"title":@"HTTP cover test",@"wanted":@YES,@"loading":@NO,@"playbackRate":@1,@"duration":@240,@"elapsedTime":@30,@"artwork":@"https://artwork.fixture.invalid/ok"} mutableCopy];
+    [owner receive:value];
+    LXAwaitArtwork(owner,^{
+        UIImage *downloaded=[owner.artwork imageWithSize:CGSizeMake(48,48)];
+        check(owner.coverTask==nil && owner.artwork!=owner.placeholder &&
+              MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo[MPMediaItemPropertyArtwork]==owner.artwork && downloaded.size.width>=48 &&
+              [owner.artworkDiagnostic[@"httpStatus"] intValue]==200,@"realHTTPImageDownloadReachesSystemArtworkAtItsRequestedSize");
+        NSMutableDictionary *exported=[NSMutableDictionary dictionary];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnNowPlayingDiagnostic" object:exported];
+        check([exported[@"systemHasArtwork"] boolValue] && [exported[@"systemRate"] doubleValue]==1 &&
+              [exported[@"lastImageRequest"][@"width"] doubleValue]>0 && [exported[@"systemDuration"] doubleValue]==240,
+              @"exportedPlaybackDiagnosticContainsImageRequestAndAuthoritativeClockWithoutMediaURLs");
+        value[@"artwork"]=@"https://artwork.fixture.invalid/denied";[owner receive:value];
+        LXAwaitArtwork(owner,^{
+            check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"httpStatus"] intValue]==403 &&
+                  [owner.artworkDiagnostic[@"state"] isEqual:@"http-failed",@"imageAccessFailureIsDistinguishedFromDecoderAndSystemDisplayFailures");
+            value[@"artwork"]=@"https://artwork.fixture.invalid/invalid";[owner receive:value];
+            LXAwaitArtwork(owner,^{
+                check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"invalid-image",@"invalidImageResponseCannotBecomeSystemArtwork");
+                value[@"artwork"]=@"https://artwork.fixture.invalid/ok";[owner receive:value];
+                check(owner.coverTask==nil && owner.artwork!=owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"cached",@"validatedCoverIsReusedWithoutAnotherDownload");
+                owner.coverSession=nil;[session invalidateAndCancel];[owner clear];complete();
+            });
+        });
+    });
 }

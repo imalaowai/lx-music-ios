@@ -300,10 +300,15 @@ static void RunTests(void) {
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds]; self.window.rootViewController=[UIViewController new]; [self.window makeKeyAndVisible];
     dispatch_async(dispatch_get_main_queue(), ^{
         LXResults=[NSMutableDictionary dictionary];
-        @try { RunTests(); } @catch (NSException *error) { LXResults[@"failure"]=error.reason ?: error.name; }
-        NSData *data=[NSJSONSerialization dataWithJSONObject:LXResults options:NSJSONWritingPrettyPrinted error:nil];
-        NSURL *doc=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-        [data writeToURL:[doc URLByAppendingPathComponent:@"carplay-lifecycle.json"] options:NSDataWritingAtomic error:nil];
+        void (^writeReport)(void)=^{
+            NSData *data=[NSJSONSerialization dataWithJSONObject:LXResults options:NSJSONWritingPrettyPrinted error:nil];
+            NSURL *doc=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+            [data writeToURL:[doc URLByAppendingPathComponent:@"carplay-lifecycle.json"] options:NSDataWritingAtomic error:nil];
+        };
+        @try { RunTests(); } @catch (NSException *error) { LXResults[@"failure"]=error.reason ?: error.name;writeReport();return; }
+        // Async checks record every result and write only after completion.
+        // A false result still fails the script's all-values-true assertion.
+        LXRunArtworkHTTPTests(^(BOOL pass,NSString *name){LXResults[name]=@(pass);},writeReport);
     });
     return YES;
 }
