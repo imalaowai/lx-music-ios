@@ -188,12 +188,12 @@ static void LXRunArtworkHTTPTests(void (^check)(BOOL,NSString *),void (^complete
         value[@"artwork"]=@"https://artwork.fixture.invalid/denied";[owner receive:value];
         LXAwaitArtwork(owner,^{
             check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"httpStatus"] intValue]==403 &&
-                  [owner.artworkDiagnostic[@"state"] isEqual:@"http-failed",@"imageAccessFailureIsDistinguishedFromDecoderAndSystemDisplayFailures");
+                  [owner.artworkDiagnostic[@"state"] isEqual:@"http-failed"],@"imageAccessFailureIsDistinguishedFromDecoderAndSystemDisplayFailures");
             value[@"artwork"]=@"https://artwork.fixture.invalid/invalid";[owner receive:value];
             LXAwaitArtwork(owner,^{
-                check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"invalid-image",@"invalidImageResponseCannotBecomeSystemArtwork");
+                check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"invalid-image"],@"invalidImageResponseCannotBecomeSystemArtwork");
                 value[@"artwork"]=@"https://artwork.fixture.invalid/ok";[owner receive:value];
-                check(owner.coverTask==nil && owner.artwork!=owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"cached",@"validatedCoverIsReusedWithoutAnotherDownload");
+                check(owner.coverTask==nil && owner.artwork!=owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"cached"],@"validatedCoverIsReusedWithoutAnotherDownload");
                 owner.coverSession=nil;[session invalidateAndCancel];[owner clear];complete();
             });
         });
