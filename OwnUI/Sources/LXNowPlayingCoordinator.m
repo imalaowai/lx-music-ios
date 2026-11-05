@@ -9,6 +9,25 @@
 // their initialization and private queues must remain independent of browsing.
 static atomic_bool LXNPOwned=false;
 static void LXNPMain(void (^action)(void)) { if(NSThread.isMainThread)action();else dispatch_async(dispatch_get_main_queue(),action); }
+static UIImage *LXNPArtworkImage(UIImage *image,CGSize size) {
+    if(!isfinite(size.width)||!isfinite(size.height)||size.width<=0||size.height<=0)return image;
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=1;format.opaque=YES;
+    UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext *context){
+        [UIColor.whiteColor setFill];UIRectFill(CGRectMake(0,0,size.width,size.height));
+        double scale=MAX(size.width/image.size.width,size.height/image.size.height);
+        CGSize fitted=CGSizeMake(image.size.width*scale,image.size.height*scale);
+        [image drawInRect:CGRectMake((size.width-fitted.width)/2,(size.height-fitted.height)/2,fitted.width,fitted.height)];
+    }];
+}
+static MPMediaItemArtwork *LXNPArtwork(UIImage *image,void (^requested)(CGSize)) {
+    return [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size requestHandler:^UIImage *(CGSize size){
+        if(requested)requested(size);
+        // Each callback must return the requested size. imageWithSize: may
+        // subsequently reuse a larger cached representation, which is valid.
+        return LXNPArtworkImage(image,size);
+    }];
+}
 void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterval eventAt) {
     if(!atomic_load(&LXNPOwned))return;
     LXNPMain(^{
@@ -31,6 +50,7 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 @property(nonatomic,strong) NSDictionary *publishedInfo;
 @property(nonatomic,strong) NSCache<NSString *,MPMediaItemArtwork *> *covers;
 @property(nonatomic,strong) NSURLSessionDataTask *coverTask;
+@property(nonatomic,strong) NSURLSession *coverSession;
 @property(nonatomic,strong) MPMediaItemArtwork *artwork;
 @property(nonatomic,strong) MPMediaItemArtwork *placeholder;
 @property(nonatomic,copy) NSString *targetKey;
@@ -47,6 +67,8 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 @property(nonatomic,strong) NSDictionary *pendingSnapshot;
 @property(nonatomic) BOOL pendingClear;
 @property(nonatomic) BOOL flushScheduled;
+@property(nonatomic,strong) NSDictionary *artworkDiagnostic;
+@property(nonatomic,strong) NSDictionary *lastArtworkRequest;
 + (instancetype)shared;
 - (void)receive:(NSDictionary *)value;
 - (void)clear;
@@ -54,6 +76,7 @@ void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterv
 - (void)publish;
 - (void)finishArtwork:(MPMediaItemArtwork *)artwork epoch:(NSUInteger)epoch;
 - (MPRemoteCommandHandlerStatus)handleRemote:(NSString *)command event:(MPRemoteCommandEvent *)event;
+- (NSDictionary *)diagnostic;
 @end
 @implementation LXNativeRemoteTarget
 - (MPRemoteCommandHandlerStatus)invoke:(MPRemoteCommandEvent *)event {
@@ -133,8 +156,12 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
         UIImage *note=[[UIImage systemImageNamed:@"music.note"] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
         [note drawInRect:CGRectMake(80,64,96,128)];
     }];
-    self.placeholder=[[MPMediaItemArtwork alloc] initWithBoundsSize:image.size requestHandler:^UIImage *(CGSize size){return image;}];
+    self.placeholder=[self artworkForImage:image];
     return self.placeholder;
+}
+- (MPMediaItemArtwork *)artworkForImage:(UIImage *)image {
+    __weak LXNowPlayingCoordinator *weak=self;
+    return LXNPArtwork(image,^(CGSize size){LXNPMain(^{weak.lastArtworkRequest=@{@"width":@(size.width),@"height":@(size.height)};});});
 }
 - (void)receive:(NSDictionary *)value {
     NSString *key=[value[@"songId"] isKindOfClass:NSString.class]?value[@"songId"]:@"";if(!key.length)return;
@@ -151,6 +178,7 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
         [self.coverTask cancel];self.coverTask=nil;self.coverPath=path;NSUInteger epoch=++self.coverEpoch;
         MPMediaItemArtwork *cached=[self.covers objectForKey:path];
         self.artwork=cached?:[self defaultArtwork];
+        self.artworkDiagnostic=@{@"state":cached?@"cached":path.length?@"pending":@"missing-address"};self.lastArtworkRequest=nil;
         if(!cached && path.length)[self fetchArtwork:path epoch:epoch];
     }
     [self publish];
@@ -178,6 +206,8 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
     info[MPMediaItemPropertyTitle]=value[@"title"]?:@"";info[MPMediaItemPropertyArtist]=value[@"artist"]?:@"";info[MPMediaItemPropertyAlbumTitle]=value[@"album"]?:@"";
     info[MPNowPlayingInfoPropertyExternalContentIdentifier]=self.targetKey;
     info[MPMediaItemPropertyMediaType]=@(MPMediaTypeMusic);
+    info[MPNowPlayingInfoPropertyMediaType]=@(MPNowPlayingInfoMediaTypeAudio);
+    info[MPNowPlayingInfoPropertyIsLiveStream]=@NO;
     double duration=[value[@"duration"] doubleValue];if(isfinite(duration) && duration>0)info[MPMediaItemPropertyPlaybackDuration]=@(duration);
     double elapsed=[value[@"elapsedTime"] doubleValue];info[MPNowPlayingInfoPropertyElapsedPlaybackTime]=@(isfinite(elapsed)?MAX(0,elapsed):0);
     // Show the user's play/pause intent through buffering, without reporting
@@ -214,34 +244,56 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
     NSDictionary *options=@{(__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways:@YES,(__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize:@512,(__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform:@YES};
     CGImageRef cg=CGImageSourceCreateThumbnailAtIndex(source,0,(__bridge CFDictionaryRef)options);CFRelease(source);if(!cg)return nil;
     UIImage *image=[UIImage imageWithCGImage:cg];CGImageRelease(cg);
-    return [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size requestHandler:^UIImage *(CGSize size){return image;}];
+    return [self artworkForImage:image];
 }
 - (void)fetchArtwork:(NSString *)path epoch:(NSUInteger)epoch {
+    self.artworkDiagnostic=@{@"state":@"fetching"};
     if([path hasPrefix:@"data:image/"]) {
         NSRange comma=[path rangeOfString:@","];
         NSData *data=comma.location!=NSNotFound && path.length<=12*1024*1024?[[NSData alloc] initWithBase64EncodedString:[path substringFromIndex:comma.location+1] options:0]:nil;
-        [self finishArtwork:[self decodeArtwork:data] epoch:epoch];return;
+        MPMediaItemArtwork *artwork=[self decodeArtwork:data];
+        self.artworkDiagnostic=@{@"state":artwork?@"decoded":@"invalid-image",@"bytes":@(data.length),@"kind":@"embedded"};
+        [self finishArtwork:artwork epoch:epoch];return;
     }
     NSURL *url=[NSURL URLWithString:path];
     if(![url.scheme.lowercaseString isEqual:@"http"] && ![url.scheme.lowercaseString isEqual:@"https"]) {
         NSString *file=url.isFileURL?url.path:path;
         __weak LXNowPlayingCoordinator *weak=self;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
-            MPMediaItemArtwork *artwork=[weak decodeArtwork:[NSData dataWithContentsOfFile:file]];
-            LXNPMain(^{[weak finishArtwork:artwork epoch:epoch];});
+            NSData *data=[NSData dataWithContentsOfFile:file];MPMediaItemArtwork *artwork=[weak decodeArtwork:data];
+            LXNPMain(^{
+                if(weak.coverEpoch!=epoch)return;
+                weak.artworkDiagnostic=@{@"state":artwork?@"decoded":@"invalid-image",@"bytes":@(data.length),@"kind":@"file"};
+                [weak finishArtwork:artwork epoch:epoch];
+            });
         });return;
     }
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url];request.timeoutInterval=12;
     [request setValue:@"Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15" forHTTPHeaderField:@"User-Agent"];
     __weak LXNowPlayingCoordinator *weak=self;
-    self.coverTask=[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){
+    self.coverTask=[(self.coverSession?:NSURLSession.sharedSession) dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){
         NSInteger status=[response isKindOfClass:NSHTTPURLResponse.class]?((NSHTTPURLResponse *)response).statusCode:0;
         LXNowPlayingCoordinator *owner=weak;MPMediaItemArtwork *artwork=error || status<200 || status>=300?nil:[owner decodeArtwork:data];
-        LXNPMain(^{[weak finishArtwork:artwork epoch:epoch];});
+        LXNPMain(^{
+            if(weak.coverEpoch!=epoch)return;
+            weak.artworkDiagnostic=@{@"state":artwork?@"decoded":error?@"request-failed":status<200||status>=300?@"http-failed":@"invalid-image",
+                @"bytes":@(data.length),@"httpStatus":@(status),@"errorCode":@(error.code),@"kind":@"http"};
+            [weak finishArtwork:artwork epoch:epoch];
+        });
     }];[self.coverTask resume];
+}
+- (NSDictionary *)diagnostic {
+    BOOL owned=atomic_load(&LXNPOwned);
+    if(!owned)return @{@"owned":@NO}; // Diagnostics must not acquire an idle media session.
+    NSDictionary *info=MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo?:@{};
+    return @{@"owned":@YES,@"artwork":self.artworkDiagnostic?:@{},@"lastImageRequest":self.lastArtworkRequest?:@{},
+        @"systemHasArtwork":@(info[MPMediaItemPropertyArtwork]!=nil),@"placeholder":@(self.artwork==self.placeholder),
+        @"systemDuration":info[MPMediaItemPropertyPlaybackDuration]?:@0,@"systemElapsed":info[MPNowPlayingInfoPropertyElapsedPlaybackTime]?:@0,
+        @"systemRate":info[MPNowPlayingInfoPropertyPlaybackRate]?:@0,@"wanted":@(self.wanted),@"loading":self.snapshot[@"loading"]?:@NO};
 }
 - (void)clear {
     [self.coverTask cancel];self.coverTask=nil;self.coverEpoch++;self.snapshot=nil;self.publishedInfo=nil;self.targetKey=nil;self.presentedKey=nil;self.coverPath=nil;self.artwork=nil;self.generation=-1;
+    self.artworkDiagnostic=nil;self.lastArtworkRequest=nil;
     BOOL active=atomic_exchange(&LXNPOwned,false);
     if(!active && !self.receivingRemote && !self.controlsInstalled)return;
     MPNowPlayingInfoCenter.defaultCenter.nowPlayingInfo=nil;MPNowPlayingInfoCenter.defaultCenter.playbackState=MPNowPlayingPlaybackStateStopped;
@@ -262,6 +314,9 @@ __attribute__((constructor))
 static void LXOwnInstallNowPlaying(void) {
     static dispatch_once_t once;dispatch_once(&once,^{
         NSNotificationCenter *notes=NSNotificationCenter.defaultCenter;
+        [notes addObserverForName:@"LXOwnNowPlayingDiagnostic" object:nil queue:nil usingBlock:^(NSNotification *note){
+            if(NSThread.isMainThread && [note.object isKindOfClass:NSMutableDictionary.class])[(NSMutableDictionary *)note.object addEntriesFromDictionary:[LXNowPlayingCoordinator.shared diagnostic]];
+        }];
         [notes addObserverForName:@"LXOwnNowPlaying" object:nil queue:nil usingBlock:^(NSNotification *note){NSDictionary *value=[note.userInfo copy]?:@{};dispatch_async(dispatch_get_main_queue(),^{[LXNowPlayingCoordinator.shared enqueue:value clear:NO];});}];
         [notes addObserverForName:@"LXOwnNowPlayingClear" object:nil queue:nil usingBlock:^(NSNotification *note){dispatch_async(dispatch_get_main_queue(),^{[LXNowPlayingCoordinator.shared enqueue:nil clear:YES];});}];
         [notes addObserverForName:@"LXOwnAudioReady" object:nil queue:nil usingBlock:^(NSNotification *note){dispatch_async(dispatch_get_main_queue(),^{[LXNowPlayingCoordinator.shared installControls];});}];

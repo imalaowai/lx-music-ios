@@ -4,10 +4,11 @@ import { NativeEventEmitter, NativeModules, requireNativeComponent } from 'react
 import { Navigation } from 'react-native-navigation'
 import TrackPlayer, { Event, State, Capability, RepeatMode } from 'react-native-track-player'
 import createDriver from './audio-driver.js'
+import nativeClockPlayer from './native-clock-player.js'
 
 const bridge = NativeModules.LXOwnUIBridge
 const emitter = new NativeEventEmitter(bridge)
-const driver = createDriver({player:TrackPlayer, stream:NativeModules.StreamingFlacPlayerModule, State, Capability, RepeatMode, report:value=>bridge.reportState(value),ready:()=>bridge.audioReady()})
+const driver = createDriver({player:nativeClockPlayer(TrackPlayer,NativeModules.TrackPlayerModule), stream:NativeModules.StreamingFlacPlayerModule, State, Capability, RepeatMode, report:value=>bridge.reportState(value),ready:()=>bridge.audioReady()})
 emitter.addListener('own-ui-audio-command', request => {
   driver.run(request).then(value=>bridge.complete(request.ticket,value||{},''), error=>bridge.complete(request.ticket,{},error.message||String(error)))
 })

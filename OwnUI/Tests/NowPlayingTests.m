@@ -6,6 +6,24 @@
 @implementation LXFixturePositionEvent
 - (NSTimeInterval)positionTime { return self.fixturePosition; }
 @end
+static NSData *LXCoverFixtureBytes;
+@interface LXCoverFixtureProtocol:NSURLProtocol @end
+@implementation LXCoverFixtureProtocol
++ (BOOL)canInitWithRequest:(NSURLRequest *)request { return [request.URL.host isEqual:@"artwork.fixture.invalid"]; }
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
+- (void)startLoading {
+    NSInteger status=[self.request.URL.path isEqual:@"/denied"]?403:200;
+    NSData *data=[self.request.URL.path isEqual:@"/invalid"]?[@"not an image" dataUsingEncoding:NSUTF8StringEncoding]:LXCoverFixtureBytes;
+    NSHTTPURLResponse *response=[[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type":@"image/png"}];
+    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:data];[self.client URLProtocolDidFinishLoading:self];
+}
+- (void)stopLoading {}
+@end
+static void LXWaitForArtwork(LXNowPlayingCoordinator *owner) {
+    NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:2];
+    while(owner.coverTask && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+}
 static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     LXOwnInstallNowPlaying();
     LXNowPlayingCoordinator *owner=LXNowPlayingCoordinator.shared;[owner clear];
@@ -77,16 +95,54 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
     UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(96,96)];
     NSData *png=[renderer PNGDataWithActions:^(UIGraphicsImageRendererContext *ctx){[UIColor.blueColor setFill];UIRectFill(CGRectMake(0,0,96,96));}];
     MPMediaItemArtwork *decoded=[owner decodeArtwork:png];
-    check(decoded!=nil && [decoded imageWithSize:CGSizeMake(60,60)]!=nil && [owner decodeArtwork:[@"not an image" dataUsingEncoding:NSUTF8StringEncoding]]==nil,
+    UIImage *image=[UIImage imageWithData:png];
+    UIImage *small=LXNPArtworkImage(image,CGSizeMake(60,60)),*smaller=LXNPArtworkImage(image,CGSizeMake(30,30));
+    check(decoded!=nil && [decoded imageWithSize:CGSizeMake(60,60)]!=nil &&
+          CGSizeEqualToSize(small.size,CGSizeMake(60,60)) && CGSizeEqualToSize(smaller.size,CGSizeMake(30,30)) &&
+          small.scale==1 && CGImageGetWidth(small.CGImage)==60 && CGImageGetHeight(small.CGImage)==60 &&
+          [owner decodeArtwork:[@"not an image" dataUsingEncoding:NSUTF8StringEncoding]]==nil,
           @"realCoverBytesDecodeIntoSystemRequestableArtworkAndRejectInvalidData");
+    check([[owner defaultArtwork] imageWithSize:CGSizeMake(64,64)].size.width>=64,
+          @"placeholderAlsoHonorsTheSystemRequestedArtworkSize");
     c[@"artwork"]=[@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]];[owner receive:c];
     check(center.nowPlayingInfo[MPMediaItemPropertyArtwork]==owner.artwork && owner.artwork!=owner.placeholder,
           @"receivedCoverImageIsPublishedOnSystemLockScreenCard");
+    NSDictionary *diagnostic=[owner diagnostic];
+    check([diagnostic[@"systemHasArtwork"] boolValue] && ![diagnostic[@"placeholder"] boolValue] &&
+          [diagnostic[@"systemDuration"] doubleValue]==240 && [diagnostic[@"systemRate"] doubleValue]==1 &&
+          [center.nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] intValue]==MPNowPlayingInfoMediaTypeAudio &&
+          ![center.nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] boolValue],
+          @"finiteAudioMetadataHasArtworkDurationAndRunningClockForSystemInterpolation");
     NSUInteger coverEpoch=owner.coverEpoch;c[@"artworkResolved"]=@YES;[owner receive:c];
     check(owner.coverEpoch>coverEpoch,@"providerRefreshCanRetryTheSamePreviouslyFailedCoverAddress");
     NSMutableDictionary *erased=[center.nowPlayingInfo mutableCopy];[erased removeObjectForKey:MPMediaItemPropertyArtwork];center.nowPlayingInfo=erased;
     [owner receive:c];
     check(center.nowPlayingInfo[MPMediaItemPropertyArtwork]==owner.artwork,@"lateLegacyMetadataWriteCannotPermanentlyEraseLockScreenCover");
+    // Run the real URLSession -> HTTP status -> image decoder -> system card path,
+    // rather than manually injecting an artwork completion.
+    LXCoverFixtureBytes=png;
+    NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;configuration.protocolClasses=@[LXCoverFixtureProtocol.class];
+    NSURLSession *session=[NSURLSession sessionWithConfiguration:configuration];owner.coverSession=session;
+    c[@"artwork"]=@"https://artwork.fixture.invalid/ok";[owner receive:c];LXWaitForArtwork(owner);
+    UIImage *downloaded=[owner.artwork imageWithSize:CGSizeMake(48,48)];
+    check(owner.coverTask==nil && owner.artwork!=owner.placeholder &&
+          center.nowPlayingInfo[MPMediaItemPropertyArtwork]==owner.artwork && downloaded.size.width>=48 &&
+          [owner.artworkDiagnostic[@"httpStatus"] intValue]==200,
+          @"realHTTPImageDownloadReachesSystemArtworkAtItsRequestedSize");
+    NSMutableDictionary *exported=[NSMutableDictionary dictionary];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnNowPlayingDiagnostic" object:exported];
+    check([exported[@"systemHasArtwork"] boolValue] && [exported[@"systemRate"] doubleValue]==1 &&
+          [exported[@"lastImageRequest"][@"width"] doubleValue]>0 && [exported[@"systemDuration"] doubleValue]==240,
+          @"exportedPlaybackDiagnosticContainsImageRequestAndAuthoritativeClockWithoutMediaURLs");
+    c[@"artwork"]=@"https://artwork.fixture.invalid/denied";[owner receive:c];LXWaitForArtwork(owner);
+    check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"httpStatus"] intValue]==403 &&
+          [owner.artworkDiagnostic[@"state"] isEqual:@"http-failed"],@"imageAccessFailureIsDistinguishedFromDecoderAndSystemDisplayFailures");
+    c[@"artwork"]=@"https://artwork.fixture.invalid/invalid";[owner receive:c];LXWaitForArtwork(owner);
+    check(owner.artwork==owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"invalid-image"],@"invalidImageResponseCannotBecomeSystemArtwork");
+    c[@"artwork"]=@"https://artwork.fixture.invalid/ok";[owner receive:c];
+    check(owner.coverTask==nil && owner.artwork!=owner.placeholder && [owner.artworkDiagnostic[@"state"] isEqual:@"cached"],
+          @"validatedCoverIsReusedWithoutAnotherDownload");
+    owner.coverSession=nil;[session invalidateAndCancel];
     NSDictionary *complete=[center.nowPlayingInfo copy];c[@"generation"]=@4;c[@"loading"]=@YES;c[@"duration"]=@0;c[@"elapsedTime"]=@0;[owner receive:c];
     check([center.nowPlayingInfo[titleKey] isEqual:@"C"] &&
           [center.nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue]==[complete[MPNowPlayingInfoPropertyElapsedPlaybackTime] doubleValue] &&
@@ -126,4 +182,5 @@ static void LXRunNowPlayingTests(void (^check)(BOOL,NSString *)) {
           @"genuineClearReleasesOnlyOwnedLockScreenTargetsAndCommands");
     check([oldPlay invoke:nil]==MPRemoteCommandHandlerStatusCommandFailed && !commands.togglePlayPauseCommand.enabled,
           @"releasedSessionCannotAcceptLatePlayCommands");
+    check(![[owner diagnostic][@"owned"] boolValue],@"idleDiagnosticsDoNotAcquireASystemMediaSession");
 }

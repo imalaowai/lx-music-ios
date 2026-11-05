@@ -102,6 +102,21 @@ enum ArtworkAddress {
     }
 }
 
+enum SongInterval {
+    // LX provider rows store interval as seconds or mm:ss / hh:mm:ss.
+    static func seconds(_ value: Any?) -> Double {
+        if let number=value as? NSNumber { let n=number.doubleValue;return n.isFinite ? max(0,n):0 }
+        let parts=text(value).split(separator:":",omittingEmptySubsequences:false)
+        guard (1...3).contains(parts.count) else { return 0 }
+        var result=0.0
+        for (index,part) in parts.enumerated() {
+            guard let n=Double(part),n.isFinite,n>=0,index==0 || n<60 else { return 0 }
+            result=result*60+n
+        }
+        return result.isFinite ? result:0
+    }
+}
+
 // Mirror the bundled WebUI QualityManager before a track is handed to the native
 // resolver. The WebView's playSong hook is replaced by the native queue bridge,
 // so relying on its normal getBestQuality() call silently skipped per-song checks.

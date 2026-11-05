@@ -41,8 +41,13 @@ enum CarScene {
         }
         value["phoneUI"]="own-local-ui"; value["audioCore"]="reference-track-player-and-flac"
         let player=Player.shared
+        let nowPlaying=NSMutableDictionary()
+        NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:nowPlaying)
+        value["nowPlaying"]=nowPlaying as? Object ?? [:]
         value["runtime"]=["room":player.room.diagnostic(),"wanted":player.wanted,"loading":player.loading,
             "audioFailed":player.audio.hasFailed,"generation":player.generation,"position":player.position,"routeHold":player.routeGate.held,
+            "duration":player.duration,"audioRate":player.audio.rate,"audioState":player.audio.timeControlStatus.rawValue,
+            "artworkLookupAttempted":player.artworkLookupAttempted,"artworkResolved":!player.resolvedArtwork.isEmpty,
             "events":RuntimeTrace.snapshot()] as Object
         return value
     }

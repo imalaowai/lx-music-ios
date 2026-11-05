@@ -297,7 +297,7 @@ final class Player {
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
         nowPlayingSignature = signature; nowPlayingAt = now
-        let knownDuration = duration > 0 ? duration : number(song.raw["interval"])
+        let knownDuration = duration > 0 ? duration : SongInterval.seconds(song.raw["interval"])
         audio.metadata(["songId":text(song.raw["source"])+"|"+song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"artworkResolved":!resolvedArtwork.isEmpty,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
     }
     func persistQueue() {

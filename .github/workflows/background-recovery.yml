@@ -20,7 +20,7 @@ jobs:
       - run: |
           mkdir -p build/recovery
           python3 OwnUI/scripts/prepare.py
-          node --test OwnUI/Tests/audio-driver.test.cjs NativeCompanion/Tests/bridge.test.cjs NativeCompanion/Tests/lyrics.test.cjs NativeCompanion/Tests/engine.test.cjs
+          node --test OwnUI/Tests/*.test.cjs NativeCompanion/Tests/bridge.test.cjs NativeCompanion/Tests/lyrics.test.cjs NativeCompanion/Tests/engine.test.cjs
           xcrun swiftc NativeCompanion/Sources/Core.swift NativeCompanion/Tests/main.swift -o build/recovery/core-tests
           build/recovery/core-tests
           xcrun swiftc -D LX_OWN_UI NativeCompanion/Sources/Core.swift NativeCompanion/Sources/Room.swift NativeCompanion/Tests/room-recovery.swift -o build/recovery/room-tests

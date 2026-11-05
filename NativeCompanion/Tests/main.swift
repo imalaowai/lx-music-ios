@@ -9,6 +9,9 @@ check(ArtworkAddress.normalize("/covers/a.jpg",base:URL(string:"https://music.in
 check(ArtworkAddress.normalize("lx-local://cover/file",base:nil).isEmpty && ArtworkAddress.normalize("javascript:alert(1)",base:nil).isEmpty,"WebKit-only cover schemes never reach native image loading")
 check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","id":"wy_123"]))["songmid"])=="123","synced provider IDs normalize for native cover lookup")
 check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","songmid":123]))["songmid"])=="123","numeric provider IDs survive native cover lookup")
+check(SongInterval.seconds("03:20")==200 && SongInterval.seconds("1:03:20")==3800,"provider interval supplies seekable seconds before decoder metadata arrives")
+check(SongInterval.seconds(180.5)==180.5 && SongInterval.seconds("180.5")==180.5,"interval preserves native fractional seconds")
+check(SongInterval.seconds("03:99")==0 && SongInterval.seconds("nan")==0 && SongInterval.seconds(-1)==0,"invalid provider duration cannot reach system metadata")
 var pageRecovery = PageRecovery()
 pageRecovery.loading(at:10); let pageGeneration = pageRecovery.generation
 pageRecovery.acknowledged(); pageRecovery.terminated()
