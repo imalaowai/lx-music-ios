@@ -16,6 +16,8 @@
 
 这证明存在需要修正的接口缺陷，但不能据此宣称用户真实歌曲的封面缺失已完全定位。此前测试主要验证字典中有 Artwork、能取到非空 UIImage；没有验证请求尺寸，也未验证普通 URL 的下载到系统卡片的完整链路。新增 NSURLSession/URLProtocol 回归覆盖有效图片、403、无效图像响应及缓存。
 
+还复现了咪咕 provider 的真实返回结构错误：异步 getPic 返回一个包含 promise 的 HTTP 请求对象，单层解包后 API 返回 `url: {promise: {}}` 而不是图片地址，原生因此不会下载。该 provider 还丢弃了把 HTTP body 映射为图片地址的 `.then` 返回值，重试时又调用错方法。修正 promise 映射，对返回值按有限层数继续 await/解包，并将失败重试限制为 3 次。新增测试在旧脚本上明确失败，修正后验证咪咕 URL 和重试上限；酷狗 get_res_privilege 的 URL 及 `{size}` 替换也经真实 provider SDK 加 HTTP 边界回归，不能把咪咕问题直接归因于酷狗歌曲。
+
 保留的 CarPlaySupport 库中 `refreshNowPlayingInfo` 和 `startNowPlayingMonitor` 入口已是 RET，因此不能把当前问题简单归咎于该旧监控器。没有修改系统 UIKit/MediaPlayer 方法，也没有增加定时覆盖系统 metadata 的全局钩子。
 
 ## 现场诊断
@@ -25,8 +27,10 @@
 ## 验证
 
 - 新增 4 项 iOS clock ABI 边界回归，明确保留旧 fork 的 /1000 行为作为对照，验证生产驱动中的完整时长、连续进度、暂停、EOF 和秒单位 seek。
-- 原有 42 项 JavaScript 回归继续执行，总计 46 项。
+- 原有 42 项 JavaScript 回归继续执行，加上 4 项时间接口及 3 项真实 provider 封面/失败回归，总计 49 项。
 - Swift Core 验证时长格式与非法值隔离。
 - 原生系统卡片测试覆盖取图尺寸、真实 HTTP 解码路径、有限音频时长及正播放速率、诊断和闲置状态。
 
 自动验证不能代替用户 iPhone、车机或真实歌曲 CDN 的测试。未经现场数据确认的封面原因不标为已验证。
+
+构建设备包前，原生修改的 [41951030897 回归](https://github.com/imalaowai/lx-music-ios/actions/runs/41951030897) 的 phone、room、carplay 三个任务均通过，CarPlay/系统卡片共 82 项；随后补充 provider promise 修复，并在实际打包资源上运行全部 49 项 JavaScript 回归通过。最终打包提交继续运行完整回归，以核对 JavaScriptCore 资源与设备原生组件。
