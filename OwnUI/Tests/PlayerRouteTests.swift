@@ -106,10 +106,11 @@ enum PlayerRouteTests {
             NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
             NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:0])
             try record(!player.interrupted && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionWithoutResumeOptionStaysPaused")
-            // Two intentional next taps inside the old 200 ms debounce window must
-            // advance twice. A fake deviceKey fails resolution immediately without network I/O.
+            // Use an invalid sandbox path so no WebView file transfer remains
+            // in flight when the separate page-recovery test starts.
             player.room.disconnect(clear:true)
-            let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\($0)","name":"Remote \($0)","source":"wy","deviceKey":"fixture-\($0)"])}
+            let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\($0)","name":"Remote \($0)","source":"local",
+                                                  "isLocal":true,"url":"file:///route-fixture/\($0).flac"])}
             player.queue=remoteQueue;player.index=0;player.mode="order";player.wanted=false;player.loading=false;player.failure=""
             let commandAt=ProcessInfo.processInfo.systemUptime
             player.remote(["command":"next","eventAt":commandAt])
