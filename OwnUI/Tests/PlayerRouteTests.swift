@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MediaPlayer
 import UIKit
 
 // Execute the production Player, RoomClient and route observer with real local
@@ -17,9 +18,16 @@ enum PlayerRouteTests {
         try? JSONSerialization.data(withJSONObject:results,options:.prettyPrinted).write(to:root.appendingPathComponent("LX-Player-Route-Checks.json"),options:.atomic)
         WebRecoveryTests.start()
     }
+    static func waitForSystemArtwork(until deadline: TimeInterval, completion: @escaping (CGFloat) -> Void) {
+        let artwork = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork
+        let width = artwork?.bounds.width ?? 0
+        if width == 32 || ProcessInfo.processInfo.systemUptime >= deadline { completion(width); return }
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.04) { waitForSystemArtwork(until:deadline,completion:completion) }
+    }
     static func start() {
         let player=Player.shared
-        let image = UIGraphicsImageRenderer(size: CGSize(width:32,height:32)).image { context in
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width:32,height:32), format:format).image { context in
             UIColor.systemGreen.setFill(); context.fill(CGRect(x:0,y:0,width:32,height:32))
         }
         let cover = "data:image/png;base64," + image.pngData()!.base64EncodedString()
@@ -31,7 +39,7 @@ enum PlayerRouteTests {
         NotificationCenter.default.post(name:Notification.Name("LXOwnCarPlayAction"),object:nil,
                                         userInfo:["type":"play","listId":"__own_recent","musicId":song.playbackIdentity])
         player.api.credentials = credentials
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.20) {
+        waitForSystemArtwork(until:ProcessInfo.processInfo.systemUptime+1) { width in
             do {
                 try record(player.wanted && player.audio.localAudio?.isPlaying == true,"carPlayRecentActionStartsRealLocalAudio")
                 try record(player.recent.first?.key == "offline-test","actualDecoderPlaybackMovesSongToFrontOfRecentHistory")
@@ -39,8 +47,11 @@ enum PlayerRouteTests {
                 try record(text((saved?["recent"] as? [Object])?.first?["id"]) == "offline-test","recentHistoryIsPersistedForCarPlayColdStart")
                 let metadata = NSMutableDictionary()
                 NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:metadata)
-                try record(bool(metadata["systemHasArtwork"]) && !bool(metadata["placeholder"]) &&
-                           text((metadata["artwork"] as? Object)?["state"]) == "decoded","invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard")
+                guard width == 32 else {
+                    results["invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard"] = false
+                    throw ClientError("Artwork width \(width), native diagnostic \(metadata), fallback chosen \(player.nowPlayingArtwork(song) == cover)")
+                }
+                try record(true,"invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard")
                 let index=player.index
                 try record(LXOwnInvokeTransport("pause") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredLockScreenPauseStopsActualLocalAudioWithoutJavaScript")
                 try record(LXOwnInvokeTransport("play") && player.wanted && player.audio.localAudio?.isPlaying == true,"registeredLockScreenPlayResumesActualLocalAudioWithoutJavaScript")
