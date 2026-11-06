@@ -30,6 +30,8 @@ final class RoomClient {
     var outgoing: [(Object, Int)] = []
     var sending = false
     var lastError = ""
+    var commandError = ""
+    private var roomQueueRevision: Int?
     var publishedSignature = ""
     var health = RoomConnectionHealth()
     var lastRecovery = -Double.infinity
@@ -73,14 +75,19 @@ final class RoomClient {
         progress()
     }
     func publish() {
-        let visible: Object = ["room": roomID, "connected": connected, "enabled": enabled, "sync": syncTracks, "members": participants, "participantId": participantID, "controller": text(state["controllerId"]), "paused": bool(state["paused"], true), "song": (state["song"] as? Object).map { Song(raw: $0).key } ?? "", "error": lastError]
+        let visible: Object = ["room": roomID, "connected": connected, "enabled": enabled, "sync": syncTracks, "members": participants, "participantId": participantID, "controller": text(state["controllerId"]), "paused": bool(state["paused"], true), "song": (state["song"] as? Object).map { Song(raw: $0).key } ?? "", "error":lastError, "commandError":commandError, "commandPending":sending || !outgoing.isEmpty]
         let signature = (try? JSONSerialization.data(withJSONObject: visible, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         guard signature != publishedSignature else { return }; publishedSignature = signature
         player.onRoom?(snapshot())
         NotificationCenter.default.post(name: .lxRoom, object: self)
     }
     func snapshot() -> Object {
-        ["binding": binding as Any? ?? NSNull(), "state": state, "participants": participants, "participantId": participantID, "owner": owner, "connected": connected, "enabled": enabled, "syncOnTrack": syncTracks, "error": lastError]
+        let visibleBinding = binding.map { ["roomId":text($0["roomId"])] }
+        var visibleState = state
+        visibleState.removeValue(forKey:"playlist")
+        return ["binding":visibleBinding as Any? ?? NSNull(), "state":visibleState, "participants":participants,
+                "participantId":participantID, "owner":owner, "connected":connected, "enabled":enabled,
+                "syncOnTrack":syncTracks, "error":lastError, "commandError":commandError, "commandPending":sending || !outgoing.isEmpty]
     }
     // A cold CarPlay tap can arrive before the account's room binding is known.
     // Retain only the latest action and run it after the first room snapshot.
@@ -147,7 +154,7 @@ final class RoomClient {
     }
     func membership(_ operation: String, values: Object = [:], completion: @escaping (Result<Object, Error>) -> Void) {
         guard ["create", "join", "leave"].contains(operation) else { return }
-        api.request("/api/room/" + operation, method: "POST", body: values) { [weak self] result in
+        api.request("/api/room/" + operation, method: "POST", body: values, timeout: 10) { [weak self] result in
             if case .success = result { self?.disconnect(clear: true); self?.refresh() }
             completion(result)
         }
@@ -160,7 +167,7 @@ final class RoomClient {
     private func resetConnection(clear: Bool) {
         epoch += 1; commandEpoch += 1; socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false
         reconnect?.cancel(); reconnect = nil; ping?.invalidate(); ping = nil; outgoing = []; sending = false
-        needsSnapshotSync = false; lastProgressAt = -.infinity
+        needsSnapshotSync = false; lastProgressAt = -.infinity; roomQueueRevision = nil; commandError = ""; lastError = ""
         if clear { binding = nil; state = [:]; participants = []; participantID = ""; owner = ""; order = RoomOrder(); offset = 0; bestRTT = .infinity; retry = 0 }
     }
     func connect() {
@@ -188,15 +195,19 @@ final class RoomClient {
     }
     func receive(_ task: URLSessionWebSocketTask, version: Int) {
         task.receive { [weak self] result in
+            let value: Object?
+            if case .success(let message) = result {
+                let data: Data
+                switch message { case .data(let bytes): data = bytes; case .string(let string): data = Data(string.utf8); @unknown default: data = Data() }
+                value = (try? JSONSerialization.jsonObject(with:data)) as? Object
+            } else { value = nil }
             DispatchQueue.main.async {
                 guard let self = self, self.epoch == version, self.socket === task else { return }
                 switch result {
-                case .success(let message):
+                case .success:
                     self.connected = true; self.retry = 0
                     self.lastError="";self.receivedFrames += 1;self.health.received(at:ProcessInfo.processInfo.systemUptime)
-                    let data: Data
-                    switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: data = Data() }
-                    if let value = (try? JSONSerialization.jsonObject(with: data)) as? Object { self.handle(text(value["type"]), value["data"]) }
+                    if let value = value { self.handle(text(value["type"]), value["data"]) }
                     self.receive(task, version: version)
                 case .failure: self.lost(version)
                 }
@@ -245,28 +256,44 @@ final class RoomClient {
         guard active, let raw = incoming["song"] as? Object, order.accept(incoming, participant: participantID) else { return }
         let resynchronizing = needsSnapshotSync; needsSnapshotSync = false
         let oldPlaybackRevision = number(state["playbackRevision"], -1)
-        let oldKey = player.current?.key ?? "", song = Song(raw: raw), reason = text(incoming["reason"])
-        let list = (incoming["playlist"] as? [Object] ?? []).map { Song(raw: $0) }
-        let listToUse = list.isEmpty ? [song] : list
-        let proposed = Int(number(incoming["index"], -1)), found = listToUse.firstIndex(where: {$0.key == song.key}) ?? 0
-        let selected = listToUse.indices.contains(proposed) && listToUse[proposed].key == song.key ? proposed : found
+        let song = Song(raw:raw), reason = text(incoming["reason"]), proposed = Int(number(incoming["index"], -1))
+        let oldIdentity = player.current?.playbackIdentity
+        let contiguous = number(incoming["revision"], -1) == number(state["revision"], -1) + 1
+        let routine = reason == "progress" && !resynchronizing && contiguous && oldPlaybackRevision == number(incoming["playbackRevision"], -1)
+        let roomAlreadyMatches = roomQueueRevision == player.queueRevision
+        let playlist = incoming["playlist"] as? [Object]
+        let useKnownQueue = roomAlreadyMatches && !player.queue.isEmpty && (playlist == nil || routine)
+        let list: [Song] = useKnownQueue ? player.queue : (playlist ?? state["playlist"] as? [Object] ?? []).map { Song(raw:$0) }
+        let matches: (Song) -> Bool = { $0.playbackIdentity == song.playbackIdentity }
+        let selected = list.indices.contains(proposed) && matches(list[proposed]) ? proposed : list.firstIndex(where:matches)
+        let listToUse = selected == nil ? [song] : list
+        let sameQueue = (useKnownQueue && selected != nil) ||
+            (listToUse.count == player.queue.count && zip(listToUse, player.queue).allSatisfy {
+                NSDictionary(dictionary:$0.0.raw).isEqual(to:$0.1.raw)
+            })
         let shouldPause = bool(incoming["paused"], true) || localRouteHeld, wantedBefore = player.wanted
-        state = incoming
+        var updatedState = incoming
+        updatedState["playlist"] = useKnownQueue ? state["playlist"] : playlist ?? state["playlist"]
+        state = updatedState
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
         let recoverEnded = resynchronizing && !shouldPause && player.endGuard.handled && target(incoming) < max(0, player.duration - 1)
         let needsDecoder = player.audio.currentItem == nil && !player.loading && !localRouteHeld
-        if song.key != oldKey || needsDecoder || restarted || recoverEnded {
+        if song.playbackIdentity != oldIdentity || needsDecoder || restarted || recoverEnded {
             RuntimeTrace.record("room.track",["revision":number(incoming["revision"]),"paused":shouldPause,"reason":reason])
-            player.select(listToUse, index: selected, paused: shouldPause, user: false, time: target(incoming))
+            player.select(listToUse, index:selected ?? 0, paused:shouldPause, user:false, time:target(incoming), reuseQueue:sameQueue)
         } else {
-            if listToUse.map(\.key) != player.queue.map(\.key) { player.queue = listToUse; player.queueRevision += 1 }; player.index = selected
+            if !sameQueue { player.queue = listToUse; player.queueRevision += 1 }
+            let changedIndex = player.index != (selected ?? 0)
+            player.index = selected ?? 0
+            if !sameQueue || changedIndex { player.persistQueue() }
             // Correct once after reconnect, including a missed seek whose newest
             // snapshot is now a progress event. Routine snapshots stay smooth.
             if reason == "seek" || ((resynchronizing || wasPending) && !localRouteHeld && !player.loading && abs(player.position - target(incoming)) > 1) { player.seek(target(incoming), user: false) }
             if shouldPause, wantedBefore { player.pause(user: false) }
             else if !shouldPause, !wantedBefore, !player.endGuard.handled, resynchronizing || ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
         }
+        roomQueueRevision = player.queueRevision
         player.publish(); publish()
         if wasPending && !player.loading { mediaReady() }
     }
@@ -274,7 +301,9 @@ final class RoomClient {
         guard active, let song = player.current else { return }
         let command = reason == "track" ? UUID().uuidString : ""
         var value: Object = ["reason": reason, "origin": "user", "userInitiated": true, "sentAt": Date().timeIntervalSince1970 * 1000, "song": song.raw, "index": player.index, "songKey": song.key, "paused": !player.wanted, "currentTime": reason == "track" ? 0 : (position ?? player.position), "duration": reason == "track" ? 0 : player.duration, "playMode": player.mode]
-        if ["track", "queue", "join-current", "manual"].contains(reason) { value["playlist"] = player.queue.map(\.raw) }
+        if ["queue", "join-current", "manual"].contains(reason) || reason == "track" && roomQueueRevision != player.queueRevision {
+            value["playlist"] = player.queue.map(\.raw)
+        }
         if state["playbackRevision"] != nil { value["playbackRevision"] = state["playbackRevision"] }
         if !command.isEmpty { value["commandId"] = command; order.pendingID = command; order.pendingKey = song.key }
         // Keep the in-flight request ordered, but never replay a backlog of old
@@ -285,14 +314,18 @@ final class RoomClient {
             let oldReason = text(old["reason"])
             return oldReason == reason || (["play", "pause"].contains(reason) && ["play", "pause"].contains(oldReason))
         } }
-        outgoing.append((["type": "room:state", "state": value], commandEpoch)); drain()
+        commandError = ""
+        outgoing.append((["type":"room:state", "state":value], commandEpoch)); drain(); publish()
     }
     func drain() {
         guard !sending, !outgoing.isEmpty else { return }
         let (command, version) = outgoing.removeFirst()
         guard version == commandEpoch, active else { drain(); return }
         sending = true
-        exchange(command) { [weak self] in guard let self = self, self.commandEpoch == version else { return }; self.sending = false; self.drain() }
+        exchange(command, timeout:8) { [weak self] in
+            guard let self = self, self.commandEpoch == version else { return }
+            self.sending = false; self.drain(); self.publish()
+        }
     }
     func exchange(_ values: Object, timeout: TimeInterval? = nil, completion: (() -> Void)? = nil) {
         guard active else { completion?(); return }
@@ -304,6 +337,7 @@ final class RoomClient {
             switch result {
             case .success(let response):
                 self.lastError = ""
+                if text(values["type"]) == "room:state" { self.commandError = "" }
                 if let id = response["participantId"] as? String { self.participantID = id }
                 let type = text(values["type"])
                 if type == "room:state", !bool(response["accepted"]) {
@@ -312,13 +346,15 @@ final class RoomClient {
                         self.order.pendingID = ""; self.order.pendingKey = ""; self.needsSnapshotSync = true
                         if let incoming = response["state"] as? Object { self.apply(incoming) }
                     }
-                    self.lastError = "房间未接受这次控制，请重新连接房间"; self.publish(); return
+                    self.commandError = "房间未接受这次播放操作，请重试"; self.publish(); return
                 }
                 if type != "room:media-ready", let incoming = response["state"] as? Object { self.apply(incoming) }
             case .failure(let error):
                 let command = text((values["state"] as? Object)?["commandId"])
                 if !command.isEmpty && command == self.order.pendingID { self.order.pendingID = ""; self.order.pendingKey = ""; self.needsSnapshotSync = true }
-                self.lastError = error.localizedDescription; self.publish()
+                if text(values["type"]) == "room:state" { self.commandError = error.localizedDescription }
+                else { self.lastError = error.localizedDescription }
+                self.publish()
             }
         }
     }

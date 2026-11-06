@@ -9,6 +9,7 @@
         const safe = /^https?:\/\//i.test(src) || /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(src);
         return safe ? `<img src="${esc(src)}" alt="${esc(label)}" loading="lazy" referrerpolicy="no-referrer">` : person;
     }
+    const native = () => window.LXNative && window.LXNative.runtime !== 'browser';
     const identity = () => JSON.stringify(window.getUserAuthHeaders?.() || {});
     async function request(url, options = {}, key = identity()) {
         const response = await fetch(url, {...options, cache:'no-store', headers:{'Content-Type':'application/json',...window.getUserAuthHeaders?.(),...options.headers}});
@@ -140,7 +141,7 @@
     function logged(){return !!window.getUserAuthHeaders?.()['x-user-token'];}
     async function signOut(){
         hideMenu();
-        try{await window.handleSyncLogout?.(true);}
+        try{if(native())await window.LXBridge.signOut();else await window.handleSyncLogout?.(true);}
         catch(error){window.showError?.(error.message);}
     }
     function signIn(){
@@ -159,6 +160,7 @@
         button.classList.toggle('is-guest',!logged());button.setAttribute('aria-label',logged()?name+'，账号菜单':'登录账号');button.title=logged()?name:'登录账号';
     }
     function mountHeader(){
+        if(native())return;
         if(!$('qiye-account')){
             const wrap=document.createElement('div');wrap.id='qiye-account';
             wrap.innerHTML='<button type="button" id="qiye-account-button" aria-haspopup="menu" aria-expanded="false"></button><div id="qiye-account-menu" role="menu" hidden><p id="qiye-account-name"></p><button type="button" role="menuitem" data-account-action="avatar">更改头像与资料</button><button type="button" role="menuitem" data-account-action="password">修改密码</button><button type="button" role="menuitem" data-account-action="logout">退出登录</button></div>';
@@ -185,10 +187,10 @@
         }
     }
     function init() {
-        $('account-panel-open')?.addEventListener('click',()=>open());mountHeader();void refresh();window.addEventListener('qiye-shell-ready',mountHeader);
+        $('account-panel-open')?.addEventListener('click',()=>open());mountHeader();if(!native())void refresh();window.addEventListener('qiye-shell-ready',mountHeader);
         window.addEventListener('lx-auth-change',() => { close();hideMenu();activity=[];void refresh(); });
         window.addEventListener('focus',refresh);
     }
-    window.AccountPanel = {open,close,refresh,avatarHtml,mountHeader};
+    window.AccountPanel = {open,close,refresh,avatarHtml,mountHeader,getProfile:()=>profile};
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();

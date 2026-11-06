@@ -25,6 +25,11 @@ final class Player {
     var onRoom: ((Object) -> Void)?
     var onRevoked: (() -> Void)?
     var queueRevision = 0
+    private var emittedQueueRevision = -1
+    private var storedQueueRevision = -1
+    private var storedRecentRevision = -1
+    private var queueStorageID = ""
+    private(set) var recentRevision = 0
     var libraryRevision = 0
     var onChat: ((String, Object) -> Void)?
     var observers: [NSObjectProtocol] = []
@@ -159,7 +164,7 @@ final class Player {
             api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true); room.refresh(); return
         }
         finishTransition(); pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
-        room.disconnect(clear: true); queue = []; recent = []; queueRevision += 1; index = -1; failure = ""
+        room.disconnect(clear: true); queue = []; recent = []; recentRevision += 1; queueRevision += 1; index = -1; resumeTime = 0; failure = ""
         library = []; libraryRevision += 1; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
     }
     func activate() throws {
@@ -167,13 +172,14 @@ final class Player {
         try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
         try session.setActive(true)
     }
-    func select(_ songs: [Song], index target: Int, paused: Bool = false, user: Bool = true, time: Double = 0) {
+    func select(_ songs: [Song], index target: Int, paused: Bool = false, user: Bool = true, time: Double = 0, reuseQueue: Bool = false) {
         guard songs.indices.contains(target) else { return }
         if room.active, text(songs[target].raw["source"]) == "local" || songs[target].raw["deviceKey"] != nil || text(songs[target].raw["url"]).hasPrefix("file:") {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
         if user && !paused { resumeAfterUserAction() }
-        queue = songs; queueRevision += 1; index = target; wanted = !paused && !routeGate.held; resumeTime = max(0, time); loading = !routeGate.held; failure = ""; resolvedQuality = ""; resolvedQualityReported = false; generation += 1
+        if !reuseQueue { queue = songs; queueRevision += 1 }
+        index = target; wanted = !paused && !routeGate.held; resumeTime = max(0, time); loading = !routeGate.held; failure = ""; resolvedQuality = ""; resolvedQualityReported = false; generation += 1
         resetArtwork()
         timelineRevision += 1; seeking = false
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
@@ -218,7 +224,7 @@ final class Player {
     func prefetchNext() {
         guard mode != "random", let next = QueuePolicy.next(count: queue.count, index: index, mode: mode, automatic: true), next != index else { return }
         let song = queue[next]
-        guard song.raw["deviceKey"] == nil, song.raw["openlist"] == nil, !bool(song.raw["isLocal"]) else { return }
+        guard song.raw["openlist"] == nil, song.raw["deviceKey"] != nil || !bool(song.raw["isLocal"]) else { return }
         // Resolve one future address only. The reference core opens it when selected.
         let requestedQuality = QualityPolicy.best(for: song.raw, preference: quality, allowFallback: allowFallback)
         prefetchTask = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback) { _ in }
@@ -230,7 +236,7 @@ final class Player {
         if user { resumeAfterUserAction() }
         if user && wasHeld && room.active {
             let position = room.target(room.state), hostPaused = bool(room.state["paused"],true)
-            if audio.currentItem == nil || audio.hasFailed { select(queue,index:index,user:false,time:position) }
+            if audio.currentItem == nil || audio.hasFailed { select(queue,index:index,user:false,time:position,reuseQueue:true) }
             else {
                 wanted=true
                 do { try activate();seek(position,user:false);audio.play();publish() } catch { fail(error) }
@@ -238,9 +244,9 @@ final class Player {
             if hostPaused && wanted { room.sendState(reason:"play",position:position) }
             return
         }
-        if endGuard.handled, !room.active { select(queue, index: index, user: user); return }
+        if endGuard.handled, !room.active { select(queue, index: index, user: user, reuseQueue: true); return }
         wanted = true; failure = ""
-        if audio.currentItem == nil || audio.hasFailed { select(queue, index: index, user: user, time: resumeTime); return }
+        if audio.currentItem == nil || audio.hasFailed { select(queue, index: index, user: user, time: resumeTime, reuseQueue: true); return }
         do { try activate(); audio.play(); if user { room.sendState(reason: "play") }; publish() } catch { fail(error) }
     }
     func pause(user: Bool = true) {
@@ -264,7 +270,7 @@ final class Player {
     func move(previous: Bool = false, automatic: Bool = false) {
         if room.active, automatic { room.ended(); return }
         guard let target = QueuePolicy.next(count: queue.count, index: index, mode: mode, previous: previous, automatic: automatic) else { pause(); return }
-        select(queue, index: target)
+        select(queue, index: target, reuseQueue: true)
     }
     func finishNaturally() {
         guard wanted, endGuard.claim(generation) else { return }
@@ -296,14 +302,16 @@ final class Player {
     }
     func publish(includeQueue: Bool = true) {
         let recorded = recordRecentPlayback()
-        updateNowPlaying(); onState?(snapshot(includeQueue: includeQueue))
+        let changedQueue = includeQueue && emittedQueueRevision != queueRevision
+        if changedQueue, onState != nil { emittedQueueRevision = queueRevision }
+        updateNowPlaying(); onState?(snapshot(includeQueue: changedQueue))
         let signature = "\(generation)|\(wanted)|\(loading)|\(failure)|\(queueRevision)|\(audio.timeControlStatus.rawValue)"
         if recorded || signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
     }
     private func recordRecentPlayback() -> Bool {
         guard !loading, wanted, audio.timeControlStatus == .playing,
               recentRecordedGeneration != generation, let song = current else { return false }
-        recentRecordedGeneration = generation
+        recentRecordedGeneration = generation; recentRevision += 1
         recent.removeAll { $0.playbackIdentity == song.playbackIdentity }
         recent.insert(song, at: 0)
         if recent.count > Self.recentLimit { recent.removeLast(recent.count - Self.recentLimit) }
@@ -352,16 +360,51 @@ final class Player {
         updateNowPlaying()
     }
     func persistQueue() {
-        let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "recent": recent.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]
-        if let data = try? JSONSerialization.data(withJSONObject: object) { UserDefaults.standard.set(data, forKey: "lx.queue") }
+        let defaults = UserDefaults.standard
+        let identity = ["server":api.credentials?.server ?? "", "username":api.credentials?.username ?? ""]
+        let progress: Object = ["index":index, "mode":mode, "quality":quality, "position":currentURL == nil ? resumeTime : position]
+        if storedQueueRevision != queueRevision {
+            let id = UUID().uuidString
+            var object = progress
+            object["snapshotId"] = id; object["queue"] = queue.map(\.raw); object["recent"] = recent.map(\.raw)
+            for (key, value) in identity { object[key] = value }
+            guard let data = try? JSONSerialization.data(withJSONObject:object) else { return }
+            defaults.set(data, forKey:"lx.queue")
+            storedQueueRevision = queueRevision; queueStorageID = id
+        }
+        if storedRecentRevision != recentRevision {
+            var object: Object = identity
+            object["recent"] = recent.map(\.raw)
+            if let data = try? JSONSerialization.data(withJSONObject:object) {
+                defaults.set(data, forKey:"lx.recentPlayback"); storedRecentRevision = recentRevision
+            }
+        }
+        var checkpoint = progress
+        checkpoint["snapshotId"] = queueStorageID
+        defaults.set(checkpoint, forKey:"lx.queueProgress")
     }
     func restoreQueue() {
-        guard let data = UserDefaults.standard.data(forKey: "lx.queue"), let object = (try? JSONSerialization.jsonObject(with: data)) as? Object,
-              text(object["server"]) == (api.credentials?.server ?? ""), text(object["username"]) == (api.credentials?.username ?? "") else { return }
-        queue = (object["queue"] as? [Object] ?? []).map { Song(raw: $0) }; index = Int(number(object["index"], -1)); mode = text(object["mode"]); quality = text(object["quality"]); resumeTime = number(object["position"])
-        let recentRows = object["recent"] as? [Object] ?? (current.map { [$0.raw] } ?? [])
-        recent = recentRows.prefix(Self.recentLimit).map { Song(raw: $0) }
-        if let stored = UserDefaults.standard.data(forKey: "lx.library"), let lists = (try? JSONSerialization.jsonObject(with: stored)) as? [Object] { library = lists }
+        let defaults = UserDefaults.standard
+        let identityMatches: (Object) -> Bool = { object in
+            text(object["server"]) == (self.api.credentials?.server ?? "") && text(object["username"]) == (self.api.credentials?.username ?? "")
+        }
+        guard let data = defaults.data(forKey:"lx.queue"), let object = (try? JSONSerialization.jsonObject(with:data)) as? Object,
+              identityMatches(object) else { return }
+        queue = (object["queue"] as? [Object] ?? []).map { Song(raw:$0) }
+        queueStorageID = text(object["snapshotId"])
+        let saved = defaults.dictionary(forKey:"lx.queueProgress")
+        let progress = !queueStorageID.isEmpty && text(saved?["snapshotId"]) == queueStorageID ? (saved ?? object) : object
+        let target = Int(number(progress["index"], -1))
+        index = queue.indices.contains(target) ? target : -1
+        mode = ["list","single","order","random"].contains(text(progress["mode"])) ? text(progress["mode"]) : "list"
+        if !text(progress["quality"]).isEmpty { quality = text(progress["quality"]) }
+        resumeTime = number(progress["position"])
+        let persistedRecent = defaults.data(forKey:"lx.recentPlayback").flatMap { (try? JSONSerialization.jsonObject(with:$0)) as? Object }
+        let recentRows = persistedRecent.flatMap { identityMatches($0) ? $0["recent"] as? [Object] : nil }
+            ?? object["recent"] as? [Object] ?? (current.map { [$0.raw] } ?? [])
+        recent = recentRows.prefix(Self.recentLimit).map { Song(raw:$0) }
+        if !queueStorageID.isEmpty { storedQueueRevision = queueRevision }
+        if let stored = defaults.data(forKey:"lx.library"), let lists = (try? JSONSerialization.jsonObject(with:stored)) as? [Object] { library = lists }
     }
     func persistLibrary() { if let data = try? JSONSerialization.data(withJSONObject: library) { UserDefaults.standard.set(data, forKey: "lx.library") } }
     func refreshLibrary(_ completion: (() -> Void)? = nil) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Materialize the exact owned UI and local source engine for the integrated IPA."""
 import hashlib,json,lzma,pathlib,re,shutil
+from patch_web_ui import patch_web_ui
 root=pathlib.Path(__file__).resolve().parents[2]
 old=root/'NativeCompanion'
 out=root/'build/own-ui/resources';out.mkdir(parents=True,exist_ok=True)
@@ -25,6 +26,10 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
         replacement=b'if(t>=2)throw new Error("Provider artwork request failed");return this.getPicUrl(e,t+1).then(u=>u.promise||u)'
         assert data.count(marker)==1,'Migu cover retry anchor changed'
         data=data.replace(marker,replacement)
+        marker=b'case"/api/music/comment":return kx(i.songInfo).comment[i.type==="hot"?"getHotComment":"getComment"](i.songInfo,i.page||1,i.limit||20);'
+        assert data.count(marker)==1,'Provider comment route anchor changed'
+        helper=(old/'Engine/src/comment.cjs').read_bytes().split(b'if (typeof module',1)[0]
+        data=helper+b'\n'+data.replace(marker,b'case"/api/music/comment":return routeComment(i,kx);')
     if name=='WebUI':
         html=data.decode()
         for override in sorted((old/'WebOverrides').glob('*.js')):
@@ -37,7 +42,7 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
                 count=1
             assert count==1,'Missing bundled script: '+override.name
         html=html.replace('<title>LX Music', '<title>栖页音乐')
-        data=html.encode()
+        data=patch_web_ui(html).encode()
     (out/f'{name}.{extension}').write_bytes(data)
 for name in ['Bridge.js','AppShell.js','AppShell.css','ThirdPartyNotices.txt']:
     shutil.copy2(old/'Resources'/name,out/name)

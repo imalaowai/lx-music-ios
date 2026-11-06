@@ -5,7 +5,8 @@ const $=id=>document.getElementById(id),esc=value=>String(value??'').replace(/[&
 const paths={home:'<path d="m3 10 9-7 9 7v10H6V10m3 10v-7h6v7"/>',search:'<circle cx="10" cy="10" r="6.5"/><path d="m15 15 5 5"/>',list:'<path d="M4 5h16M4 11h9M4 17h7M19 10v9"/><circle cx="16.5" cy="19" r="2.5"/>',room:'<path d="M4 14v-3a8 8 0 0 1 16 0v3M4 11H2v7h5v-7H4m16 0h2v7h-5v-7h3"/>',mine:'<circle cx="12" cy="8" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/>',heart:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/>',download:'<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',folder:'<path d="M3 7V4h7l2 3h9v14H3V7Z"/>',settings:'<circle cx="12" cy="12" r="3"/><path d="m10 2-1 3-3 1-3-1-1 4 3 2v3l-3 2 2 4 3-1 3 1 1 3 4-1 1-3 3-1 3 1 1-4-3-2v-3l3-2-2-4-3 1-3-1-1-3-4 1Z"/>',source:'<path d="M8 3v5m8-5v5M5 8h14v4a7 7 0 0 1-14 0V8Zm7 11v4"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>',chart:'<path d="M4 21V11h4v10m2 0V3h4v18m2 0v-7h4v7"/>',cloud:'<path d="M6 19a5 5 0 1 1 0-10 7 7 0 0 1 13-2 6 6 0 0 1 0 12H6Z"/>',share:'<path d="M12 16V2m-5 5 5-5 5 5M5 11H3v11h18V11h-2"/>'};
 const icon=name=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]||paths.list}</svg>`;
 const state={page:'home',area:'home',interacted:false,info:window.__LX_NATIVE_BOOTSTRAP__||{},room:{},downloads:[],sources:[],feed:null,feedAt:0,feedLoading:false,player:{},sheet:null,history:[]};
-let originalSwitch,switching=false,container,maxHeight=innerHeight,lastWidth=innerWidth,viewportFrame=0,memberSignature='',mineSignature='',homeLibrarySignature='',downloadSignature='',savedLibrary='';
+const downloadRows=new Map();
+let originalSwitch,switching=false,container,maxHeight=innerHeight,lastWidth=innerWidth,viewportFrame=0,memberSignature='',mineSignature='',homeLibrarySignature='',downloadSignature='',libraryEdit=0;
 const request=(op,values)=>window.LXNative.request(op,values);
 const perform=action=>Promise.resolve().then(action).catch(error=>window.showError?.(error.message||String(error)));
 const own=()=>window.__LX_LIBRARY_GETTERS__?.getData?.()||{defaultList:[],loveList:[],userList:[]};
@@ -28,12 +29,12 @@ function go(target,remember=true,area){
  switching=true;
  try{
   if(['home','mine','room','downloads','sources'].includes(target)){
-   originalSwitch(target==='home'?'songlist':'search');showOwn(target);if(target==='home')$('view-songlist').classList.remove('hidden');
+   showOwn(target);
    if(target==='home')window.SongListManager?.init?.();
-   if(target==='mine')renderMine();
-   if(target==='room')renderRoom();
-   if(target==='downloads')void loadDownloads();
-   if(target==='sources')void loadSources();
+   if(target==='mine'){renderMine();perform(loadDownloads);perform(loadSources);}
+   if(target==='room')requestAnimationFrame(()=>setTimeout(()=>{if(state.page==='room')renderRoom();},0));
+   if(target==='downloads')perform(loadDownloads);
+   if(target==='sources')perform(loadSources);
   }else{
    for(const node of container.querySelectorAll('.native-page'))node.hidden=true;
    if(target==='favorites')window.LibraryHub.favorites();
@@ -67,19 +68,38 @@ async function playDownload(id){await request('playDownload',{downloadId:id});wi
 function play(songs,index){if(!songs[index])return;window.__LX_PLAYER_GETTERS__.setRoomPlaylist(songs,index);return window.playSong(songs[index],index);}
 function showSheet(title,content){closeSheet();const wrap=document.createElement('div');wrap.className='native-sheet-wrap';wrap.innerHTML=`<section class="native-sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h2>${esc(title)}<button type="button" class="native-sheet-close" aria-label="关闭">×</button></h2><div class="native-sheet-content"></div></section>`;wrap.querySelector('.native-sheet-content').append(content);wrap.querySelector('.native-sheet-close').onclick=closeSheet;wrap.onclick=event=>{if(event.target===wrap)closeSheet();};document.body.append(wrap);state.sheet=wrap;return wrap;}
 function closeSheet(){state.sheet?.remove();state.sheet=null;}
+function openAccount(){
+ if(state.info.hasAccount)return window.AccountPanel?.open();
+ const form=document.createElement('form');
+ form.className='native-sign-in';
+ form.innerHTML='<label>账号<input name="username" autocomplete="username" autocapitalize="none" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><div class="native-sign-in-server"><small></small><button type="button" class="native-secondary">更改服务器</button></div><p class="native-note" role="status" aria-live="polite"></p><button type="submit" class="native-primary">登录</button>';
+ form.querySelector('small').textContent=state.info.server||'';
+ form.querySelector('button[type=button]').onclick=()=>perform(()=>request('editServer'));
+ const submit=form.querySelector('[type=submit]'),status=form.querySelector('[role=status]');
+ form.onsubmit=async event=>{
+  event.preventDefault();submit.disabled=true;status.textContent='正在登录…';
+  try{
+   await request('signIn',{username:form.elements.username.value,password:form.elements.password.value,...window.getWebDeviceInfo?.()});
+   form.elements.password.value='';status.textContent='登录成功';
+  }catch(error){status.textContent=error.message;submit.disabled=false;}
+ };
+ showSheet('登录同步账号',form);
+}
 function row(label,action,kind='list',detail=''){const button=document.createElement('button');button.type='button';button.className='native-row';button.innerHTML=icon(kind)+`<span>${esc(label)}</span><small>${esc(detail||'›')}</small>`;button.onclick=()=>perform(action);return button;}
 function renderMine(){
- const d=own(),count=state.downloads.filter(x=>x.status==='finished').length,username=state.info.username||localStorage.getItem('lx_sync_user')||'';
- const name=username&&username!=='__device__'?username:'我的音乐';
- const signature=JSON.stringify([name,state.info.server,(d.loveList||[]).length,(d.userList||[]).length,count,state.sources.length]);if(signature===mineSignature)return;mineSignature=signature;
- $('native-person-name').textContent=name;$('native-person-note').textContent=state.info.hasAccount?'已连接账号 · 音乐保存在本机':'本机音乐库 · 无需连接服务器';
- $('native-person-avatar').textContent=Array.from(name)[0];
- const headerAvatar=$('header-avatar-image');if(headerAvatar?.innerHTML)$('native-person-avatar').innerHTML=headerAvatar.innerHTML;
+ const d=own(),count=state.downloads.filter(x=>x.status==='finished').length;
+ const profile=state.info.hasAccount?window.AccountPanel?.getProfile?.():null;
+ const name=profile?.nickname||state.info.username||'我的音乐';
+ const signature=JSON.stringify([name,profile?.avatar,state.info.hasAccount,(d.loveList||[]).length,(d.userList||[]).length,count,state.sources.length]);if(signature===mineSignature)return;mineSignature=signature;
+ $('native-person-name').textContent=name;$('native-person-note').textContent=state.info.hasAccount?'已登录同步账号':'点击头像登录同步账号';
+ const avatar=$('native-person-avatar');avatar.textContent=Array.from(name)[0];
+ avatar.setAttribute('aria-label',state.info.hasAccount?'编辑个人资料':'登录同步账号');
+ if(profile?.avatar)avatar.innerHTML=window.AccountPanel.avatarHtml(profile.avatar,name);
  const grid=$('native-mine-grid');grid.replaceChildren();
  for(const [name,target,kind,detail]of [['我的收藏','favorites','heart',`${(d.loveList||[]).length} 首喜欢的音乐`],['我的歌单','playlists','list',`${(d.userList||[]).length+1} 张私人歌单`],['本地 / 网盘','localmusic','folder','设备文件与云端音乐'],['已下载','downloads','download',`${count} 首 · 可离线播放`],['音源管理','sources','source',`${state.sources.length} 个本地音源`],['设置','settings','settings','外观、播放与同步']]){
   const button=document.createElement('button');button.type='button';button.className='native-mine-card';button.innerHTML=icon(kind)+`<strong>${name}</strong><small>${esc(detail)}</small>`;button.onclick=()=>go(target);grid.append(button);
  }
- const list=$('native-mine-links');list.replaceChildren();list.append(row('账号与同步',()=>{if(!state.info.server)return request('editServer');go('settings');$('btn-mode-local')?.scrollIntoView({block:'center'});},'cloud',state.info.server?'已配置':'可选'),row('睡眠定时',()=>window.openSleepTimerModal(),'clock'),row('更换同步服务器',()=>request('editServer'),'cloud'));
+ const list=$('native-mine-links');list.replaceChildren();list.append(row('睡眠定时',()=>window.openSleepTimerModal(),'clock'));
 }
 function memberNode(member){const node=document.createElement('button');node.type='button';node.className='native-member';const name=member.nickname||member.name||'成员',avatar=member.avatar&&window.AccountPanel?.avatarHtml?window.AccountPanel.avatarHtml(member.avatar,name):esc(Array.from(name)[0]);node.innerHTML=`<span class="native-member-avatar">${avatar}</span><small>${esc((member.id===state.room.state?.controllerId?'♛ ':'')+name)}</small>`;node.onclick=showMembers;return node;}
 function showMembers(){const box=document.createElement('div');box.className='native-members-grid';for(const member of state.room.participants||[])box.append(memberNode(member));showSheet(`房间成员 · ${(state.room.participants||[]).length} 人`,box);}
@@ -92,11 +112,13 @@ function renderRoom(){
  if(joined&&state.page==='room'&&!window.RoomSocial?.state?.open)window.RoomSocial?.open();
  if(!joined&&window.RoomSocial?.state?.open)closeChat();
  $('native-room-connection').hidden=!!state.info.hasAccount;
- $('native-room-connection').textContent=state.info.server?'请先在“我的 → 设置”登录同步账号':'一起听需要同步服务器；其他本地功能可直接使用';
+ $('native-room-connection').textContent='登录同步账号后，可以创建或加入房间';
  $('native-room-connect').hidden=!!state.info.hasAccount;
+ $('native-room-command').textContent=joined?(room.commandPending?'正在同步播放操作…':room.commandError||room.error||''):'';
+
 }
 async function membership(operation,form){
- if(!state.info.hasAccount){window.showInfo?.('请先连接同步服务器并登录账号');return;}
+ if(!state.info.hasAccount){openAccount();return;}
  const button=form.querySelector('button[type=submit]');button.disabled=true;
  try{await request('roomMembership',{operation,roomId:form.querySelector('[name=roomId]').value.trim(),password:form.querySelector('[name=password]').value});form.hidden=true;await request('roomRefresh');}
  finally{button.disabled=false;}
@@ -106,12 +128,19 @@ async function loadDownloads(){const rows=await request('downloads');state.downl
 function renderDownloads(){
  const rows=state.downloads,signature=JSON.stringify(rows.map(x=>[x.id,x.status,x.progress,x.error,x.hasCover,x.hasLyric]));if(signature===downloadSignature)return;downloadSignature=signature;
  const box=$('native-download-list'),existing=new Map([...box.querySelectorAll('[data-download-id]')].map(node=>[node.dataset.downloadId,node]));if(!rows.length)box.replaceChildren();$('native-download-count').textContent=rows.filter(x=>x.status==='finished').length+' 首歌曲已保存在本机';
- if(!rows.length){box.innerHTML='<div class="native-empty">还没有已下载歌曲<br>播放页可保存音乐，也可导入设备文件。<br>同名 .lrc 和封面图片可与音频一起导入。</div>';return;}
- for(const item of rows){const song=item.song||{},rowNode=existing.get(item.id)||document.createElement('article');existing.delete(item.id);const contentSignature=JSON.stringify([item.status,item.error,item.hasCover,item.hasLyric,item.quality,song.name,song.singer]);if(rowNode.dataset.contentSignature===contentSignature){const bar=rowNode.querySelector('.native-download-progress i');if(bar)bar.style.width=Math.max(0,Math.min(100,Number(item.progress)||0))+'%';const label=rowNode.querySelector('small');if(label&&item.status==='downloading')label.textContent='下载中 '+Math.round(item.progress||0)+'%';continue;}rowNode.dataset.contentSignature=contentSignature;rowNode.className='native-download';rowNode.dataset.downloadId=item.id;const ready=item.status==='finished',status=ready?[song.singer||song.artist||'本机音乐',item.quality?.toUpperCase(),item.hasLyric?'歌词':'',item.hasCover?'封面':''].filter(Boolean).join(' · '):item.status==='assets'?'歌词 / 封面附件':item.status==='error'?item.error:item.status==='resolving'?'正在解析音源…':`下载中 ${Math.round(item.progress||0)}%`;
+ if(!rows.length){downloadRows.clear();box.innerHTML='<div class="native-empty">还没有已下载歌曲<br>播放页可保存音乐，也可导入设备文件。<br>同名 .lrc 和封面图片可与音频一起导入。</div>';return;}
+ downloadRows.clear();
+ for(const item of rows){const song=item.song||{},rowNode=existing.get(item.id)||document.createElement('article');existing.delete(item.id);downloadRows.set(item.id,rowNode);const contentSignature=JSON.stringify([item.status,item.error,item.hasCover,item.hasLyric,item.quality,song.name,song.singer]);if(rowNode.dataset.contentSignature===contentSignature){updateDownloadProgress(rowNode,item);continue;}rowNode.dataset.contentSignature=contentSignature;rowNode.className='native-download';rowNode.dataset.downloadId=item.id;const ready=item.status==='finished',status=ready?[song.singer||song.artist||'本机音乐',item.quality?.toUpperCase(),item.hasLyric?'歌词':'',item.hasCover?'封面':''].filter(Boolean).join(' · '):item.status==='assets'?'歌词 / 封面附件':item.status==='error'?item.error:item.status==='resolving'?'正在解析音源…':`下载中 ${Math.round(item.progress||0)}%`;
   rowNode.innerHTML=`${image(item.hasCover?'lx-local://cover/'+item.id:artwork(song),'native-download-cover')||'<span class="native-download-cover"></span>'}<button type="button" class="native-download-play"><strong>${esc(song.name||'音乐')}</strong><small>${esc(status)}</small>${!ready&&!['error','assets'].includes(item.status)?`<span class="native-download-progress"><i style="width:${Math.max(0,Math.min(100,Number(item.progress)||0))}%"></i></span>`:''}</button><button type="button" class="native-download-more" aria-label="${esc(song.name)}的选项">•••</button>`;
   rowNode.querySelector('.native-download-cover').onclick=()=>{if(ready)perform(()=>playDownload(item.id));};rowNode.querySelector('.native-download-play').onclick=()=>{if(ready)perform(()=>playDownload(item.id));};rowNode.querySelector('.native-download-more').onclick=()=>downloadOptions(item);if(!rowNode.parentNode)box.append(rowNode);
  }
  for(const node of existing.values())node.remove();if(rows.length)box.querySelector('.native-empty')?.remove();
+}
+function updateDownloadProgress(row,item){
+ if(!row||item.status!=='downloading')return;
+ const bar=row.querySelector('.native-download-progress i'),label=row.querySelector('small');
+ if(bar)bar.style.width=Math.max(0,Math.min(100,Number(item.progress)||0))+'%';
+ if(label)label.textContent='下载中 '+Math.round(item.progress||0)+'%';
 }
 function downloadOptions(item){const content=document.createElement('div');if(item.status==='finished')content.append(row('播放歌曲',()=>{closeSheet();return playDownload(item.id);},'list'),row('分享歌曲、封面与歌词',()=>request('shareDownload',{downloadId:item.id}),'share'));
  if(item.status==='assets')content.append(row('分享歌词与封面',()=>request('shareDownload',{downloadId:item.id}),'share'));
@@ -122,20 +151,52 @@ async function addDownloads(songs,quality){
  if(!songs?.length)return;
  const options=await window.DownloadOptions.choose({title:songs.length===1?songs[0].name:'下载歌单',count:songs.length,probe:async()=>({qualities:['flac24bit','flac','320k','128k'].map(q=>({quality:q,available:true,format:q.startsWith('flac')?'FLAC':'MP3',extension:q.startsWith('flac')?'flac':'mp3'}))})});
  if(!options)return;
- for(const song of songs){await request('download',{song,quality:options.quality||quality||'flac',parts:options.parts});}
- window.showSuccess?.('已加入下载，可在“已下载”查看进度');await loadDownloads();
+ let added=0,firstError='';
+ let cursor=0;
+ async function submitDownloads(){
+  while(cursor<songs.length){
+   const song=songs[cursor++];
+   try{await request('download',{song,quality:options.quality||quality||'flac',parts:options.parts});added++;}
+   catch(error){firstError ||= error.message;}
+  }
+ }
+ await Promise.all([submitDownloads(),submitDownloads()]);
+ if(firstError)window.showInfo?.(`已加入 ${added} 首，${songs.length-added} 首提交失败。 ${firstError}`);
+ else window.showSuccess?.('已加入下载，可在“已下载”查看进度');
+ await loadDownloads();
 }
 async function loadSources(){const rows=await request('sources');state.sources=Array.isArray(rows)?rows:[];renderSources();renderMine();}
 function renderSources(){const box=$('native-source-list');box.replaceChildren();if(!state.sources.length){box.innerHTML='<div class="native-empty">导入一次洛雪 .js 音源，之后由手机直接解析。<br>音源文件仅保存在这台设备。<br>尚未导入时，已连接的旧服务器音源可临时继续使用。</div>';return;}for(const item of state.sources){const node=document.createElement('article');node.className='native-source';node.innerHTML=`<strong>${esc(item.name)}</strong><p>${esc([item.version,item.author].filter(Boolean).join(' · '))}</p><p>${esc((item.supportedSources||Object.keys(item.sources||{})).map(x=>({kw:'酷我',kg:'酷狗',wy:'网易',tx:'QQ',mg:'咪咕'})[x]||x).join(' / '))} · ${item.enabled?'已启用':'已停用'}</p><div class="native-page-actions"><button class="native-secondary" data-action="toggle">${item.enabled?'停用':'启用'}</button><button class="native-secondary" data-action="delete">删除</button></div>`;node.querySelector('[data-action=toggle]').onclick=()=>perform(async()=>{await request('sourceEnable',{sourceId:item.id,enabled:!item.enabled});await loadSources();});node.querySelector('[data-action=delete]').onclick=()=>perform(async()=>{const ok=await window.showSelect('删除本地音源',item.name,{confirmText:'删除'});if(ok){await request('sourceRemove',{sourceId:item.id});await loadSources();}});box.append(node);}}
 async function importURL(){const url=await window.showInput('导入音源链接','填写洛雪音源 .js 文件的完整网址',{placeholder:'https://…/source.js'});if(!url)return;window.showInfo?.('正在下载并初始化音源…');await request('importSourceURL',{url});await loadSources();window.showSuccess?.('音源已保存在手机');}
 async function migrateSources(){const list=await request('serverSources'),rows=Array.isArray(list)?list:list?.sources||[];const content=document.createElement('div');if(!rows.length)content.innerHTML='<p class="native-note">没有读取到服务器音源。可以直接导入原 .js 文件。</p>';for(const item of rows){content.append(row(item.name||'音源',async()=>{if(!item.sourceUrl){window.showInfo?.('此音源由文件上传，请在手机重新选择原 .js 文件');return;}await request('importSourceURL',{url:item.sourceUrl});closeSheet();await loadSources();},'source',item.sourceUrl?'导入':'需原文件'));}showSheet('从服务器迁移音源',content);}
-async function saveLibrary(data){const value=data||own();if(!value)return;await window.ListStore?.set(value);const lists=[{id:'love',name:'我的收藏',list:value.loveList||[]},{id:'default',name:'默认列表',list:value.defaultList||[]},...(value.userList||[])];const serialized=JSON.stringify(lists);if(serialized!==savedLibrary){if(window.LXBridge?.publishLibrary)await window.LXBridge.publishLibrary(value);else await request('library',{lists});savedLibrary=serialized;}renderMine();}
+async function saveLibrary(data){
+ const value=data||own();if(!value)return;
+ await window.ListStore?.set(value);
+ await window.LXBridge?.publishLibrary(value);
+ if(state.page==='mine')renderMine();
+}
 async function initLibrary(){
  if(!localStorage.getItem('lx_sync_user')){localStorage.setItem('lx_sync_user','__device__');localStorage.setItem('lx_sync_mode','device');}
- const previousLogin=window.isUserLoggedIn;window.isUserLoggedIn=()=>localStorage.getItem('lx_sync_user')==='__device__'||previousLogin?.();
- const previousPush=window.pushDataChange;window.pushDataChange=async data=>{await saveLibrary(data);if(state.info.hasAccount)return previousPush?.(data);};
- let data=own();if(!data?.username){const cached=await window.ListStore?.get().catch(()=>null);data=cached||{username:localStorage.getItem('lx_sync_user'),defaultList:[],loveList:[],userList:[]};window.__LX_LIBRARY_GETTERS__?.adopt(data);}
- await saveLibrary(data);
+ const username=localStorage.getItem('lx_sync_user'),previousLogin=window.isUserLoggedIn;
+ window.isUserLoggedIn=()=>localStorage.getItem('lx_sync_user')==='__device__'||previousLogin?.();
+ const previousPush=window.pushDataChange;
+ window.pushDataChange=async data=>{libraryEdit++;await saveLibrary(data);if(state.info.hasAccount)return previousPush?.(data);};
+ const version=libraryEdit;
+ const cached=await window.ListStore?.get().catch(()=>null);
+ if(version!==libraryEdit)return;
+ if(cached?.username===username){window.__LX_LIBRARY_GETTERS__?.adopt(cached);await window.LXBridge?.publishLibrary(cached);}
+ else if(username==='__device__'){
+  const empty={username,defaultList:[],loveList:[],userList:[]};
+  window.__LX_LIBRARY_GETTERS__?.adopt(empty);await saveLibrary(empty);
+ }
+ if(!state.info.hasAccount)return;
+ const data=await window.SyncManager?.sync();
+ if(version!==libraryEdit||username!==localStorage.getItem('lx_sync_user'))return;
+ if(!Array.isArray(data?.defaultList)||!Array.isArray(data.loveList)||!Array.isArray(data.userList))return;
+ window.__LX_LIBRARY_GETTERS__?.adopt(data);
+ await window.LXBridge?.publishLibrary(data);
+ window.loadLibraryData?.();
+ if(state.page==='mine')renderMine();
 }
 function calibrateLyrics(){
  const box=document.createElement('div');box.innerHTML='<p class="native-note">歌词比声音慢，点“提前”；比声音快，点“延后”。仅保存当前歌曲的校准。</p><p id="native-lyric-offset" class="native-note"></p><div class="native-page-actions"><button class="native-secondary" data-offset="100">提前 0.1 秒</button><button class="native-secondary" data-offset="-100">延后 0.1 秒</button><button class="native-secondary" data-offset="reset">还原</button></div>';
@@ -153,17 +214,18 @@ function init(){
  page('mine',`<div class="native-page-inner"><div class="native-person"><button class="native-person-avatar" id="native-person-avatar" aria-label="个人资料">我</button><div><h1 id="native-person-name">我的音乐</h1><p id="native-person-note">本机音乐库</p></div></div><div id="native-mine-grid" class="native-mine-grid"></div><div class="native-list" id="native-mine-links"></div><p class="native-note">页面和音乐库保存在手机，服务器用于可选同步与一起听。</p></div>`);
  page('downloads',`<div class="native-page-inner"><button class="native-back" aria-label="返回上一页" id="native-download-back">‹</button><h1 class="native-title">已下载</h1><p class="native-note" id="native-download-count">设备中的音乐</p><div class="native-page-actions"><button class="native-primary" id="native-import-audio">导入设备音乐</button><button class="native-secondary" id="native-download-play-all">播放全部</button></div><div id="native-download-list"></div></div>`);
  page('sources',`<div class="native-page-inner"><button class="native-back" aria-label="返回上一页" id="native-source-back">‹</button><h1 class="native-title">音源管理</h1><p class="native-note">搜索、歌单和歌词由手机获取。导入洛雪音源后，播放链接也在本机解析；音频仍从原音源下载。</p><div class="native-page-actions"><button class="native-primary" id="native-import-source">导入 .js 文件</button><button class="native-secondary" id="native-import-source-url">导入链接</button><button class="native-secondary" id="native-migrate-sources">从服务器迁移</button></div><label class="native-row"><span>兼容旧服务器音源</span><input type="checkbox" id="native-legacy-source" checked aria-label="兼容旧服务器音源"></label><p class="native-note">尚未导入本地音源时，允许使用当前同步服务器解析播放链接。</p><div id="native-source-list"></div></div>`);
- page('room',`<div class="native-room-header"><button type="button" id="native-room-back" aria-label="返回首页">‹</button><div class="native-room-heading"><h1 id="native-room-title">一起听</h1><p id="native-room-subtitle">同一首歌，同一刻心情</p></div><div id="native-room-tools" class="native-room-tools" hidden></div></div><div id="native-room-member-strip" class="native-room-members" hidden></div><div id="native-room-welcome" class="native-room-welcome"><div class="native-room-hero">${icon('room')}<h2>让音乐，近一点。</h2><p>和朋友共享播放进度，边听边聊。<br>创建一个房间，或者加入他们。</p></div><p class="native-note" id="native-room-connection"></p><button class="native-secondary" id="native-room-connect">连接账号</button>${['create','join'].map((type,index)=>`<section class="native-room-fold"><button type="button" data-fold="${type}" aria-expanded="false">${index?'加入房间':'创建房间'}<span>＋</span></button><form id="native-room-${type}-form" hidden><input name="roomId" placeholder="${index?'房间号':'房间号（留空自动生成）'}" autocomplete="off" ${index?'required':''} aria-label="${index?'加入':'创建'}房间号"><input name="password" type="password" placeholder="房间密码（可选）" autocomplete="off" aria-label="房间密码"><button type="submit" class="native-primary">${index?'加入并聊天':'创建并聊天'}</button></form></section>`).join('')}</div>`);
+ page('room',`<div class="native-room-header"><button type="button" id="native-room-back" aria-label="返回首页">‹</button><div class="native-room-heading"><h1 id="native-room-title">一起听</h1><p id="native-room-subtitle">同一首歌，同一刻心情</p></div><div id="native-room-tools" class="native-room-tools" hidden></div></div><p id="native-room-command" class="native-note" role="status"></p><div id="native-room-member-strip" class="native-room-members" hidden></div><div id="native-room-welcome" class="native-room-welcome"><div class="native-room-hero">${icon('room')}<h2>让音乐，近一点。</h2><p>和朋友共享播放进度，边听边聊。<br>创建一个房间，或者加入他们。</p></div><p class="native-note" id="native-room-connection"></p><button class="native-secondary" id="native-room-connect">连接账号</button>${['create','join'].map((type,index)=>`<section class="native-room-fold"><button type="button" data-fold="${type}" aria-expanded="false">${index?'加入房间':'创建房间'}<span>＋</span></button><form id="native-room-${type}-form" hidden><input name="roomId" placeholder="${index?'房间号':'房间号（留空自动生成）'}" autocomplete="off" ${index?'required':''} aria-label="${index?'加入':'创建'}房间号"><input name="password" type="password" placeholder="房间密码（可选）" autocomplete="off" aria-label="房间密码"><button type="submit" class="native-primary">${index?'加入并聊天':'创建并聊天'}</button></form></section>`).join('')}</div>`);
  $('view-native-room').style.setProperty('padding','0 0 calc(var(--native-nav,66px) + var(--native-mini,0px))','important');
- window.NativeShell={go,back,syncNavigation,state,addDownloads,loadDownloads,loadSources,saveLibrary,ready:true};
+ window.NativeShell={go,back,syncNavigation,state,addDownloads,loadDownloads,loadSources,saveLibrary,openAccount,ready:false};
  window.switchTab=function(tab,...args){const result=originalSwitch.call(this,tab,...args);if(!switching){if(tab==='songlist'){go('home');return result;}if(!state.interacted&&state.page==='home')showOwn('home');else{for(const node of container.querySelectorAll('.native-page'))node.hidden=true;state.page=tab;if(!['search','favorites'].includes(tab))state.area=tab==='playlists'?'playlists':['songlist','leaderboard'].includes(tab)?'home':'mine';if(tab!=='room')closeChat();}syncNavigation();}return result;};
  $('native-room-back').onclick=()=>go('home');
  $('native-home-search').onsubmit=event=>{event.preventDefault();search($('native-home-query').value);};
- $('native-person-avatar').onclick=()=>{if(state.info.hasAccount)window.AccountPanel?.open();else window.showInfo?.('连接同步账号后可编辑个人资料');};
+ $('native-person-avatar').onclick=openAccount;
  for(const id of ['native-download-back','native-source-back'])$(id).onclick=back;$('native-import-audio').onclick=()=>perform(()=>request('importAudio'));$('native-download-play-all').onclick=()=>perform(()=>playDownload(state.downloads.find(x=>x.status==='finished')?.id));
  $('native-legacy-source').onchange=event=>perform(()=>request('sourcePreferences',{legacySourceFallback:event.target.checked}));$('native-import-source').onclick=()=>perform(()=>request('importSource'));$('native-import-source-url').onclick=()=>perform(importURL);$('native-migrate-sources').onclick=()=>perform(migrateSources);
  for(const button of document.querySelectorAll('[data-fold]')){button.onclick=()=>{const form=$('native-room-'+button.dataset.fold+'-form'),show=form.hidden;for(const other of document.querySelectorAll('.native-room-fold form'))other.hidden=true;for(const other of document.querySelectorAll('[data-fold]'))other.setAttribute('aria-expanded','false');form.hidden=!show;button.setAttribute('aria-expanded',String(show));};const form=$('native-room-'+button.dataset.fold+'-form');form.onsubmit=event=>{event.preventDefault();perform(()=>membership(button.dataset.fold,form));};}
- $('native-room-connect').onclick=()=>{if(state.info.server)go('settings');else perform(()=>request('editServer'));};attachRoom();
+ $('native-room-connect').onclick=openAccount;attachRoom();
+ $('btn-mode-local')?.parentElement?.parentElement?.classList.add('native-legacy-account');
  const settingsCard=document.createElement('section');settingsCard.className='media-settings-card';settingsCard.id='native-app-settings';settingsCard.innerHTML='<h3>本机播放</h3><p>音源、设备音乐和下载保存在手机。</p><div class="native-page-actions"><button type="button" class="native-secondary" id="native-setting-sources">音源管理</button><button type="button" class="native-secondary" id="native-setting-downloads">已下载</button></div><label class="native-row"><span>增强视觉效果</span><input id="native-rich-effects" type="checkbox" aria-label="增强视觉效果"></label><p class="native-note">关闭时减少背景模糊、歌词发光和持续动画。</p>';$('view-settings').prepend(settingsCard);$('native-setting-sources').onclick=()=>go('sources');$('native-setting-downloads').onclick=()=>go('downloads');$('native-rich-effects').checked=localStorage.getItem('lx_native_rich_effects')==='true';const carStatus=document.createElement('div');carStatus.className='native-list';carStatus.append(row('车机连接诊断',async()=>{const status=await request('carplayStatus'),content=document.createElement('div');content.innerHTML='<p class="native-note">'+esc(status.phase||'未连接')+'</p>'+ (status.error?'<p class="native-note">'+esc(status.error)+'</p>':'');content.append(row('导出连接诊断',()=>request('shareCarPlayDiagnostic'),'share'));showSheet('车机连接',content);},'settings'));settingsCard.append(carStatus);$('native-rich-effects').onchange=event=>{localStorage.setItem('lx_native_rich_effects',String(event.target.checked));document.body.classList.toggle('native-rich-effects',event.target.checked);};
  const oldHeading=$('view-playlists')?.querySelector('h1');if(oldHeading)oldHeading.textContent='我的歌单';window.openCustomSourceModal=()=>go('sources');
  const previousBatch=window.DeviceLibrary?.downloadBatch;if(window.DeviceLibrary)window.DeviceLibrary.downloadBatch=songs=>perform(()=>addDownloads(songs));
@@ -180,15 +242,43 @@ function init(){
  const queueToggle=window.toggleQueueDrawer;window.toggleQueueDrawer=function(){queueToggle?.();backdrop.hidden=queue.classList.contains('translate-x-full');};backdrop.onclick=()=>window.toggleQueueDrawer();new MutationObserver(()=>{backdrop.hidden=queue.classList.contains('translate-x-full');}).observe(queue,{attributes:true,attributeFilter:['class']});
  const hero=$('personal-playlist-hero');if(hero)hero.addEventListener('click',event=>{if(event.target.closest('.playlist-back')){event.preventDefault();event.stopImmediatePropagation();back();}},true);
  let lyricRequest=0;const fetchLyrics=window.fetchLyric;if(fetchLyrics)window.fetchLyric=async function(song,...args){const epoch=++lyricRequest;if(!song.offlineId)return fetchLyrics.call(this,song,...args);try{const lyric=await request('downloadAssets',{downloadId:song.offlineId});if(epoch!==lyricRequest)return;currentRawLrc=lyric.lyric||lyric.lrc||'';currentRawTlrc=lyric.tlyric||'';currentRawRlrc=lyric.rlyric||'';currentRawKlrc=lyric.klyric||lyric.lxlyric||'';currentLyricIndex=-1;initLyricPlayer();applyLyricUpdate();if(!currentRawLrc)renderLyric([],'本机未保存歌词，可在下载前获取歌词后重新保存');}catch(error){window.showInfo?.(error.message);}};
- window.addEventListener('lx-native-playback',event=>{state.player=event.detail||{};document.body.classList.toggle('native-has-player',!!state.player.song?.name);if(state.player.playing&&typeof wordAnimationId!=='undefined'&&!wordAnimationId&&typeof currentLyricIndex!=='undefined'&&currentLyricIndex>=0&&!$('view-player-detail')?.classList.contains('hidden'))syncLyricByLineNum(currentLyricIndex);});
+ function applyPlayback(value){state.player=value||{};document.body.classList.toggle('native-has-player',!!state.player.song?.name);if(state.player.playing&&typeof wordAnimationId!=='undefined'&&!wordAnimationId&&typeof currentLyricIndex!=='undefined'&&currentLyricIndex>=0&&!$('view-player-detail')?.classList.contains('hidden'))syncLyricByLineNum(currentLyricIndex);}
+ window.addEventListener('lx-native-playback',event=>applyPlayback(event.detail));
+ applyPlayback(window.LXBridge?.getPlayback());
+ state.room=window.LXBridge?.getRoom()||{};
  window.addEventListener('lx-room-unread',event=>{const button=document.querySelector('[data-native-page=room]');let badge=button.querySelector('.native-unread');if(!badge){badge=document.createElement('small');badge.className='native-unread';button.append(badge);}const count=Number(event.detail?.count)||0;badge.hidden=!count;badge.textContent=count>99?'99+':count?String(count):'';button.setAttribute('aria-label',count?'一起听，'+count+'条新消息':'一起听');});
  window.addEventListener('lx-native-room',event=>{state.room=event.detail||{};if(state.page==='room')renderRoom();});
- window.addEventListener('lx-native-download',event=>{const update=event.detail,id=update.id,index=state.downloads.findIndex(x=>x.id===id);if(update.deleted)state.downloads=state.downloads.filter(x=>x.id!==id);else if(index>=0)state.downloads[index]={...state.downloads[index],...update};else state.downloads.unshift(update);if(state.page==='downloads')renderDownloads();if(state.page==='mine')renderMine();});
- window.addEventListener('lx-native-sources',()=>{void loadSources();void loadDownloads();});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&['downloads','mine'].includes(state.page))void loadDownloads();});window.addEventListener('lx-auth-change',()=>{mineSignature='';perform(async()=>{state.info=await request('appInfo');renderMine();renderRoom();});});
+ window.addEventListener('lx-native-download',event=>{
+  const update=event.detail,id=update.id,index=state.downloads.findIndex(x=>x.id===id),previous=state.downloads[index];
+  if(update.deleted)state.downloads=state.downloads.filter(x=>x.id!==id);
+  else if(previous)state.downloads[index]={...previous,...update};
+  else state.downloads.unshift(update);
+  const progressOnly=previous?.status==='downloading'&&update.status==='downloading'&&
+    previous.hasCover===update.hasCover&&previous.hasLyric===update.hasLyric;
+  if(state.page==='downloads'){
+   if(progressOnly&&downloadRows.has(id))updateDownloadProgress(downloadRows.get(id),update);
+   else renderDownloads();
+  }
+  if(state.page==='mine'&&!progressOnly)renderMine();
+ });
+ window.addEventListener('lx-native-sources',()=>{if(['sources','mine'].includes(state.page))perform(loadSources);if(['downloads','mine'].includes(state.page))perform(loadDownloads);});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&['downloads','mine'].includes(state.page))perform(loadDownloads);});window.addEventListener('lx-profile-change',()=>{if(state.page==='mine')renderMine();});
+ window.addEventListener('lx-native-server',event=>{state.info={...state.info,...event.detail};const label=state.sheet?.querySelector('.native-sign-in-server small');if(label)label.textContent=state.info.server;});
  window.addEventListener('lx-native-keyboard',event=>{state.keyboard=!!event.detail?.visible;document.documentElement.style.setProperty('--native-keyboard-duration',(Number(event.detail?.duration)||.25)+'s');viewport();});
  window.addEventListener('resize',viewport,{passive:true});window.visualViewport?.addEventListener('resize',viewport,{passive:true});window.visualViewport?.addEventListener('scroll',viewport,{passive:true});document.addEventListener('focusin',viewport);document.addEventListener('focusout',()=>setTimeout(viewport,150));
- perform(async()=>{state.info=await request('appInfo')||{};$('native-legacy-source').checked=state.info.legacySourceFallback!==false;await initLibrary();renderMine();renderRoom();});void loadDownloads();void loadSources();
- go('home',false);syncNavigation();viewport();window.AccountPanel?.mountHeader?.();
+ const detail=$('view-player-detail');
+ detail.classList.add('hidden','translate-y-[100%]','opacity-0');isLyricViewOpen=false;
+ document.body.classList.remove('mobile-player-open');
+ window.setCompactPlaybar?.(false);
+ go('home',false);
+ window.NativeShell.ready=true;
+ requestAnimationFrame(()=>setTimeout(()=>perform(async()=>{
+  await window.LXBridge?.accountReady;
+  state.info=await window.LXBridge.appInfo();
+  $('native-legacy-source').checked=state.info.legacySourceFallback!==false;
+  if(state.page==='mine')renderMine();
+  if(state.page==='room')renderRoom();
+  await initLibrary();
+ }),0));
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(init,0),{once:true});else setTimeout(init,0);
 })();

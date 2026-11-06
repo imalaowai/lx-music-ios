@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild an already integrated full own-UI IPA with verified native components.
 
-update-components.py OWN_1_9_12_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
+update-components.py OWN_1_9_13_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
 Preserves the reference executable sections, frameworks, resources and identity.
 The own integration module and Hermes entry come from the native CI build.
 """
@@ -13,7 +13,7 @@ sha=lambda b:hashlib.sha256(b).hexdigest()
 def package(source,components,signer,output):
     source,components,signer,output=map(pathlib.Path,[source,components,signer,output])
     source_sha=sha(source.read_bytes())
-    assert source_sha=='67b61d80086c5590855885ea9be2d1fb334c121a2c88eec9dedc6ed52c06bd89','Expected the previously delivered complete 1.9.12 / build 100 IPA'
+    assert source_sha=='637f215acde1fe598681f05e4d135f1d5e7768082d8da0fabc020e6bc12d9ddc','Expected the previously delivered complete 1.9.13 / build 101 IPA'
     with zipfile.ZipFile(source) as z,zipfile.ZipFile(components) as additions,tempfile.TemporaryDirectory(prefix='qiye-own-rebuild-') as work:
         assert z.testzip() is None and additions.testzip() is None
         prefix='Payload/LxMusicMobile.app/';app=pathlib.Path(work)/prefix
@@ -33,7 +33,7 @@ def package(source,components,signer,output):
         old_main=z.read(prefix+'LxMusicMobile');ent=base.entitlements(old_main)
         assert ent['com.apple.developer.carplay-audio'] is True
         metadata=json.loads(additions.read('components.json'))
-        assert metadata['ownUI'] is True and metadata['version']=='1.9.13' and metadata['build']=='101'
+        assert metadata['ownUI'] is True and metadata['version']=='1.9.14' and metadata['build']=='102'
         assert metadata['iconMasterSha256']==sha((root/'OwnUI/Brand/CartoonIcon.png').read_bytes())
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
         assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
@@ -55,7 +55,7 @@ def package(source,components,signer,output):
         (app/'main.jsbundle').write_bytes(js)
         (app/'Frameworks/LXFullCarPlay.dylib').write_bytes(module)
         info=plistlib.loads((app/'Info.plist').read_bytes())
-        assert info['CFBundleIdentifier']=='cn.toside.music.cplay3' and info['CFBundleVersion']=='100'
+        assert info['CFBundleIdentifier']=='cn.toside.music.cplay3' and info['CFBundleVersion']=='101'
         info.update(CFBundleShortVersionString=metadata['version'],CFBundleVersion=metadata['build'])
         brand=plistlib.loads(additions.read('OwnUIBrand/BrandInfo.plist'))
         for key in ['CFBundleIcons','CFBundleIcons~ipad']:

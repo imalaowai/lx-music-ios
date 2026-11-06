@@ -28,12 +28,13 @@ final class Player {
     var selections = 0
     var onRoom: ((Object) -> Void)?, onRevoked: (() -> Void)?, onChat: ((String, Object) -> Void)?
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
-    func select(_ songs: [Song], index: Int, paused: Bool, user: Bool, time: Double) { queue = songs; self.index = index; wanted = !paused; position = time; selections += 1; generation += 1 }
+    func select(_ songs: [Song], index: Int, paused: Bool, user: Bool, time: Double, reuseQueue: Bool = false) { if !reuseQueue { queue = songs; queueRevision += 1 }; self.index = index; wanted = !paused; position = time; selections += 1; generation += 1 }
     func seek(_ time: Double, user: Bool) { seeks.append(time); position = time }
     func play(user: Bool) { wanted = true }
     func pause(user: Bool) { wanted = false }
     func configure(_ value: Credentials?) { api.credentials = value }
     func finishTransition() {}
+    func persistQueue() {}
     func publish() {}
     func fail(_ error: Error) { failure = error.localizedDescription; wanted = false }
 }

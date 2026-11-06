@@ -25,10 +25,23 @@ enum Vault {
         SecItemAdd(record as CFDictionary, nil)
     }
 }
+private final class DirectServerRequest: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 final class API {
     var credentials: Credentials?
     var sourceCache: [String: (ResolvedAudio, Date)] = [:]
     let session: URLSession
+    private lazy var directSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.timeoutIntervalForResource = 15
+        return URLSession(configuration: configuration, delegate: DirectServerRequest(), delegateQueue: nil)
+    }()
     init() {
         credentials = Vault.load()
         let configuration = URLSessionConfiguration.default
@@ -41,13 +54,27 @@ final class API {
     func url(_ path: String) -> URL? { guard let base = base else { return nil }; return URL(string: path, relativeTo: base)?.absoluteURL }
     @discardableResult func request(_ path: String, method: String = "GET", body: Object? = nil, timeout: TimeInterval? = nil, completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask? {
         guard let url = url(path), let identity = credentials else { completion(.failure(ClientError("请先打开手机页面登录音乐账号"))); return nil }
+        return requestJSON(url, via: session, method: method, body: body, timeout: timeout, identity: identity) { [weak self] result in
+            guard self?.credentials == identity else { completion(.failure(URLError(.cancelled))); return }
+            completion(result)
+        }
+    }
+    @discardableResult func requestServer(_ base: URL, path: String, body: Object, timeout: TimeInterval,
+                                          completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask? {
+        guard let url = URL(string: path, relativeTo: base)?.absoluteURL else {
+            completion(.failure(ClientError("服务器地址无效"))); return nil
+        }
+        return requestJSON(url, via: directSession, method: "POST", body: body, timeout: timeout, identity: nil, completion: completion)
+    }
+    private func requestJSON(_ url: URL, via transport: URLSession, method: String, body: Object?, timeout: TimeInterval?,
+                             identity: Credentials?, completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask {
         var request = URLRequest(url: url)
         request.httpMethod = method
         if let timeout = timeout { request.timeoutInterval = timeout }
-        request.setValue(identity.token, forHTTPHeaderField: "x-user-token")
-        request.setValue(identity.username, forHTTPHeaderField: "x-user-name")
+        request.setValue(identity?.token, forHTTPHeaderField: "x-user-token")
+        request.setValue(identity?.username, forHTTPHeaderField: "x-user-name")
         if let body = body { request.httpBody = try? JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        let task = session.dataTask(with: request) { data, response, error in
+        let task = transport.dataTask(with: request) { data, response, error in
             var result: Result<Object, Error>
             if let error = error { result = .failure(error) }
             else if let data = data, let value = (try? JSONSerialization.jsonObject(with: data)) as? Object {
@@ -55,10 +82,8 @@ final class API {
                 if (200..<300).contains(code), value["success"] == nil || bool(value["success"]) { result = .success(value) }
                 else { result = .failure(ClientError(text(value["message"]).isEmpty ? (text(value["error"]).isEmpty ? "请求失败（\(code)）" : text(value["error"])) : text(value["message"]))) }
             } else { result = .failure(ClientError("服务返回了无法读取的数据")) }
-            DispatchQueue.main.async { [weak self] in
-                guard self?.credentials == identity else { completion(.failure(URLError(.cancelled))); return }
-                completion(result)
-            }
+            let response = result
+            DispatchQueue.main.async { completion(response) }
         }
         task.resume()
         return task
@@ -99,6 +124,17 @@ final class API {
         }
         return ResolvedAudio(url: url, playbackQuality: playbackQuality, qualityReported: reportedOK)
     }
+    var prepareDevice: ((Song, @escaping (Result<URL, Error>) -> Void) -> Cancellable?)?
+    func importKey(_ key: String) -> String {
+        "lx.import." + (credentials?.server ?? "") + "." + (credentials?.username ?? "") + "." + key
+    }
+    func importedURL(_ key: String) -> URL? {
+        guard !key.isEmpty, let stored = UserDefaults.standard.string(forKey:importKey(key)),
+              let url = URL(string:stored), url.isFileURL, let directory = try? WebController.importDirectory(),
+              url.standardizedFileURL.deletingLastPathComponent().path == directory.standardizedFileURL.path,
+              FileManager.default.fileExists(atPath:url.path) else { return nil }
+        return url
+    }
     @discardableResult func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) -> Cancellable? {
         if let local = MusicLibrary.shared.localURL(song) {
             let reported = text(song.raw["quality"]).isEmpty ? local.pathExtension.lowercased() : text(song.raw["quality"])
@@ -120,7 +156,14 @@ final class API {
                 } catch { completion(.failure(error)) }
             }
         }
-        if song.raw["deviceKey"] != nil { completion(.failure(ClientError("请先在手机页面中准备设备音乐，再锁屏或连接车机"))); return nil }
+        if let key = song.raw["deviceKey"] as? String, !key.isEmpty {
+            let ready: (Result<URL, Error>) -> Void = { result in
+                completion(result.map { self.resolvedAudio(url:$0, reportedQuality:text(song.raw["quality"]), requestedQuality:quality, qualityReported:true) })
+            }
+            if let url = importedURL(key) { ready(.success(url)); return nil }
+            if let prepare = prepareDevice { return prepare(song, ready) }
+            ready(.failure(ClientError("请打开手机 App 准备这首设备音乐"))); return nil
+        }
         if let direct = song.raw["url"] as? String, !direct.isEmpty, bool(song.raw["isLocal"]) || song.raw["openlist"] != nil || song.raw["deviceKey"] != nil {
             let base = base ?? URL(string: "https://lx-device.invalid/")!
             do {

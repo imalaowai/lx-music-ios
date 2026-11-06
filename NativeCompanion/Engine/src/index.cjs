@@ -1,4 +1,5 @@
 'use strict';
+const routeComment=require('./comment.cjs');
 const network=require('./platform.cjs'),crypto=require('crypto'),compression=require('./compression.cjs');
 const providers={kw:require('../vendor/server/modules/utils/musicSdk/kw').default,kg:require('../vendor/server/modules/utils/musicSdk/kg').default,tx:require('../vendor/server/modules/utils/musicSdk/tx').default,wy:require('../vendor/server/modules/utils/musicSdk/wy').default,mg:require('../vendor/server/modules/utils/musicSdk/mg').default};
 const sources=new Map(),cache=new Map();
@@ -56,7 +57,7 @@ async function route(input){
   case '/api/music/lyric':{const song={...q,...body.songInfo};song.songmid=String(song.songmid||song.songId||song.id||'').replace(new RegExp('^'+(song.source||q.source)+'_'),'');return unwrap(source.getLyric(song));}
   case '/api/music/pic':return {url:await unwrap(source.getPic({...q,...body.songInfo}))};
   case '/api/music/url':return resolveSong(body.songInfo,body.quality,body.allowQualityFallback!==false);
-  case '/api/music/comment':return sourceFor(body.songInfo).comment[body.type==='hot'?'getHotComment':'getComment'](body.songInfo,body.page||1,body.limit||20);
+  case '/api/music/comment':return routeComment(body,sourceFor);
   case '/api/custom-source/list':return listSources();
   default:throw new Error('此功能需要连接同步服务器');
  }

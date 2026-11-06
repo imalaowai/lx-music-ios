@@ -4,7 +4,7 @@
   if (document.documentElement) document.documentElement.dataset.nativeApp = 'true';
   else document.addEventListener('DOMContentLoaded', () => {document.documentElement.dataset.nativeApp = 'true';}, {once: true});
   // Installed pages own their version and never register a web service worker.
-  const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '';
+  const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '', infoRequest;
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
   // Native time is authoritative; interpolate locally between snapshots so karaoke remains smooth.
   // Never extrapolate indefinitely if the app stops sending foreground snapshots.
@@ -32,6 +32,7 @@
   }
   let renderedQueue = -1, renderedSong = '', renderedQuality = '', selection = 0;
   let renderedPlaying = null, renderedStatus = null, renderedMode = null;
+  let roomMemberSignature = '';
   let room = {binding: null, state: {}, participants: [], connected: false, enabled: true, syncOnTrack: true};
   const post = (op, values = {}) => new Promise((resolve, reject) => {
     const id = ++sequence;
@@ -96,12 +97,13 @@
   function audioElement() { return document.getElementById('audio-player'); }
   function receiveState(state) {
     if (Number.isFinite(state.sampledAt) && Number.isFinite(playback.sampledAt) && state.sampledAt < playback.sampledAt) return;
-    const previous = playback; playback = {...playback, ...state}; state = playback;
+    const previous = playback, updatedQueue = Array.isArray(state.queue);
+    playback = {...playback, ...state}; state = playback;
     anchorClock(state, previous);
     if (!installed) return;
     applying = true;
     try {
-      if (Array.isArray(state.queue)) currentPlaylist = state.queue;
+      if (updatedQueue || currentPlaylist !== state.queue && renderedQueue === -1) currentPlaylist = state.queue;
       currentIndex = state.index; playMode = state.mode || 'list';
       currentPlayingSong = state.song?.name ? state.song : null; window.currentPlayingSong = currentPlayingSong;
       requestedRoomSong = currentPlayingSong; roomAudioSongKey = key(currentPlayingSong);
@@ -110,7 +112,11 @@
       const changedSong = key(state.song) !== renderedSong;
       const qualityLabel = state.quality && state.qualityReported === false ? '音质未确认' : state.quality;
       if (state.song?.name && (changedSong || renderedQuality !== qualityLabel)) { updatePlayerInfo(state.song, qualityLabel); renderedQuality = qualityLabel; }
-      if (changedSong && state.song?.name) { renderedSong = key(state.song); try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {} }
+      if (changedSong) {
+        renderedSong = key(state.song);
+        window.syncCommentSong?.();
+        if (state.song?.name) {try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {}}
+      }
       const playing = state.playing === true;
       if (renderedPlaying !== playing) {updatePlayButton(playing); renderedPlaying = playing;}
       const status = state.error || (state.loading ? '正在获取播放链接' : state.ended && !state.paused ? '等待房间下一首' : !state.paused && !playing ? '正在缓冲' : '');
@@ -136,7 +142,20 @@
         }
       }
       if (renderedMode !== state.mode && typeof updatePlayModeUI === 'function') {updatePlayModeUI(); renderedMode = state.mode;}
-      if (typeof renderQueue === 'function' && (renderedQueue !== state.queueRevision || changedSong || previous.index !== state.index)) {renderQueue(); renderedQueue = state.queueRevision;}
+      if (typeof renderQueue === 'function' && renderedQueue !== state.queueRevision) {
+        renderQueue(); renderedQueue = state.queueRevision;
+      } else if (previous.index !== state.index && !document.getElementById('queue-drawer')?.classList.contains('translate-x-full')) {
+        const list = document.getElementById('queue-list');
+        for (const index of [previous.index, state.index]) {
+          const row = list?.children?.[index];
+          if (!row?.hasAttribute('data-queue-index')) continue;
+          const active = index === state.index;
+          for (const name of ['t-bg-item-hover','border-l-4','border-emerald-500','pl-2']) row.classList.toggle(name,active);
+          row.querySelector('.animate-ping')?.parentElement?.remove();
+          const title = row.querySelector('.font-bold');
+          title?.classList.toggle('text-emerald-500',active);title?.classList.toggle('t-text-main',!active);
+        }
+      }
       if (state.error) document.getElementById('lx-native-state')?.replaceChildren(document.createTextNode(state.error));
     } catch (error) { console.warn('[LX Native] UI update', error); }
     finally { applying = false; }
@@ -147,24 +166,36 @@
     const get = id => document.getElementById(id);
     if (get('listen-room-status')) get('listen-room-status').textContent = room.binding ? `${room.binding.roomId} · ${room.connected ? room.participants.length + ' 位成员一起听' : '连接中…'}` : '和朋友分享同一段旋律';
     if (get('listen-room-roomid')) get('listen-room-roomid').textContent = room.binding?.roomId || '—';
-    if (get('listen-room-participants')) {
+    const signature = JSON.stringify([room.binding?.roomId,room.participants,room.state?.controllerId,room.owner]);
+    if (signature !== roomMemberSignature && get('listen-room-participants')) {
       const container = get('listen-room-participants'); container.replaceChildren();
       for (const member of room.participants || []) {
         const row = document.createElement('div'); row.className = 'room-member';
         const label = document.createElement('span'); label.textContent = (member.id === room.state?.controllerId ? '♛ ' : '') + (member.nickname || member.name || '成员'); row.append(label); container.append(row);
       }
     }
-    window.dispatchEvent(new CustomEvent('lx-room-members-change', {detail: {participants: room.participants || [], controllerId: room.state?.controllerId || '', owner: room.owner || '', roomId: room.binding?.roomId || ''}}));
+    if (signature !== roomMemberSignature) {
+      roomMemberSignature = signature;
+      window.dispatchEvent(new CustomEvent('lx-room-members-change', {detail: {participants: room.participants || [], controllerId: room.state?.controllerId || '', owner: room.owner || '', roomId: room.binding?.roomId || ''}}));
+    }
     window.dispatchEvent(new CustomEvent('lx-native-room', {detail: room}));
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
-    publishLibrary, state: receiveState, room: receiveRoom, isReady: () => installed && document.readyState !== 'loading',
+    publishLibrary, state: receiveState, room: receiveRoom, getPlayback: () => playback, getRoom: () => room, prepareDevice,
+    appInfo: () => infoRequest ||= post('appInfo').catch(error => {infoRequest = null; throw error;}),
+    isReady: () => installed && !!window.NativeShell?.ready && Number.isFinite(playback.sampledAt),
+    server(value) {
+      infoRequest = null;
+      const label = document.querySelector('.lx-server-address');
+      if (label) label.textContent = value.server;
+      window.dispatchEvent(new CustomEvent('lx-native-server', {detail: value}));
+    },
     keyboard(value) {window.dispatchEvent(new CustomEvent('lx-native-keyboard', {detail:value}));},
     download(value) {window.dispatchEvent(new CustomEvent('lx-native-download', {detail: value}));},
     sources(value) {window.dispatchEvent(new CustomEvent('lx-native-sources', {detail: value}));},
     chat(type, data) {window.dispatchEvent(new CustomEvent(type === 'room:chat-history' ? 'lx-room-chat-history' : 'lx-room-chat-update', {detail: {...data, roomId: room.binding?.roomId || ''}}));},
-    revoked() {localStorage.removeItem('lx_user_token'); window.dispatchEvent(new CustomEvent('lx-auth-revoked'));}
+    revoked() {listKey = ''; infoRequest = null; window.dispatchEvent(new CustomEvent('lx-auth-revoked')); send('returnToGuest');}
   };
   let libraryQueue = Promise.resolve();
   function publishLibrary(data) {
@@ -180,16 +211,36 @@
     try { return {quality: settings.preferredQuality || 'flac', allowFallback: settings.enableAutoDegradeQuality !== false, mode: playMode || 'list'}; }
     catch { return {quality: 'flac', allowFallback: true, mode: 'list'}; }
   }
-  function syncAuth() {
-    const username = localStorage.getItem('lx_sync_user') || '', token = localStorage.getItem('lx_user_token') || '';
-    const value = JSON.stringify({username, token});
-    if (value === authKey) return; authKey = value; listKey = '';
-    post('auth', {username, token}).catch(warn);
+  function clearWebSession() {
+    for (const key of ['lx_user_token', 'lx_web_token_user', 'lx_sync_pass', 'lx_sync_user', 'lx_sync_mode'])
+      localStorage.removeItem(key);
+    authKey = ''; listKey = '';
   }
-  const originalSet = Storage.prototype.setItem, originalRemove = Storage.prototype.removeItem, originalClear = Storage.prototype.clear;
-  Storage.prototype.setItem = function (key, value) {originalSet.call(this, key, value); if (this === localStorage && ['lx_sync_user', 'lx_user_token', 'lx_settings', 'lx_play_mode'].includes(key)) queueMicrotask(() => {syncAuth(); if (installed) send('preferences', preferences());});};
-  Storage.prototype.removeItem = function (key) {originalRemove.call(this, key); if (this === localStorage && ['lx_sync_user', 'lx_user_token'].includes(key)) queueMicrotask(syncAuth);};
-  Storage.prototype.clear = function () {originalClear.call(this); if (this === localStorage) queueMicrotask(syncAuth);};
+  async function restoreAccount() {
+    let account = await post('session');
+    if (account.migrate && localStorage.getItem('lx_user_token')) {
+      const username = localStorage.getItem('lx_sync_user') || '', token = localStorage.getItem('lx_user_token');
+      const owner = localStorage.getItem('lx_web_token_user');
+      if ((!owner || owner === username) && await post('auth', {username, token})) account = {username, token};
+    }
+    if (account.token) {
+      authKey = account.username; infoRequest = null;
+      localStorage.setItem('lx_sync_user', account.username);
+      localStorage.setItem('lx_user_token', account.token);
+      localStorage.setItem('lx_web_token_user', account.username);
+      localStorage.setItem('lx_sync_mode', 'local');
+      localStorage.removeItem('lx_sync_pass');
+      window.SyncManager?.initLocal(account.username, '');
+      if (typeof notifyAccountChange === 'function') notifyAccountChange();
+    } else if (localStorage.getItem('lx_sync_user') !== '__device__') clearWebSession();
+    return account;
+  }
+  const originalSet = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (key, value) {
+    originalSet.call(this, key, value);
+    if (this === localStorage && installed && ['lx_settings', 'lx_play_mode'].includes(key))
+      queueMicrotask(() => send('preferences', preferences()));
+  };
   async function importDevice(song) {
     const cached = await post('importLookup', {key: song.deviceKey});
     if (cached.url) return {...song, url: cached.url, isLocal: true, deviceKey: undefined};
@@ -204,22 +255,26 @@
       }
       const imported = await post('importEnd', {ticket: opened.ticket});
       return {...song, url: imported.url, isLocal: true, deviceKey: undefined};
-    } catch (error) {send('importCancel', {ticket: opened.ticket}); throw error;}
+    } catch (error) {await post('importCancel', {ticket: opened.ticket}).catch(()=>{}); throw error;}
+  }
+  const deviceImports = new Map();
+  let deviceTransfer = Promise.resolve();
+  function prepareDevice(song) {
+    if (deviceImports.has(song.deviceKey)) return deviceImports.get(song.deviceKey);
+    const task = deviceTransfer.catch(()=>{}).then(()=>importDevice(song)).then(()=>true);
+    deviceImports.set(song.deviceKey,task);
+    task.then(()=>deviceImports.delete(song.deviceKey),()=>deviceImports.delete(song.deviceKey));
+    deviceTransfer = task;
+    return task;
   }
   async function select(song, index, quality, noPlay) {
     if (noPlay) return;
     const request = ++selection;
-    syncAuth();
     let queue = window.__LX_PLAYER_GETTERS__?.getCurrentPlaylist?.()?.slice() || [song];
     let at = Number.isInteger(index) && key(queue[index]) === key(song) ? index : queue.findIndex(item => key(item) === key(song));
     if (at < 0) {queue = [song]; at = 0;}
-    for (let i = 0; i < queue.length; i++) {
-      if (request !== selection) return;
-      if (queue[i].deviceKey) {window.setPlayerStatus?.(`正在准备设备音乐 ${i + 1}/${queue.length}`, false); queue[i] = await importDevice(queue[i]);}
-    }
-    if (request !== selection) return;
     await post('select', {queue, index: at, ...preferences(), ...(quality ? {quality} : {})});
-    window.MobileShell?.openOnPlay?.();
+    if (request === selection) window.MobileShell?.openOnPlay?.();
   }
   function syncQueue() {if (applying) return; const api = window.__LX_PLAYER_GETTERS__; if (api) send('queue', {queue: api.getCurrentPlaylist(), index: api.getCurrentIndex(), ...preferences()});}
   function membership(operation) {
@@ -267,7 +322,7 @@
       const address = document.createElement('p'); address.className = 'lx-server-address'; card.append(address);
       const button = document.createElement('button'); button.type = 'button'; button.className = 'apple-secondary'; button.textContent = '更换音乐服务器'; button.onclick = () => send('editServer'); card.append(button);
       const version = document.createElement('p'); version.className = 'lx-app-version'; card.append(version); settingsView.prepend(card);
-      post('appInfo').then(info => {address.textContent = info.server || ''; version.textContent = 'App ' + info.version + ' · 内置界面 ' + (window.CONFIG?.version || '');}).catch(warn);
+      window.LXBridge.appInfo().then(info => {address.textContent = info.server || ''; version.textContent = 'App ' + info.version + ' · 内置界面 ' + (window.CONFIG?.version || '');}).catch(warn);
     }
     document.getElementById('listen-room-btn')?.addEventListener('click', () => modal(true));
     document.getElementById('listen-room-close')?.addEventListener('click', () => modal(false));
@@ -283,14 +338,23 @@
     }
     const originalMode = window.updatePlayModeUI;
     window.updatePlayModeUI = function () {const result = originalMode?.apply(this, arguments); if (!applying) send('preferences', preferences()); return result;};
-    syncAuth(); send('preferences', preferences()); send('ready');
+    window.LXBridge.accountReady = restoreAccount();
+    window.LXBridge.accountReady.catch(warn);
+    window.LXBridge.signOut = () => {clearWebSession(); return post('signOut');};
+    const fetchPlayback = () => post('ready').then(value => {
+      if (value?.state) receiveState(value.state);
+      if (value?.room) receiveRoom(value.room);
+    }).catch(warn);
+    send('preferences', preferences()); fetchPlayback();
     receiveState(playback); receiveRoom(room);
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {foregroundSync = true; send('ready');}
+      if (document.visibilityState === 'visible') {foregroundSync = true; fetchPlayback();}
       else {clock = {...clock, position: displayTime(), at: performance.now(), running: false, correction: 0};}
     });
     const reportUIReady = async(attempt = 0) => {
-      const proof = {bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout, localShell: !!window.NativeShell,
+      const proof = {nativeSnapshot:Number.isFinite(playback.sampledAt),
+        compactLayout:!!document.getElementById('view-player-detail')?.classList.contains('hidden')&&!document.body.classList.contains('mobile-player-open'),
+        bundled: window.__LX_BUNDLED_UI__ === true, mobile: !!window.MobileShell, themes: !!window.DesktopLayout, localShell: !!window.NativeShell,
         navigation: [...document.querySelectorAll('#mobile-bottom-nav button')].map(button=>(button.querySelector('span')||button).textContent.trim()),roomChat:!!document.getElementById('view-native-room')&&!!document.getElementById('room-chat-input'),mine:!!document.getElementById('native-mine-grid'),downloads:!!document.getElementById('view-native-downloads')};
       try {if (await post('uiReady', proof) === false && attempt < 40) setTimeout(() => reportUIReady(attempt + 1), 250);} catch (error) {warn(error);}
     };
@@ -298,7 +362,6 @@
     // Foreground UI state only; audio and room networking run natively.
     setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      syncAuth();
       const data = window.__LX_LIBRARY_GETTERS__?.getData?.();
       if (!data) return;
       publishLibrary(data).catch(warn);

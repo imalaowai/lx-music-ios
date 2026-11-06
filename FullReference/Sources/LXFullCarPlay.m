@@ -125,7 +125,7 @@ static NSArray *LXSongRows(NSArray *songs, NSString *listID, NSUInteger offset) 
         NSString *musicID = LXText(song[@"id"], @""), *owner = LXText(song[@"listId"], listID);
         if (!musicID.length || !owner.length) continue;
         [rows addObject:LXRow(LXText(song[@"name"], @"未知歌曲"), LXText(song[@"singer"], @""), ^{
-            [LXFullLibrary.shared enqueue:@{@"type": @"play", @"listId": owner, @"musicId": musicID}];
+            [LXFullLibrary.shared enqueue:@{@"type": @"play", @"listId": owner, @"musicId": musicID, @"index": @(index)}];
             LXPush(CPNowPlayingTemplate.sharedTemplate);
         })];
     }
