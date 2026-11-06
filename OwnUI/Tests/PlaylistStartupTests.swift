@@ -134,9 +134,18 @@ enum PlaylistStartupTests {
                         checks["browsingPlaylistDoesNotStartMediaServices"]=LXOwnMediaIsIdle()
                         let proof = """
                         const detail=document.getElementById('view-player-detail');
-                        const hidden=document.getElementById('sync-form-local')?.offsetParent===null;
+                        const settings=document.getElementById('btn-mode-local')?.parentElement?.parentElement;
+                        const shell=window.NativeShell, info=shell.state.info;
+                        shell.state.info={...info,hasAccount:false};
+                        document.getElementById('native-person-avatar').click();
+                        const login=document.querySelector('.native-sign-in');
+                        const loginReady=!!login?.querySelector('[autocomplete="username"]') &&
+                            !!login?.querySelector('[autocomplete="current-password"]') &&
+                            login.querySelector('small').textContent===info.server;
+                        document.querySelector('.native-sheet-close')?.click();
+                        shell.state.info=info;
                         return detail?.classList.contains('hidden') && !document.body.classList.contains('mobile-player-open') &&
-                            hidden && !document.getElementById('qiye-account') &&
+                            loginReady && settings && getComputedStyle(settings).display==='none' && !document.getElementById('qiye-account') &&
                             localStorage.getItem('lx_user_token')==='fixture-token' &&
                             window.LXBridge.getPlayback().queue.length===500 &&
                             document.querySelectorAll('#queue-list [data-queue-index]').length===0;

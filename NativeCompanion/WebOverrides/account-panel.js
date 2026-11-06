@@ -57,12 +57,16 @@
     }
     async function open(options = {}) {
         const key = identity(), current = generation;
-        if (!window.getUserAuthHeaders?.()['x-user-token']) { window.showInfo?.('请先登录账号'); return; }
+        if (!window.getUserAuthHeaders?.()['x-user-token']) {
+            if (native()) window.NativeShell?.accountUnavailable('此设备的登录需要恢复');
+            else window.showInfo?.('请先登录账号');
+            return;
+        }
         returnFocus = document.activeElement;
         try {
-            const [p,a] = await Promise.all([request('/api/user/profile',{},key),request('/api/user/activity',{},key)]);
+            const [p,a] = await Promise.all([request('/api/user/profile',{},key),request('/api/user/activity',{},key).catch(() => null)]);
             if (key !== identity() || current !== generation) return;
-            profile = p.profile; avatar = profile.avatar || ''; activity = a.activity.records || []; page = 0;
+            profile = p.profile; avatar = profile.avatar || ''; activity = a?.activity?.records || []; page = 0;
             close();
             const modal = document.createElement('div'); modal.id = 'account-panel'; modal.className = 'apple-dialog-backdrop';
             modal.setAttribute('role','dialog'); modal.setAttribute('aria-modal','true'); modal.setAttribute('aria-labelledby','account-title');
@@ -136,7 +140,11 @@
                 finally{save.disabled=false;}
             };
             records();if(options.tab)$('account-panel').querySelector('[data-account-tab="'+options.tab+'"]')?.click();$('account-close').focus();renderHeader();
-        } catch(error) { window.showError?.(error.message === 'Unauthorized' ? '请先登录同步账号' : error.message); }
+        } catch(error) {
+            if (key !== identity()) return;
+            if (native()) window.NativeShell?.accountUnavailable(error.message);
+            else window.showError?.(error.message === 'Unauthorized' ? '请先登录同步账号' : error.message);
+        }
     }
     function logged(){return !!window.getUserAuthHeaders?.()['x-user-token'];}
     async function signOut(){

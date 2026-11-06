@@ -69,7 +69,7 @@ function play(songs,index){if(!songs[index])return;window.__LX_PLAYER_GETTERS__.
 function showSheet(title,content){closeSheet();const wrap=document.createElement('div');wrap.className='native-sheet-wrap';wrap.innerHTML=`<section class="native-sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h2>${esc(title)}<button type="button" class="native-sheet-close" aria-label="关闭">×</button></h2><div class="native-sheet-content"></div></section>`;wrap.querySelector('.native-sheet-content').append(content);wrap.querySelector('.native-sheet-close').onclick=closeSheet;wrap.onclick=event=>{if(event.target===wrap)closeSheet();};document.body.append(wrap);state.sheet=wrap;return wrap;}
 function closeSheet(){state.sheet?.remove();state.sheet=null;}
 function openAccount(){
- if(state.info.hasAccount)return window.AccountPanel?.open();
+ if(state.info.hasAccount)return perform(async()=>{await window.LXBridge?.accountReady;return window.AccountPanel?.open();});
  const form=document.createElement('form');
  form.className='native-sign-in';
  form.innerHTML='<label>账号<input name="username" autocomplete="username" autocapitalize="none" required></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><div class="native-sign-in-server"><small></small><button type="button" class="native-secondary">更改服务器</button></div><p class="native-note" role="status" aria-live="polite"></p><button type="submit" class="native-primary">登录</button>';
@@ -84,6 +84,13 @@ function openAccount(){
   }catch(error){status.textContent=error.message;submit.disabled=false;}
  };
  showSheet('登录同步账号',form);
+}
+function accountUnavailable(message){
+ const content=document.createElement('div'),note=document.createElement('p');
+ note.className='native-note';note.textContent=message==='Unauthorized'?'登录已失效，可以退出后重新登录。':'暂时无法读取个人资料。'+(message?' '+message:'');
+ content.append(note,row('重试',()=>{closeSheet();return openAccount();},'mine'),
+  row('退出登录',async()=>{await window.LXBridge.signOut();closeSheet();},'mine'));
+ showSheet('同步账号',content);
 }
 function row(label,action,kind='list',detail=''){const button=document.createElement('button');button.type='button';button.className='native-row';button.innerHTML=icon(kind)+`<span>${esc(label)}</span><small>${esc(detail||'›')}</small>`;button.onclick=()=>perform(action);return button;}
 function renderMine(){
@@ -220,7 +227,7 @@ function init(){
  page('sources',`<div class="native-page-inner"><button class="native-back" aria-label="返回上一页" id="native-source-back">‹</button><h1 class="native-title">音源管理</h1><p class="native-note">搜索、歌单和歌词由手机获取。导入洛雪音源后，播放链接也在本机解析；音频仍从原音源下载。</p><div class="native-page-actions"><button class="native-primary" id="native-import-source">导入 .js 文件</button><button class="native-secondary" id="native-import-source-url">导入链接</button><button class="native-secondary" id="native-migrate-sources">从服务器迁移</button></div><label class="native-row"><span>兼容旧服务器音源</span><input type="checkbox" id="native-legacy-source" checked aria-label="兼容旧服务器音源"></label><p class="native-note">尚未导入本地音源时，允许使用当前同步服务器解析播放链接。</p><div id="native-source-list"></div></div>`);
  page('room',`<div class="native-room-header"><button type="button" id="native-room-back" aria-label="返回首页">‹</button><div class="native-room-heading"><h1 id="native-room-title">一起听</h1><p id="native-room-subtitle">同一首歌，同一刻心情</p></div><div id="native-room-tools" class="native-room-tools" hidden></div></div><p id="native-room-command" class="native-note" role="status"></p><div id="native-room-member-strip" class="native-room-members" hidden></div><div id="native-room-welcome" class="native-room-welcome"><div class="native-room-hero">${icon('room')}<h2>让音乐，近一点。</h2><p>和朋友共享播放进度，边听边聊。<br>创建一个房间，或者加入他们。</p></div><p class="native-note" id="native-room-connection"></p><button class="native-secondary" id="native-room-connect">连接账号</button>${['create','join'].map((type,index)=>`<section class="native-room-fold"><button type="button" data-fold="${type}" aria-expanded="false">${index?'加入房间':'创建房间'}<span>＋</span></button><form id="native-room-${type}-form" hidden><input name="roomId" placeholder="${index?'房间号':'房间号（留空自动生成）'}" autocomplete="off" ${index?'required':''} aria-label="${index?'加入':'创建'}房间号"><input name="password" type="password" placeholder="房间密码（可选）" autocomplete="off" aria-label="房间密码"><button type="submit" class="native-primary">${index?'加入并聊天':'创建并聊天'}</button></form></section>`).join('')}</div>`);
  $('view-native-room').style.setProperty('padding','0 0 calc(var(--native-nav,66px) + var(--native-mini,0px))','important');
- window.NativeShell={go,back,syncNavigation,state,addDownloads,loadDownloads,loadSources,saveLibrary,openAccount,ready:false};
+ window.NativeShell={go,back,syncNavigation,state,addDownloads,loadDownloads,loadSources,saveLibrary,openAccount,accountUnavailable,ready:false};
  window.switchTab=function(tab,...args){const result=originalSwitch.call(this,tab,...args);if(!switching){if(tab==='songlist'){go('home');return result;}if(!state.interacted&&state.page==='home')showOwn('home');else{for(const node of container.querySelectorAll('.native-page'))node.hidden=true;state.page=tab;if(!['search','favorites'].includes(tab))state.area=tab==='playlists'?'playlists':['songlist','leaderboard'].includes(tab)?'home':'mine';if(tab!=='room')closeChat();}syncNavigation();}return result;};
  $('native-room-back').onclick=()=>go('home');
  $('native-home-search').onsubmit=event=>{event.preventDefault();search($('native-home-query').value);};

@@ -24,7 +24,25 @@ DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json
 xcrun simctl boot "$DEVICE_ID" || true
 xcrun simctl bootstatus "$DEVICE_ID" -b
 xcrun simctl install "$DEVICE_ID" "$HOST_DIR"
-xcrun simctl launch "$DEVICE_ID" net.minyue.lxownui.verify
+LAUNCH_LOG=build/own-ui/own-phone-launch.log
+launched=false
+for attempt in 1 2 3; do
+  if xcrun simctl launch "$DEVICE_ID" net.minyue.lxownui.verify 2>&1 | tee -a "$LAUNCH_LOG"; then
+    launched=true
+    break
+  fi
+  xcrun simctl spawn "$DEVICE_ID" log show --last 5m --style compact --predicate 'process == "LXOwnHost" OR eventMessage CONTAINS "net.minyue.lxownui.verify"' > build/own-ui/own-phone-launch-system.log || true
+  if test "$attempt" = 2; then
+    xcrun simctl shutdown "$DEVICE_ID" || true
+    xcrun simctl boot "$DEVICE_ID"
+    xcrun simctl bootstatus "$DEVICE_ID" -b
+  fi
+  sleep 2
+done
+if test "$launched" != true; then
+  tail -60 build/own-ui/own-phone-launch-system.log
+  exit 1
+fi
 CONTAINER_DIR=$(xcrun simctl get_app_container "$DEVICE_ID" net.minyue.lxownui.verify data)
 for attempt in $(seq 1 30); do
   if test -f "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json" && test -f "$CONTAINER_DIR/Documents/LX-Offline-Playback.json" && test -f "$CONTAINER_DIR/Documents/LX-Player-Route-Checks.json" && test -f "$CONTAINER_DIR/Documents/LX-Playlist-Startup-Checks.json" && test -f "$CONTAINER_DIR/Documents/LX-Web-Recovery-Checks.json"; then break; fi
