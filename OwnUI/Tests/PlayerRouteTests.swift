@@ -58,8 +58,12 @@ enum PlayerRouteTests {
         let raw = song.raw
         do {
             try record(player.recent.first?.key == "offline-test","actualDecoderPlaybackMovesSongToFrontOfRecentHistory")
-            let saved = try JSONSerialization.jsonObject(with: UserDefaults.standard.data(forKey:"lx.queue")!) as? Object
-            try record(text((saved?["recent"] as? [Object])?.first?["id"]) == "offline-test","recentHistoryIsPersistedForCarPlayColdStart")
+            // Clear in-memory history and read it through the same entry point
+            // used when CarPlay launches the process before the phone UI.
+            player.recent.removeAll()
+            player.restoreQueue()
+            try record(player.recent.first?.key == "offline-test" && player.current?.key == "offline-test",
+                       "recentHistoryIsPersistedForCarPlayColdStart")
             let metadata = NSMutableDictionary()
             NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:metadata)
             guard width == 32 else {
