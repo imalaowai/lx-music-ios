@@ -33,72 +33,86 @@ enum PlayerRouteTests {
         let cover = "data:image/png;base64," + image.pngData()!.base64EncodedString()
         let raw:Object=["id":"offline-test","name":"本机断开测试","source":"wy","offlineId":"B86B78E5-25E2-4986-A387-0FD79074211F",
                         "img":"data:image/png;base64,invalid","meta":["pic":cover]]
-        let song = Song(raw:raw), credentials = player.api.credentials
-        player.room.disconnect(clear:true); player.api.credentials = nil
-        player.recent = [Song(raw:["id":"earlier","source":"wy"]), song]
-        NotificationCenter.default.post(name:Notification.Name("LXOwnCarPlayAction"),object:nil,
-                                        userInfo:["type":"play","listId":"__own_recent","musicId":song.playbackIdentity])
-        player.api.credentials = credentials
-        waitForSystemArtwork(until:ProcessInfo.processInfo.systemUptime+1) { width in
+        let song = Song(raw:raw)
+        player.room.disconnect(clear:true)
+        player.room.afterInitialBinding {
             do {
-                try record(player.wanted && player.audio.localAudio?.isPlaying == true,"carPlayRecentActionStartsRealLocalAudio")
-                try record(player.recent.first?.key == "offline-test","actualDecoderPlaybackMovesSongToFrontOfRecentHistory")
-                let saved = try JSONSerialization.jsonObject(with: UserDefaults.standard.data(forKey:"lx.queue")!) as? Object
-                try record(text((saved?["recent"] as? [Object])?.first?["id"]) == "offline-test","recentHistoryIsPersistedForCarPlayColdStart")
-                let metadata = NSMutableDictionary()
-                NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:metadata)
-                guard width == 32 else {
-                    results["invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard"] = false
-                    throw ClientError("Artwork width \(width), native diagnostic \(metadata), fallback chosen \(player.nowPlayingArtwork(song) == cover)")
+                player.recent = [Song(raw:["id":"earlier","source":"wy"]), song]
+                NotificationCenter.default.post(name:Notification.Name("LXOwnCarPlayAction"),object:nil,
+                                                userInfo:["type":"play","listId":"__own_recent","musicId":song.playbackIdentity])
+                let started = player.wanted && player.audio.localAudio?.isPlaying == true
+                results["carPlayRecentActionStartsRealLocalAudio"] = started
+                guard started else {
+                    throw ClientError("Recent playback state: selected \(player.current?.key ?? ""), wanted \(player.wanted), loading \(player.loading), error \(player.failure)")
                 }
-                try record(true,"invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard")
-                let index=player.index
-                try record(LXOwnInvokeTransport("pause") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredLockScreenPauseStopsActualLocalAudioWithoutJavaScript")
-                try record(LXOwnInvokeTransport("play") && player.wanted && player.audio.localAudio?.isPlaying == true,"registeredLockScreenPlayResumesActualLocalAudioWithoutJavaScript")
-                try record(LXOwnInvokeTransport("toggle") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredHeadUnitTogglePausesActualLocalAudioOnce")
-                try record(LXOwnInvokeTransport("toggle") && player.wanted && player.audio.localAudio?.isPlaying == true && player.index==index,"registeredHeadUnitToggleResumesActualLocalAudioOnceWithoutChangingTrack")
-                try record(LXOwnInvokeTransport("stop") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredStopPreservesResumableLocalTrack")
-                _=LXOwnInvokeTransport("play")
-                NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
-                try record(player.interrupted && player.wanted && player.audio.localAudio?.isPlaying == false,"systemInterruptionPausesActualAudioWhileKeepingResumeIntent")
-                NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
-                try record(player.routeGate.held && !player.wanted && player.audio.localAudio?.isPlaying == false,"outputLossPausesActualAudioAndHoldsPlayback")
-                player.remote(["command":"play","eventAt":player.lastOutputLossAt-0.01])
-                try record(player.routeGate.held && !player.wanted,"preDisconnectRemoteCommandCannotReleasePauseHold")
-                NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:AVAudioSession.InterruptionOptions.shouldResume.rawValue])
-                player.play(user:false)
-                NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
-                try record(player.routeGate.held && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionAndNewOutputDoNotAutoResume")
-                player.room.binding=["roomId":"route-fixture"]
-                let next:Object=["id":"B","name":"房间新歌曲","source":"wy"]
-                player.room.apply(["revision":2,"playbackRevision":2,"reason":"track","song":next,"paused":false])
-                try record(player.current?.key=="B" && !player.wanted && !player.loading && player.audio.currentItem==nil,"roomTracksFollowSilentlyWithoutResolvingOrPlaying")
-                let quietGeneration=player.generation
-                player.room.apply(["revision":2,"playbackRevision":2,"reason":"track","song":next,"paused":false])
-                try record(player.generation==quietGeneration,"duplicateHeldRoomSnapshotsDoNotRebuildOrResolveAudio")
-                player.room.apply(["revision":1,"reason":"track","song":raw,"paused":false])
-                player.room.apply(["revision":2,"reason":"track","song":["id":"C","source":"wy"],"paused":false])
-                try record(player.current?.key=="B","staleAndConflictingSameRevisionCannotRewindTrack")
-                try record(player.room.outgoing.isEmpty && !player.room.sending && player.room.order.pendingID.isEmpty,"localOutputLossDoesNotSendRoomPause")
-                player.room.apply(["revision":3,"playbackRevision":3,"reason":"track","song":raw,"paused":false,"currentTime":0,"updatedAt":Date().timeIntervalSince1970*1000])
-                try record(LXOwnInvokeTransport("play"),"registeredSystemPlayRemainsUsableDuringOutputHold")
-                try record(!player.routeGate.held && player.wanted && player.audio.localAudio?.isPlaying == true,"explicitPlayResumesActualAudio")
-                try record(player.room.order.pendingID.isEmpty && player.room.outgoing.isEmpty,"localRejoinDoesNotRestartRoomTrack")
-                NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
-                NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:0])
-                try record(!player.interrupted && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionWithoutResumeOptionStaysPaused")
-                // Two intentional next taps inside the old 200 ms debounce window must
-                // advance twice. A fake deviceKey fails resolution immediately without network I/O.
-                player.room.disconnect(clear:true)
-                let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\($0)","name":"Remote \($0)","source":"wy","deviceKey":"fixture-\($0)"])}
-                player.queue=remoteQueue;player.index=0;player.mode="order";player.wanted=false;player.loading=false;player.failure=""
-                let commandAt=ProcessInfo.processInfo.systemUptime
-                player.remote(["command":"next","eventAt":commandAt])
-                player.remote(["command":"next","eventAt":commandAt+0.01])
-                try record(player.index==2,"rapidIntentionalNextCommandsAdvanceTwice")
-                player.room.disconnect(clear:true);player.pause(user:false);player.failure=""
-                finish()
+                // EOF is covered by OfflinePlayback. Keep this short fixture
+                // alive while the simulator's media service initializes.
+                player.audio.localAudio?.numberOfLoops = -1
+                waitForSystemArtwork(until:ProcessInfo.processInfo.systemUptime+3) { width in
+                    verifyTransport(player, song: song, cover: cover, width: width)
+                }
             } catch { finish(error) }
         }
+    }
+    static func verifyTransport(_ player: Player, song: Song, cover: String, width: CGFloat) {
+        let raw = song.raw
+        do {
+            try record(player.recent.first?.key == "offline-test","actualDecoderPlaybackMovesSongToFrontOfRecentHistory")
+            let saved = try JSONSerialization.jsonObject(with: UserDefaults.standard.data(forKey:"lx.queue")!) as? Object
+            try record(text((saved?["recent"] as? [Object])?.first?["id"]) == "offline-test","recentHistoryIsPersistedForCarPlayColdStart")
+            let metadata = NSMutableDictionary()
+            NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:metadata)
+            guard width == 32 else {
+                results["invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard"] = false
+                throw ClientError("Artwork width \(width), native diagnostic \(metadata), fallback chosen \(player.nowPlayingArtwork(song) == cover)")
+            }
+            try record(true,"invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard")
+            let index=player.index
+            try record(LXOwnInvokeTransport("pause") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredLockScreenPauseStopsActualLocalAudioWithoutJavaScript")
+            try record(LXOwnInvokeTransport("play") && player.wanted && player.audio.localAudio?.isPlaying == true,"registeredLockScreenPlayResumesActualLocalAudioWithoutJavaScript")
+            try record(LXOwnInvokeTransport("toggle") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredHeadUnitTogglePausesActualLocalAudioOnce")
+            try record(LXOwnInvokeTransport("toggle") && player.wanted && player.audio.localAudio?.isPlaying == true && player.index==index,"registeredHeadUnitToggleResumesActualLocalAudioOnceWithoutChangingTrack")
+            try record(LXOwnInvokeTransport("stop") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredStopPreservesResumableLocalTrack")
+            _=LXOwnInvokeTransport("play")
+            NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
+            try record(player.interrupted && player.wanted && player.audio.localAudio?.isPlaying == false,"systemInterruptionPausesActualAudioWhileKeepingResumeIntent")
+            NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
+            try record(player.routeGate.held && !player.wanted && player.audio.localAudio?.isPlaying == false,"outputLossPausesActualAudioAndHoldsPlayback")
+            player.remote(["command":"play","eventAt":player.lastOutputLossAt-0.01])
+            try record(player.routeGate.held && !player.wanted,"preDisconnectRemoteCommandCannotReleasePauseHold")
+            NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:AVAudioSession.InterruptionOptions.shouldResume.rawValue])
+            player.play(user:false)
+            NotificationCenter.default.post(name:AVAudioSession.routeChangeNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionRouteChangeReasonKey:AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
+            try record(player.routeGate.held && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionAndNewOutputDoNotAutoResume")
+            player.room.binding=["roomId":"route-fixture"]
+            let next:Object=["id":"B","name":"房间新歌曲","source":"wy"]
+            player.room.apply(["revision":2,"playbackRevision":2,"reason":"track","song":next,"paused":false])
+            try record(player.current?.key=="B" && !player.wanted && !player.loading && player.audio.currentItem==nil,"roomTracksFollowSilentlyWithoutResolvingOrPlaying")
+            let quietGeneration=player.generation
+            player.room.apply(["revision":2,"playbackRevision":2,"reason":"track","song":next,"paused":false])
+            try record(player.generation==quietGeneration,"duplicateHeldRoomSnapshotsDoNotRebuildOrResolveAudio")
+            player.room.apply(["revision":1,"reason":"track","song":raw,"paused":false])
+            player.room.apply(["revision":2,"reason":"track","song":["id":"C","source":"wy"],"paused":false])
+            try record(player.current?.key=="B","staleAndConflictingSameRevisionCannotRewindTrack")
+            try record(player.room.outgoing.isEmpty && !player.room.sending && player.room.order.pendingID.isEmpty,"localOutputLossDoesNotSendRoomPause")
+            player.room.apply(["revision":3,"playbackRevision":3,"reason":"track","song":raw,"paused":false,"currentTime":0,"updatedAt":Date().timeIntervalSince1970*1000])
+            try record(LXOwnInvokeTransport("play"),"registeredSystemPlayRemainsUsableDuringOutputHold")
+            try record(!player.routeGate.held && player.wanted && player.audio.localAudio?.isPlaying == true,"explicitPlayResumesActualAudio")
+            try record(player.room.order.pendingID.isEmpty && player.room.outgoing.isEmpty,"localRejoinDoesNotRestartRoomTrack")
+            NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.began.rawValue])
+            NotificationCenter.default.post(name:AVAudioSession.interruptionNotification,object:AVAudioSession.sharedInstance(),userInfo:[AVAudioSessionInterruptionTypeKey:AVAudioSession.InterruptionType.ended.rawValue,AVAudioSessionInterruptionOptionKey:0])
+            try record(!player.interrupted && !player.wanted && player.audio.localAudio?.isPlaying == false,"interruptionWithoutResumeOptionStaysPaused")
+            // Two intentional next taps inside the old 200 ms debounce window must
+            // advance twice. A fake deviceKey fails resolution immediately without network I/O.
+            player.room.disconnect(clear:true)
+            let remoteQueue=(0..<3).map{Song(raw:["id":"remote-\($0)","name":"Remote \($0)","source":"wy","deviceKey":"fixture-\($0)"])}
+            player.queue=remoteQueue;player.index=0;player.mode="order";player.wanted=false;player.loading=false;player.failure=""
+            let commandAt=ProcessInfo.processInfo.systemUptime
+            player.remote(["command":"next","eventAt":commandAt])
+            player.remote(["command":"next","eventAt":commandAt+0.01])
+            try record(player.index==2,"rapidIntentionalNextCommandsAdvanceTwice")
+            player.room.disconnect(clear:true);player.pause(user:false);player.failure=""
+            finish()
+        } catch { finish(error) }
     }
 }
