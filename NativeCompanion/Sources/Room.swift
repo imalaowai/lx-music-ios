@@ -255,7 +255,8 @@ final class RoomClient {
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
         let recoverEnded = resynchronizing && !shouldPause && player.endGuard.handled && target(incoming) < max(0, player.duration - 1)
-        if song.key != oldKey || (player.audio.currentItem == nil && !localRouteHeld) || restarted || recoverEnded {
+        let needsDecoder = player.audio.currentItem == nil && !player.loading && !localRouteHeld
+        if song.key != oldKey || needsDecoder || restarted || recoverEnded {
             RuntimeTrace.record("room.track",["revision":number(incoming["revision"]),"paused":shouldPause,"reason":reason])
             player.select(listToUse, index: selected, paused: shouldPause, user: false, time: target(incoming))
         } else {

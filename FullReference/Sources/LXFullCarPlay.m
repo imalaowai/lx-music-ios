@@ -394,7 +394,7 @@ static void LXInstallFullCarPlay(void) {
         }];
         [notes addObserverForName:@"LXOwnDrainCarPlay" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
             for (NSDictionary *action in [LXFullLibrary.shared drain])
-                [notes postNotificationName:@"LXOwnCarPlayAction" object:nil userInfo:action];
+                [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnCarPlayAction" object:nil userInfo:action];
         }];
         #endif
         Class reference = NSClassFromString(@"CPSceneDelegate");

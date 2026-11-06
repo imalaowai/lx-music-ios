@@ -142,6 +142,15 @@ final class Player {
         check(cold.current?.key == lastTap.key, "an old startup snapshot cannot replace the pending CarPlay track")
         coldRoom.disconnect(clear:true)
 
+        let opening = Player(), openingRoom = RoomClient(player:opening)
+        openingRoom.binding = ["roomId":"dual-transport"]; opening.audio.currentItem = nil
+        let firstSnapshot = incoming(opening,revision:3)
+        openingRoom.apply(firstSnapshot)
+        opening.loading = true
+        openingRoom.apply(firstSnapshot)
+        check(opening.selections == 1, "the duplicate HTTP and WebSocket startup snapshot cannot restart a resolving song")
+        openingRoom.disconnect(clear:true)
+
         let off = Player(), offRoom = RoomClient(player:off)
         off.api.postpone = true
         var standalone = false

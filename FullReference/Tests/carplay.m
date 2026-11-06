@@ -129,12 +129,12 @@ static void RunTests(void) {
     CPTabBarTemplate *tabs=(id)one.rootTemplate;
     Check(tabs.templates.count==3 && [(CPListTemplate *)tabs.templates[0] sections].count>0 && [(CPListTemplate *)tabs.templates[1] sections].count>0, @"populatedRootBeforeConnectReturns");
     CPListTemplate *recentTab=(id)tabs.templates[2];
-    CPListItem *saved=(id)recentTab.sections.firstObject.items.firstObject;
-    Check([saved.text isEqual:recent[@"name"]] && saved.handler!=nil,@"coldCarPlayRootReadsNativeRecentCacheWithoutAReactModule");
+    CPListItem *recentRow=(id)recentTab.sections.firstObject.items.firstObject;
+    Check([recentRow.text isEqual:recent[@"name"]] && recentRow.handler!=nil,@"coldCarPlayRootReadsNativeRecentCacheWithoutAReactModule");
     __block NSDictionary *recentAction=nil;__block BOOL recentCompleted=NO;
     NSNotificationCenter *notes=NSNotificationCenter.defaultCenter;
     id recentObserver=[notes addObserverForName:@"LXOwnCarPlayAction" object:nil queue:nil usingBlock:^(NSNotification *note){recentAction=note.userInfo;}];
-    saved.handler(saved,^{recentCompleted=YES;});
+    recentRow.handler(recentRow,^{recentCompleted=YES;});
     [notes postNotificationName:@"LXOwnDrainCarPlay" object:nil];
     [notes removeObserver:recentObserver];
     Check(recentCompleted && [recentAction[@"listId"] isEqual:@"__own_recent"] && [recentAction[@"musicId"] isEqual:recent[@"id"]],
