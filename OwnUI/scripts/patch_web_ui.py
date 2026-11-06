@@ -24,6 +24,12 @@ def patch_web_ui(html):
     html = replace(html, '            return idbDelete(LIST_KEY);', """            const owner = localStorage.getItem('lx_sync_user');
             if (window.LXBridge && owner) return idbDelete(ownedListKey(owner));
             return idbDelete(LIST_KEY);""")
+    html = replace(html, 'async function ensureUserAuthToken(options = {}) {',
+                   """async function ensureUserAuthToken(options = {}) {
+    if (window.LXBridge) {
+        const account = await window.LXBridge.accountReady?.catch(() => null);
+        return options.force !== true && !!account?.token;
+    }""")
     html = replace(html, 'function savePlaybackState() {', 'function savePlaybackState() {\n    if (window.LXBridge) return;')
     html = replace(html, 'async function restorePlaybackState() {', 'async function restorePlaybackState() {\n    if (window.LXBridge) return;')
     html = replace(html, '    // 1. Restore cached list data (from IndexedDB) for logged in user only',

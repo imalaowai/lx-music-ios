@@ -74,3 +74,13 @@ test('Comments stay with the current song and tab when responses arrive out of o
     await new Promise(setImmediate);
     assert.equal(f.element('comment-list').innerHTML,'');
 });
+
+test('Legacy token refresh cannot clear a session restored by the native app', async () => {
+    const f=fixture(section('async function ensureUserAuthToken(', 'window.ensureUserAuthToken ='));
+    let reads=0;
+    f.context.localStorage={getItem(){reads++;return null;},removeItem(){throw new Error('Native token must survive');}};
+    f.context.window.LXBridge={accountReady:Promise.resolve({token:'fixture'})};
+    assert.equal(await f.context.ensureUserAuthToken(),true);
+    assert.equal(await f.context.ensureUserAuthToken({force:true}),false);
+    assert.equal(reads,0);
+});
