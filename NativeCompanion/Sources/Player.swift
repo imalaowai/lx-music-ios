@@ -47,6 +47,9 @@ final class Player {
     var lastWebQueueSignature = ""
     var interruptionWanted = false
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
+    var playbackAdvancing: Bool {
+        wanted && !loading && !seeking && !endGuard.handled && audio.timeControlStatus == .playing
+    }
     var position: Double { let n = audio.currentTime().seconds; return n.isFinite ? max(0, n) : 0 }
     var duration: Double { let n = audio.currentItem?.duration.seconds ?? 0; return n.isFinite ? max(0, n) : 0 }
 

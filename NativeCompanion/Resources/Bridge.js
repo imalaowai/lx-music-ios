@@ -6,28 +6,32 @@
   // Installed pages own their version and never register a web service worker.
   const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '', infoRequest, nativeAccount;
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
-  // Native time is authoritative; interpolate locally between snapshots so karaoke remains smooth.
-  // Never extrapolate indefinitely if the app stops sending foreground snapshots.
-  let clock = {position: 0, at: performance.now(), running: false, rate: 1, correction: 0};
+  // Interpolate from the decoder's sample. A later UI packet may still
+  // contain that same sample, so it cannot renew the extrapolation budget.
+  const projectionLimit = 1.25;
+  let clock = {position: 0, floor: 0, at: performance.now(), remaining: 0, running: false, rate: 1, correction: 0};
   let foregroundSync = false;
   function displayTime(now = performance.now()) {
-    const elapsed = clock.running ? Math.max(0, Math.min(1.25, (now - clock.at) / 1000)) : 0;
-    const value = clock.position + elapsed * clock.rate + clock.correction * Math.min(1, elapsed / 0.5);
-    return Math.max(0, playback.duration > 0 ? Math.min(playback.duration, value) : value);
+    const elapsed = clock.running ? Math.max(0, Math.min(clock.remaining, (now - clock.at) / 1000)) : 0;
+    const value = Math.max(clock.floor, clock.position + elapsed * clock.rate + clock.correction * Math.min(1, elapsed / 0.5));
+    return playback.duration > 0 ? Math.min(playback.duration, value) : value;
   }
-  function anchorClock(state, previous, sampledAt) {
+  function anchorClock(state, previous, positionSampledAt) {
     const now = performance.now(), projected = displayTime(now);
-    let position = Math.max(0, Number(state.position) || 0);
     const running = state.playing === true && !state.paused && !state.loading && !state.seeking;
-    const transport = (Date.now() - Number(sampledAt)) / 1000;
-    if (running && Number.isFinite(transport) && transport >= 0 && transport <= 1.25) position += transport * (Number(state.playbackRate) > 0 ? Number(state.playbackRate) : 1);
-    const continuous = running && clock.running && !foregroundSync &&
-      key(state.song) === key(previous.song) && state.timelineRevision === previous.timelineRevision;
+    const rate = Number(state.playbackRate) > 0 ? Number(state.playbackRate) : 1;
+    const transport = (Date.now() - Number(positionSampledAt)) / 1000;
+    const elapsed = running && Number.isFinite(transport) ? Math.min(projectionLimit, Math.max(0, transport)) : 0;
+    const position = Math.max(0, Number(state.position) || 0) + elapsed * rate;
+    const sameTimeline = key(state.song) === key(previous.song) && state.timelineRevision === previous.timelineRevision;
+    const continuous = sameTimeline && running && clock.running && !foregroundSync;
     const correction = position - projected;
-    const smooth = continuous && Math.abs(correction) < 0.15;
-    clock = {position: smooth ? projected : position, at: now, running,
-      rate: Number(state.playbackRate) > 0 ? Number(state.playbackRate) : 1,
-      correction: smooth ? correction : 0};
+    const remaining = projectionLimit - elapsed;
+    const smooth = continuous && remaining > 0 && Math.abs(correction) < 0.15;
+    // An estimate can run ahead during a short stall. Hold the visible clock
+    // until the measured position catches up, and allow real seeks to reset it.
+    clock = {position: smooth ? projected : position, floor: sameTimeline ? projected : 0,
+      at: now, remaining, running, rate, correction: smooth ? correction : 0};
     foregroundSync = false;
   }
   let renderedQueue = -1, renderedSong = '', renderedQuality = '', selection = 0;
@@ -98,9 +102,9 @@
   function receiveState(state) {
     if (Number.isFinite(state.sampledAt) && Number.isFinite(playback.sampledAt) && state.sampledAt < playback.sampledAt) return;
     const previous = playback, updatedQueue = Array.isArray(state.queue);
-    const sampledAt = state.sampledAt;
+    const positionSampledAt = state.positionSampledAt ?? state.sampledAt;
     playback = {...playback, ...state}; state = playback;
-    anchorClock(state, previous, sampledAt);
+    anchorClock(state, previous, positionSampledAt);
     if (!installed) return;
     applying = true;
     try {

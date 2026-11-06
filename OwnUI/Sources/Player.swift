@@ -61,6 +61,9 @@ final class Player {
     var interrupted = false
     var routeGate = PlaybackRouteGate()
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
+    var playbackAdvancing: Bool {
+        wanted && !loading && !seeking && !interrupted && !endGuard.handled && audio.timeControlStatus == .playing
+    }
     var position: Double { let n = audio.currentTime().seconds; return n.isFinite ? max(0, n) : 0 }
     var duration: Double { let n = audio.currentItem?.duration.seconds ?? 0; return n.isFinite ? max(0, n) : 0 }
 
@@ -297,7 +300,8 @@ final class Player {
         if now - notifyAt >= 5 { notifyAt = now; persistQueue(); room.progress() }
     }
     func snapshot(includeQueue: Bool = true) -> Object {
-        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": position, "duration": duration, "paused": !wanted, "playing": wanted && audio.timeControlStatus == .playing && !seeking && !endGuard.handled, "playbackRate": wanted ? audio.rate : 0, "routeHold":routeGate.held, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "qualityReported": resolvedQualityReported, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
+        let sample = audio.positionSample()
+        var value: Object = ["sampledAt": Date().timeIntervalSince1970 * 1000, "positionSampledAt": sample.timestamp * 1000, "queueRevision": queueRevision, "index": index, "mode": mode, "song": current?.raw ?? [:], "position": sample.position, "duration": duration, "paused": !wanted, "playing": playbackAdvancing, "playbackRate": playbackAdvancing ? audio.rate : 0, "routeHold":routeGate.held, "timelineRevision": timelineRevision, "seeking": seeking, "ended": endGuard.handled, "loading": loading, "quality": resolvedQuality, "qualityReported": resolvedQualityReported, "error": failure, "volume": audio.volume, "muted": audio.isMuted]
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {
@@ -348,12 +352,12 @@ final class Player {
     func updateNowPlaying() {
         guard let song=current else { resetArtwork();audio.clearMetadata();return }
         let cover=nowPlayingArtwork(song)
-        let signature = "\(generation)|\(wanted)|\(loading)|\(interrupted)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(song.key)|\(cover)"
+        let signature = "\(generation)|\(wanted)|\(loading)|\(interrupted)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(playbackAdvancing)|\(Int(duration))|\(queueRevision)|\(song.key)|\(cover)"
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
         nowPlayingSignature = signature; nowPlayingAt = now; publishedArtwork = cover
         let knownDuration = duration > 0 ? duration : SongInterval.seconds(song.raw["interval"])
-        audio.metadata(["songId":song.playbackIdentity,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"artworkResolved":!resolvedArtwork.isEmpty,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
+        audio.metadata(["songId":song.playbackIdentity,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"artworkResolved":!resolvedArtwork.isEmpty,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":playbackAdvancing ? audio.rate : 0])
     }
     func refreshNowPlaying() {
         nowPlayingSignature = ""

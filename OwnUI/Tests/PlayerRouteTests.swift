@@ -64,6 +64,17 @@ enum PlayerRouteTests {
             player.restoreQueue()
             try record(player.recent.first?.key == "offline-test" && player.current?.key == "offline-test",
                        "recentHistoryIsPersistedForCarPlayColdStart")
+            let clock = ReferenceAudio()
+            clock.currentItem = ReferenceAudio.Item()
+            let seekTime = Date().timeIntervalSince1970
+            clock.sampledPosition = 60; clock.sampledAt = seekTime
+            clock.receive(["generation":clock.generation,"position":12,"sampledAt":(seekTime - 0.5) * 1000,
+                           "duration":180,"playing":true,"rate":1])
+            try record(clock.positionSample().position == 60, "aDecoderReplyInTransitCannotUndoTheSeekAnchor")
+            clock.receive(["generation":clock.generation,"position":60.2,"sampledAt":(seekTime + 0.1) * 1000,
+                           "duration":180,"playing":false,"loading":true])
+            try record(clock.positionSample().position == 60.2 && clock.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                       "aFreshBufferingSampleFreezesTheDecoderClock")
             let metadata = NSMutableDictionary()
             NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:metadata)
             guard width == 32 else {

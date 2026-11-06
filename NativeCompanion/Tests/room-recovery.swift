@@ -23,6 +23,8 @@ final class Player {
     var index = 0, queueRevision = 0, generation = 1
     var mode = "list", failure = "", routeGate = PlaybackRouteGate(), endGuard = PlaybackEndGuard()
     var wanted = true, loading = false, seeking = false
+    var clockPlaying = true
+    var playbackAdvancing: Bool { wanted && !loading && !seeking && !endGuard.handled && clockPlaying }
     var position = 10.0, duration = 180.0
     var seeks: [Double] = []
     var selections = 0
@@ -88,6 +90,41 @@ final class Player {
         delayedRoom.connected = true; delayedRoom.participantID = "me"; delayedRoom.progress()
         check(delayedRoom.lastProgressAt == -.infinity, "an unfinished seek cannot publish stale progress to the room")
         delayedRoom.disconnect(clear:true)
+
+        let jitter = Player(), jitterRoom = RoomClient(player:jitter)
+        jitterRoom.binding = ["roomId":"jitter"]; jitterRoom.participantID = "me"
+        jitterRoom.apply(incoming(jitter))
+        jitter.position = 71.4
+        jitterRoom.needsSnapshotSync = true
+        jitterRoom.apply(incoming(jitter,revision:2))
+        check(jitter.seeks.isEmpty, "reconnecting cannot rewind the running controller to its old progress")
+        var seek = incoming(jitter,revision:3)
+        seek["reason"] = "seek"; seek["playbackRevision"] = 8; seek["controllerId"] = "friend"
+        jitterRoom.apply(seek)
+        jitterRoom.needsSnapshotSync = true; jitterRoom.apply(seek)
+        check(jitter.seeks.count == 1, "a new seek from another listener applies once across duplicate socket and HTTP snapshots")
+        jitterRoom.disconnect(clear:true)
+
+        let echoPlayer = Player(), echoRoom = RoomClient(player:echoPlayer)
+        echoRoom.binding = ["roomId":"seek-echo"]; echoRoom.participantID = "me"
+        echoRoom.apply(incoming(echoPlayer))
+        echoPlayer.api.postpone = true
+        echoRoom.sendState(reason:"seek", position:70)
+        echoPlayer.position = 71.4
+        var echo = incoming(echoPlayer,revision:2)
+        echo["reason"] = "seek"; echo["playbackRevision"] = 8
+        echoRoom.apply(echo)
+        echoPlayer.api.deferred.removeFirst()(.success(["accepted":true,"state":echo,"participantId":"me"]))
+        check(echoPlayer.seeks.isEmpty, "local seeks are not executed again when both transports acknowledge them")
+        echo["revision"] = 3; echo["playbackRevision"] = 9
+        echoRoom.apply(echo)
+        check(echoPlayer.seeks.count == 1, "a different device on the same account can still send a new seek")
+        echoRoom.connected = true
+        echoPlayer.clockPlaying = false; echoRoom.progress()
+        check(echoRoom.lastProgressAt == -.infinity, "a buffering decoder does not publish running progress to the room")
+        echoPlayer.clockPlaying = true; echoRoom.progress()
+        check(echoRoom.lastProgressAt > 0, "room progress resumes when the decoder advances again")
+        echoRoom.disconnect(clear:true)
 
         let retryPlayer = Player(), retryRoom = RoomClient(player:retryPlayer)
         var bindings = 0

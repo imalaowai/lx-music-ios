@@ -4,7 +4,7 @@
 // native FLAC decoder are the only audio outputs. No HTML/second AVPlayer runs.
 module.exports = function createDriver({player, stream, State, Capability, RepeatMode, report, ready}) {
   let setup, chain = Promise.resolve(), latest = 0, active = null, switching = false, probing = false;
-  let latestWanted = false;
+  let latestWanted = false, sampleRevision = 0, pendingControls = 0, queuedProbe = false;
   const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
   const current = item => active === item && item.generation === latest;
   function failOnce(item,error) {
@@ -27,24 +27,34 @@ module.exports = function createDriver({player, stream, State, Capability, Repea
   }
   async function sample(ended = false) {
     const item = active;
-    if (!item || item.failed || switching || probing || !current(item)) return;
+    if (!item || item.failed || switching || !current(item)) return;
+    if (ended) item.checkEnd = true;
+    if (probing || pendingControls) { queuedProbe = true; return; }
+    queuedProbe = false;
     probing = true;
+    const revision = sampleRevision;
+    const valid = () => current(item) && !switching && !item.failed && revision === sampleRevision;
     try {
-      const flac = item.engine === 'flac';
-      const [position,duration,state,rate] = flac
-        ? await Promise.all([stream.getPosition(),stream.getDuration(),stream.getState(),Promise.resolve(1)])
-        : await Promise.all([player.getPosition(),player.getDuration(),player.getState(),player.getRate()]);
-      if (!current(item) || switching) return;
+      const flac = item.engine === 'flac', decoder = flac ? stream : player;
+      const positionSample = Promise.resolve(decoder.getPosition()).then(position => ({position, sampledAt:Date.now()}));
+      const [{position,sampledAt},duration,state,rate] = await Promise.all([
+        positionSample, decoder.getDuration(), decoder.getState(), flac ? 1 : player.getRate()
+      ]);
+      if (!valid()) return;
       const playing = flac ? state === 'playing' : state === State.Playing;
       const buffering = flac ? ['loading','buffering'].includes(state) : [State.Buffering,State.Connecting].includes(state);
       // Old queued EOF events cannot finish a newly loaded track at position 0.
       const atEnd = num(duration) > 0 && num(position) >= num(duration) - 0.8;
-      const finished = ended && atEnd && !item.ended;
+      const finished = !!item.checkEnd && atEnd && !item.ended;
+      item.checkEnd = false;
       if (finished) item.ended = true;
-      report({generation:item.generation,position:num(position),duration:num(duration),playing:playing&&!item.ended,loading:buffering,rate:playing?num(rate)||1:0,ended:finished,engine:item.engine,sampledAt:Date.now()});
+      report({generation:item.generation,position:num(position),duration:num(duration),playing:playing&&!item.ended,loading:buffering,rate:playing?num(rate)||1:0,ended:finished,engine:item.engine,sampledAt});
     } catch (error) {
-      failOnce(item,error);
-    } finally {probing = false;}
+      if (valid()) failOnce(item,error);
+    } finally {
+      probing = false;
+      if (queuedProbe) void sample();
+    }
   }
   async function execute(request) {
     const {operation,generation} = request, args = request.args || {};
@@ -113,7 +123,7 @@ module.exports = function createDriver({player, stream, State, Capability, Repea
     void sample();return {};
   }
   function run(request) {
-    if (request.operation === 'probe') return sample().then(()=>({}));
+    if (request.operation === 'probe') return request.generation===latest ? sample().then(()=>({})) : Promise.resolve({superseded:true});
     if (['load','clear','transition'].includes(request.operation)) latest=Math.max(latest,num(request.generation));
     // Record intent at receipt, before an asynchronous load/seek can block the
     // serialized decoder queue. An older captured load must not autoplay later.
@@ -126,12 +136,27 @@ module.exports = function createDriver({player, stream, State, Capability, Repea
       const target=active.engine==='flac'?stream:player;
       Promise.resolve().then(()=>target.pause()).catch(()=>{});
     }
-    const task=chain.then(()=>execute(request));chain=task.catch(()=>{});return task;
+    const controlsClock = request.generation === latest && ['play','pause','seek'].includes(request.operation);
+    if (controlsClock) {
+      // Invalidate a read that began before this command, even when the song
+      // stays the same. A fresh sample waits for the pending controls to settle.
+      sampleRevision++; pendingControls++;
+      if (active && current(active)) active.checkEnd = false;
+    }
+    let task = chain.then(()=>execute(request));
+    if (controlsClock) task = task.finally(() => {
+      if (--pendingControls === 0) void sample();
+    });
+    chain = task.catch(()=>{});
+    return task;
   }
   function nativeEvent(engine,event={}) {
     if (!active || switching || active.engine!==engine || !current(active)) return;
     if (event.type==='error') failOnce(active,new Error(event.message||event.error||'原生音源播放失败'));
-    else void sample(event.type==='ended');
+    else {
+      if (event.type === 'state' || (engine === 'track-player' && event.state != null)) sampleRevision++;
+      void sample(event.type==='ended');
+    }
   }
   return {run,sample,nativeEvent};
 };

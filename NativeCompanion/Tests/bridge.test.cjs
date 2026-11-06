@@ -105,9 +105,9 @@ test('Visual clock stops for pause, buffering, seeking, hidden pages and stale n
   const f=fixture();await f.settle();
   const state={song:{id:'a',name:'A'},paused:false,playing:true,position:20,duration:180,timelineRevision:1};
   f.window.LXBridge.state(state);f.advance(250);assert.equal(f.audio.currentTime,20.25);
-  f.window.LXBridge.state({playing:false,position:20.2});f.advance(900);assert.equal(f.audio.currentTime,20.2);
+  f.window.LXBridge.state({playing:false,position:20.2});f.advance(900);assert.equal(f.audio.currentTime,20.25);
   f.window.LXBridge.state({playing:true,position:20.2});f.advance(250);assert.equal(f.audio.currentTime,20.45);
-  f.window.LXBridge.state({paused:true,playing:false,position:20.4});f.advance(500);assert.equal(f.audio.currentTime,20.4);
+  f.window.LXBridge.state({paused:true,playing:false,position:20.4});f.advance(500);assert.equal(f.audio.currentTime,20.45);
   f.window.LXBridge.state({...state,position:80,seeking:true,timelineRevision:2});f.advance(250);assert.equal(f.audio.currentTime,80);assert.equal(f.audio.seeking,true);
   f.window.LXBridge.state({seeking:false,position:80});f.advance(250);assert.equal(f.audio.currentTime,80.25);
   f.visibility('hidden');const hidden=f.audio.currentTime;f.advance(20000);assert.equal(f.audio.currentTime,hidden);
@@ -145,7 +145,7 @@ test('Per-song lyric calibration never seeks audio and separates identical IDs f
  f.window.LXNative.setLyricOffset(500);assert.equal(f.audio.currentTime,12);assert.equal(f.window.LXNative.lyricTime(),12.5);
  const before=f.renders.metadata;f.window.LXBridge.state({song:{id:'same',source:'kw',name:'B'},position:12});assert.equal(f.window.LXNative.getLyricOffset(),0);assert.equal(f.renders.metadata,before+1);
  f.window.LXBridge.state({song:{id:'same',source:'wy',name:'A'},position:12});assert.equal(f.window.LXNative.getLyricOffset(),500);
- f.window.LXBridge.state({position:0});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
+ f.window.LXBridge.state({position:0,timelineRevision:1});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
  assert.equal(f.messages.some(m=>m.op==='seek'),false);
 });
 
@@ -163,4 +163,32 @@ test('Device preparation reports asynchronous completion through the existing na
   await new Promise(setImmediate);
   assert.deepEqual(f.messages.map(m=>m.op),['importLookup','devicePrepared']);
   assert.equal(f.messages[1].ticket,'test-ticket');
+});
+
+test('A buffering snapshot cannot rewind the same song and an intentional seek can',async()=>{
+ const f=fixture();await f.settle();f.messages.length=0;
+ const song={id:'a',name:'A',source:'wy'};
+ f.window.LXBridge.state({song,paused:false,playing:true,position:20.1,duration:180,timelineRevision:1});
+ f.advance(1000);const before=f.audio.currentTime;
+ f.window.LXBridge.state({playing:false,loading:true,position:20.2});
+ assert.equal(f.audio.currentTime,before);
+ f.advance(1200);assert.equal(f.audio.currentTime,before);
+ f.window.LXBridge.state({playing:true,loading:false,position:20.2});
+ f.advance(500);assert.equal(f.audio.currentTime,before);
+ f.advance(500);assert.ok(f.audio.currentTime>before);
+ assert.equal(f.messages.some(message=>message.op==='seek'),false);
+ f.window.LXBridge.state({seeking:true,position:8,timelineRevision:2});
+ assert.equal(f.audio.currentTime,8);
+});
+
+test('Repeated UI snapshots cannot renew extrapolation from one old decoder sample',async()=>{
+ const f=fixture();await f.settle();
+ const sampledAt=1700000000000;
+ f.window.LXBridge.state({song:{id:'a',name:'A'},paused:false,playing:true,position:40,duration:180,
+   timelineRevision:1,sampledAt,positionSampledAt:sampledAt});
+ f.advance(2000);assert.equal(f.audio.currentTime,41.25);
+ f.window.LXBridge.state({sampledAt:sampledAt+2000,position:40,positionSampledAt:sampledAt});
+ f.advance(1000);assert.equal(f.audio.currentTime,41.25);
+ f.window.LXBridge.state({sampledAt:sampledAt+3000,position:42,positionSampledAt:sampledAt+3000});
+ assert.equal(f.audio.currentTime,42);
 });

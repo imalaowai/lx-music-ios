@@ -32,6 +32,7 @@ final class RoomClient {
     var lastError = ""
     var commandError = ""
     private var roomQueueRevision: Int?
+    private var pendingLocalSeek: (song: String, sentAt: Double)?
     var publishedSignature = ""
     var health = RoomConnectionHealth()
     var lastRecovery = -Double.infinity
@@ -167,7 +168,7 @@ final class RoomClient {
     private func resetConnection(clear: Bool) {
         epoch += 1; commandEpoch += 1; socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false
         reconnect?.cancel(); reconnect = nil; ping?.invalidate(); ping = nil; outgoing = []; sending = false
-        needsSnapshotSync = false; lastProgressAt = -.infinity; roomQueueRevision = nil; commandError = ""; lastError = ""
+        needsSnapshotSync = false; lastProgressAt = -.infinity; roomQueueRevision = nil; pendingLocalSeek = nil; commandError = ""; lastError = ""
         if clear { binding = nil; state = [:]; participants = []; participantID = ""; owner = ""; order = RoomOrder(); offset = 0; bestRTT = .infinity; retry = 0 }
     }
     func connect() {
@@ -255,12 +256,16 @@ final class RoomClient {
         let wasPending = !order.pendingID.isEmpty
         guard active, let raw = incoming["song"] as? Object, order.accept(incoming, participant: participantID) else { return }
         let resynchronizing = needsSnapshotSync; needsSnapshotSync = false
-        let oldPlaybackRevision = number(state["playbackRevision"], -1)
         let song = Song(raw:raw), reason = text(incoming["reason"]), proposed = Int(number(incoming["index"], -1))
         let oldIdentity = player.current?.playbackIdentity
         let previousRevision = number(state["revision"], -1), revision = number(incoming["revision"], -1)
+        let previousTimeline = number(state["playbackRevision"], previousRevision)
+        let timeline = number(incoming["playbackRevision"], revision)
+        let newTimeline = timeline > previousTimeline
+        let ownController = !participantID.isEmpty && text(incoming["controllerId"]) == participantID
+        let localSeekEcho = ownController && pendingLocalSeek?.song == song.playbackIdentity
         let routine = !resynchronizing && (revision == previousRevision ||
-            reason == "progress" && revision == previousRevision + 1 && oldPlaybackRevision == number(incoming["playbackRevision"], -1))
+            reason == "progress" && revision == previousRevision + 1 && timeline == previousTimeline)
         let roomAlreadyMatches = roomQueueRevision == player.queueRevision
         let playlist = incoming["playlist"] as? [Object]
         let useKnownQueue = roomAlreadyMatches && !player.queue.isEmpty && (playlist == nil || routine)
@@ -277,7 +282,7 @@ final class RoomClient {
         if useKnownQueue || playlist == nil { updatedState["playlist"] = state["playlist"] }
         state = updatedState
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
-        let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
+        let restarted = !wasPending && newTimeline && ["track", "ended"].contains(reason)
         let recoverEnded = resynchronizing && !shouldPause && player.endGuard.handled && target(incoming) < max(0, player.duration - 1)
         let needsDecoder = player.audio.currentItem == nil && !player.loading && !localRouteHeld
         if song.playbackIdentity != oldIdentity || needsDecoder || restarted || recoverEnded {
@@ -288,9 +293,17 @@ final class RoomClient {
             let changedIndex = player.index != (selected ?? 0)
             player.index = selected ?? 0
             if !sameQueue || changedIndex { player.persistQueue() }
-            // Correct once after reconnect, including a missed seek whose newest
-            // snapshot is now a progress event. Routine snapshots stay smooth.
-            if reason == "seek" || ((resynchronizing || wasPending) && !localRouteHeld && !player.loading && abs(player.position - target(incoming)) > 1) { player.seek(target(incoming), user: false) }
+            let position = target(incoming), drift = position - player.position
+            let explicitSeek = reason == "seek" && revision > previousRevision && newTimeline
+            // A routine reconnect snapshot can lag behind the running decoder.
+            // Rewind for a new room timeline or a large follower drift.
+            let needsRewind = newTimeline ? drift < -1 : !ownController && drift < -2
+            let recoverPosition = reason != "seek" && (resynchronizing || wasPending) &&
+                !player.loading && !player.seeking && (drift > 1 || needsRewind)
+            if !localRouteHeld, !localSeekEcho, explicitSeek || recoverPosition {
+                RuntimeTrace.record("room.seek", ["driftMilliseconds":drift * 1000, "explicit":explicitSeek])
+                player.seek(position, user:false)
+            }
             if shouldPause, wantedBefore { player.pause(user: false) }
             else if !shouldPause, !wantedBefore, !player.endGuard.handled, resynchronizing || ["play", "track", "join-current", "manual", "resume-sync"].contains(reason) { player.play(user: false) }
         }
@@ -301,7 +314,10 @@ final class RoomClient {
     func sendState(reason: String, position: Double? = nil) {
         guard active, let song = player.current else { return }
         let command = reason == "track" ? UUID().uuidString : ""
-        var value: Object = ["reason": reason, "origin": "user", "userInitiated": true, "sentAt": Date().timeIntervalSince1970 * 1000, "song": song.raw, "index": player.index, "songKey": song.key, "paused": !player.wanted, "currentTime": reason == "track" ? 0 : (position ?? player.position), "duration": reason == "track" ? 0 : player.duration, "playMode": player.mode]
+        let sentAt = Date().timeIntervalSince1970 * 1000
+        if reason == "seek" { pendingLocalSeek = (song.playbackIdentity, sentAt) }
+        else if reason == "track" { pendingLocalSeek = nil }
+        var value: Object = ["reason": reason, "origin": "user", "userInitiated": true, "sentAt": sentAt, "song": song.raw, "index": player.index, "songKey": song.key, "paused": !player.wanted, "currentTime": reason == "track" ? 0 : (position ?? player.position), "duration": reason == "track" ? 0 : player.duration, "playMode": player.mode]
         if ["track", "queue", "join-current", "manual"].contains(reason) {
             value["playlist"] = player.queue.map(\.raw)
         }
@@ -334,7 +350,11 @@ final class RoomClient {
         let version = commandEpoch
         api.request("/api/room/playback", method: "POST", body: body, timeout: timeout) { [weak self] result in
             guard let self = self, self.commandEpoch == version else { return }
-            defer { completion?() }
+            defer {
+                if let sent = values["state"] as? Object, text(sent["reason"]) == "seek",
+                   self.pendingLocalSeek?.sentAt == number(sent["sentAt"], -1) { self.pendingLocalSeek = nil }
+                completion?()
+            }
             switch result {
             case .success(let response):
                 self.lastError = ""
@@ -360,7 +380,7 @@ final class RoomClient {
         }
     }
     func progress() {
-        guard active, connected, controller, player.wanted, !player.loading, !player.seeking, let song = player.current else { return }
+        guard active, connected, controller, player.playbackAdvancing, let song = player.current else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastProgressAt >= 4 else { return }; lastProgressAt = now
         var progress: Object = ["reason": "progress", "origin": "auto", "userInitiated": false, "songKey": wireSongKey(song), "currentTime": player.position, "duration": player.duration, "paused": false]
@@ -376,7 +396,7 @@ final class RoomClient {
         guard active, let song = player.current else { return }
         // Resolving/buffering can take seconds after the track's room snapshot.
         // Join the current timeline once ready, before the first progress report.
-        if !localRouteHeld && player.wanted && !player.loading && !player.seeking && !bool(state["paused"],true),
+        if order.pendingID.isEmpty && !localRouteHeld && player.wanted && !player.loading && !player.seeking && !bool(state["paused"],true),
            let raw = state["song"] as? Object, Song(raw:raw).key == song.key,
            abs(player.position - target(state)) > 1 { player.seek(target(state), user:false) }
         var value: Object = ["type": "room:media-ready", "songKey": wireSongKey(song), "duration": player.duration]
