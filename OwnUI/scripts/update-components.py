@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild an already integrated full own-UI IPA with verified native components.
 
-update-components.py OWN_1_9_11_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
+update-components.py OWN_1_9_12_IPA COMPONENTS_ZIP LDID OUTPUT_IPA
 Preserves the reference executable sections, frameworks, resources and identity.
 The own integration module and Hermes entry come from the native CI build.
 """
@@ -13,7 +13,7 @@ sha=lambda b:hashlib.sha256(b).hexdigest()
 def package(source,components,signer,output):
     source,components,signer,output=map(pathlib.Path,[source,components,signer,output])
     source_sha=sha(source.read_bytes())
-    assert source_sha=='d9f1e33fed00b443722719fe3eb21752707e7fc55bd9d405504f8b346c130bb3','Expected the previously delivered complete 1.9.11 / build 99 IPA'
+    assert source_sha=='67b61d80086c5590855885ea9be2d1fb334c121a2c88eec9dedc6ed52c06bd89','Expected the previously delivered complete 1.9.12 / build 100 IPA'
     with zipfile.ZipFile(source) as z,zipfile.ZipFile(components) as additions,tempfile.TemporaryDirectory(prefix='qiye-own-rebuild-') as work:
         assert z.testzip() is None and additions.testzip() is None
         prefix='Payload/LxMusicMobile.app/';app=pathlib.Path(work)/prefix
@@ -33,12 +33,13 @@ def package(source,components,signer,output):
         old_main=z.read(prefix+'LxMusicMobile');ent=base.entitlements(old_main)
         assert ent['com.apple.developer.carplay-audio'] is True
         metadata=json.loads(additions.read('components.json'))
-        assert metadata['ownUI'] is True and metadata['version']=='1.9.12' and metadata['build']=='100'
+        assert metadata['ownUI'] is True and metadata['version']=='1.9.13' and metadata['build']=='101'
         assert metadata['iconMasterSha256']==sha((root/'OwnUI/Brand/CartoonIcon.png').read_bytes())
         js=additions.read('main.jsbundle');module=additions.read('LXFullCarPlay.dylib')
         assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
         assert b'LXNativeRemoteTarget' in module,'Native play/pause/toggle transport integration missing'
+        assert b'LXOwnCarPlayDisconnected' in module and b'carPlayActionPending' in module,'Native CarPlay startup integration missing'
         assert __import__('struct').unpack_from('<I',js,8)[0]==96,'Hermes bytecode must match the retained runtime'
         assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js
         assert metadata['clockABI']=='ios-native-seconds' and b'iOS native playback clock is unavailable' in js,'Native clock adapter missing'
@@ -54,7 +55,7 @@ def package(source,components,signer,output):
         (app/'main.jsbundle').write_bytes(js)
         (app/'Frameworks/LXFullCarPlay.dylib').write_bytes(module)
         info=plistlib.loads((app/'Info.plist').read_bytes())
-        assert info['CFBundleIdentifier']=='cn.toside.music.cplay3' and info['CFBundleVersion']=='99'
+        assert info['CFBundleIdentifier']=='cn.toside.music.cplay3' and info['CFBundleVersion']=='100'
         info.update(CFBundleShortVersionString=metadata['version'],CFBundleVersion=metadata['build'])
         brand=plistlib.loads(additions.read('OwnUIBrand/BrandInfo.plist'))
         for key in ['CFBundleIcons','CFBundleIcons~ipad']:
@@ -95,7 +96,7 @@ def package(source,components,signer,output):
                 if p.is_file() and name not in old_names:
                     item=zipfile.ZipInfo(name);item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=(stat.S_IFREG|0o644)<<16;out.writestr(item,p.read_bytes())
         with zipfile.ZipFile(output) as rebuilt:assert rebuilt.testzip() is None
-        report={'version':metadata['version'],'build':int(metadata['build']),'base':'previously delivered 1.9.11 / build 99','baseSha256':source_sha,'baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'iconMasterSha256':metadata['iconMasterSha256'],'brandResourcesVerified':len(brand_names),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
+        report={'version':metadata['version'],'build':int(metadata['build']),'base':'previously delivered 1.9.12 / build 100','baseSha256':source_sha,'baseBytes':source.stat().st_size,'bytes':output.stat().st_size,'sha256':sha(output.read_bytes()),'originalFilesRemoved':[],'originalFilesRetainedByteForByte':len(retained),'changedFiles':changed,'nativeExecutableSectionsPreserved':True,'integrationBinaryRebuilt':True,'sourceCommit':metadata['sourceCommit'],'componentsSha256':sha(components.read_bytes()),'iconMasterSha256':metadata['iconMasterSha256'],'brandResourcesVerified':len(brand_names),'physicalCarPlayVerified':False,'packagerSha256':sha(pathlib.Path(__file__).read_bytes())}
         output.with_suffix('.verification.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
         print(json.dumps(report,ensure_ascii=False))
 if __name__=='__main__':package(*sys.argv[1:])

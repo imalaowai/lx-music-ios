@@ -37,7 +37,7 @@ python3 - <<'PY'
 import hashlib,json,pathlib,struct,zipfile
 d=pathlib.Path('build/own-ui');b=(d/'main.jsbundle').read_bytes()
 assert struct.unpack_from('<I',b,8)[0]==96
-metadata={'source':'Own local UI, rooms and chat with native transport and artwork','ownUI':True,'hermesVersion':96,'clockABI':'ios-native-seconds','jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.12','build':'100','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip(),'iconMasterSha256':hashlib.sha256(pathlib.Path('OwnUI/Brand/CartoonIcon.png').read_bytes()).hexdigest(),'brandResources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (d/'brand').iterdir() if p.is_file() and p.suffix in ['.png','.car']}}
+metadata={'source':'Own local UI, rooms and chat with native transport and artwork','ownUI':True,'hermesVersion':96,'clockABI':'ios-native-seconds','jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.13','build':'101','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip(),'iconMasterSha256':hashlib.sha256(pathlib.Path('OwnUI/Brand/CartoonIcon.png').read_bytes()).hexdigest(),'brandResources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (d/'brand').iterdir() if p.is_file() and p.suffix in ['.png','.car']}}
 (d/'components.json').write_text(json.dumps(metadata,indent=2)+'\n')
 with zipfile.ZipFile(d/'LX-OwnUI-Native-Components.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     for name in ['main.jsbundle','LXFullCarPlay.dylib','components.json']:z.write(d/name,name)
