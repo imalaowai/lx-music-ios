@@ -8,6 +8,9 @@ final class Player {
     let audio = ReferenceAudio()
     lazy var room = RoomClient(player: self)
     var queue: [Song] = []
+    var recent: [Song] = []
+    private var recentRecordedGeneration = -1
+    private static let recentLimit = 50
     var index = -1
     var mode = "list"
     var quality = "flac"
@@ -41,6 +44,8 @@ final class Player {
     var artworkIdentity = ""
     var artworkLookupAttempted = false
     var resolvedArtwork = ""
+    private var rejectedArtwork = Set<String>()
+    private var publishedArtwork = ""
     var currentURL: URL?
     var remoteTargets: [(MPRemoteCommand, Any)] = []
     var resumeTime = 0.0
@@ -69,13 +74,31 @@ final class Player {
             if self.endGuard.stalledAtEnd(position:self.position,duration:self.duration,wanted:self.wanted,loading:self.loading,seeking:self.seeking,playing:self.audio.timeControlStatus == .playing,now:ProcessInfo.processInfo.systemUptime) { self.finishNaturally() }
         }
         for name in ["LXRemoteCommand", "LXOwnRemoteCommand"] {
-            observers.append(NotificationCenter.default.addObserver(forName:Notification.Name(name),object:nil,queue:.main) { [weak self] note in self?.remote(note.userInfo as? Object ?? [:]) })
+            observers.append(NotificationCenter.default.addObserver(forName:Notification.Name(name),object:nil,queue:.main) { [weak self] note in
+                guard let self = self else { return }
+                let value = note.userInfo as? Object ?? [:]
+                let command = text(value["command"])
+                if name == "LXRemoteCommand", ["play", "next", "previous"].contains(command) || (command == "toggle" && !self.wanted) {
+                    self.performCarPlayAction { [weak self] in self?.remote(value) }
+                } else {
+                    self.remote(value)
+                }
+            })
         }
         observers.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnArtworkMissing"),object:nil,queue:.main) { [weak self] note in
-            guard let self=self,let song=self.current,text(note.userInfo?["songId"]) == text(song.raw["source"])+"|"+song.key else { return }
-            self.resolveArtwork(song)
+            guard let self = self, let song = self.current,
+                  text(note.userInfo?["songId"]) == song.playbackIdentity,
+                  number(note.userInfo?["generation"], -1) == Double(self.generation) else { return }
+            let address = text(note.userInfo?["artwork"])
+            guard address == self.publishedArtwork, self.rejectedArtwork.insert(address).inserted else { return }
+            self.nowPlayingSignature = ""
+            self.publish()
         })
-        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.room.recoverConnection("phone-active"); self?.publish() })
+        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.room.recoverConnection("phone-active")
+            self?.refreshNowPlaying()
+            self?.publish()
+        })
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,object:nil,queue:.main) { [weak self] note in
             guard let self=self else { return }
             if number(note.userInfo?[AVAudioSessionInterruptionTypeKey]) == Double(AVAudioSession.InterruptionType.began.rawValue) {
@@ -99,7 +122,7 @@ final class Player {
     func suspendForOutputLoss() {
         guard !routeGate.held else { return }
         lastOutputLossAt=ProcessInfo.processInfo.systemUptime
-        routeGate.suspend(); UserDefaults.standard.set(true,forKey:"lx.routeHold"); generation += 1
+        routeGate.suspend(); room.cancelCarPlayAction(); UserDefaults.standard.set(true,forKey:"lx.routeHold"); generation += 1
         endGuard.reset(generation, now:ProcessInfo.processInfo.systemUptime)
         resolution?.cancel(); prefetchTask?.cancel(); finishTransition(); loading = false
         // The native decoder guard receives this synchronously, independently
@@ -111,6 +134,13 @@ final class Player {
     func resumeAfterUserAction() {
         routeGate.resumeByUser(); UserDefaults.standard.set(false,forKey:"lx.routeHold")
         NotificationCenter.default.post(name: Notification.Name("LXOwnAudioRouteHold"), object: nil, userInfo: ["held":false])
+    }
+    func performCarPlayAction(_ action: @escaping () -> Void) {
+        let routeEpoch = routeGate.epoch
+        room.afterInitialBinding { [weak self] in
+            guard self?.routeGate.epoch == routeEpoch else { return }
+            action()
+        }
     }
     func remote(_ value:Object) {
         let command=text(value["command"])
@@ -129,7 +159,7 @@ final class Player {
             api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true); room.refresh(); return
         }
         finishTransition(); pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
-        room.disconnect(clear: true); queue = []; queueRevision += 1; index = -1; failure = ""
+        room.disconnect(clear: true); queue = []; recent = []; queueRevision += 1; index = -1; failure = ""
         library = []; libraryRevision += 1; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
     }
     func activate() throws {
@@ -144,6 +174,7 @@ final class Player {
         }
         if user && !paused { resumeAfterUserAction() }
         queue = songs; queueRevision += 1; index = target; wanted = !paused && !routeGate.held; resumeTime = max(0, time); loading = !routeGate.held; failure = ""; resolvedQuality = ""; resolvedQualityReported = false; generation += 1
+        resetArtwork()
         timelineRevision += 1; seeking = false
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()
@@ -213,6 +244,7 @@ final class Player {
         do { try activate(); audio.play(); if user { room.sendState(reason: "play") }; publish() } catch { fail(error) }
     }
     func pause(user: Bool = true) {
+        if user { room.cancelCarPlayAction() }
         interruptionWanted = false; wanted = false; audio.pause(); if user { room.sendState(reason: "pause") }; persistQueue(); publish()
     }
     func seek(_ time: Double, user: Bool = true) {
@@ -263,19 +295,32 @@ final class Player {
         if includeQueue { value["queue"] = queue.map(\.raw) }; return value
     }
     func publish(includeQueue: Bool = true) {
+        let recorded = recordRecentPlayback()
         updateNowPlaying(); onState?(snapshot(includeQueue: includeQueue))
         let signature = "\(generation)|\(wanted)|\(loading)|\(failure)|\(queueRevision)|\(audio.timeControlStatus.rawValue)"
-        if signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
+        if recorded || signature != lastWebQueueSignature { lastWebQueueSignature = signature; NotificationCenter.default.post(name: .lxPlayback, object: self) }
+    }
+    private func recordRecentPlayback() -> Bool {
+        guard !loading, wanted, audio.timeControlStatus == .playing,
+              recentRecordedGeneration != generation, let song = current else { return false }
+        recentRecordedGeneration = generation
+        recent.removeAll { $0.playbackIdentity == song.playbackIdentity }
+        recent.insert(song, at: 0)
+        if recent.count > Self.recentLimit { recent.removeLast(recent.count - Self.recentLimit) }
+        persistQueue()
+        return true
     }
     func resetArtwork() {
         artworkLookup?.cancel();artworkLookup=nil;artworkIdentity="";artworkLookupAttempted=false;resolvedArtwork=""
+        rejectedArtwork.removeAll()
+        publishedArtwork = ""
     }
     func resolveArtwork(_ song: Song) {
         guard !artworkLookupAttempted,(wanted || currentURL != nil) else { return }
         artworkLookupAttempted=true
-        let identity=artworkIdentity
+        let identity=artworkIdentity, epoch=generation
         artworkLookup=api.cover(song) { [weak self] result in
-            guard let self=self,self.artworkIdentity==identity else { return }
+            guard let self=self,self.artworkIdentity==identity,self.generation==epoch else { return }
             self.artworkLookup=nil
             if case .success(let address)=result {
                 self.resolvedArtwork=address;self.nowPlayingSignature="";self.publish()
@@ -283,12 +328,14 @@ final class Player {
         }
     }
     func nowPlayingArtwork(_ song: Song) -> String {
-        let identity=text(song.raw["source"])+"|"+song.key
+        let identity=song.playbackIdentity
         if artworkIdentity != identity { resetArtwork();artworkIdentity=identity }
-        if let file=MusicLibrary.shared.coverURL(text(song.raw["offlineId"])) { return file.absoluteString }
-        let embedded=ArtworkAddress.embedded(song,base:api.base)
-        if embedded.isEmpty { resolveArtwork(song) }
-        return resolvedArtwork.isEmpty ? embedded : resolvedArtwork
+        if let file = MusicLibrary.shared.coverURL(text(song.raw["offlineId"])),
+           !rejectedArtwork.contains(file.absoluteString) { return file.absoluteString }
+        if let embedded = ArtworkAddress.candidates(song, base: api.base).first(where: { !rejectedArtwork.contains($0) }) { return embedded }
+        if !resolvedArtwork.isEmpty, !rejectedArtwork.contains(resolvedArtwork) { return resolvedArtwork }
+        resolveArtwork(song)
+        return ""
     }
     func updateNowPlaying() {
         guard let song=current else { resetArtwork();audio.clearMetadata();return }
@@ -296,18 +343,24 @@ final class Player {
         let signature = "\(generation)|\(wanted)|\(loading)|\(interrupted)|\(audio.timeControlStatus.rawValue)|\(audio.rate)|\(timelineRevision)|\(Int(duration))|\(queueRevision)|\(song.key)|\(cover)"
         let now = ProcessInfo.processInfo.systemUptime
         guard signature != nowPlayingSignature || now - nowPlayingAt > 15 else { return }
-        nowPlayingSignature = signature; nowPlayingAt = now
+        nowPlayingSignature = signature; nowPlayingAt = now; publishedArtwork = cover
         let knownDuration = duration > 0 ? duration : SongInterval.seconds(song.raw["interval"])
-        audio.metadata(["songId":text(song.raw["source"])+"|"+song.key,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"artworkResolved":!resolvedArtwork.isEmpty,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
+        audio.metadata(["songId":song.playbackIdentity,"generation":generation,"title":song.name,"artist":song.artist,"album":text(song.raw["albumName"]),"artwork":cover,"artworkResolved":!resolvedArtwork.isEmpty,"duration":knownDuration,"elapsedTime":position,"wanted":wanted,"interrupted":interrupted,"loading":loading || audio.timeControlStatus == .waitingToPlayAtSpecifiedRate,"playbackRate":wanted ? audio.rate : 0])
+    }
+    func refreshNowPlaying() {
+        nowPlayingSignature = ""
+        updateNowPlaying()
     }
     func persistQueue() {
-        let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]
+        let object: Object = ["server": api.credentials?.server ?? "", "username": api.credentials?.username ?? "", "queue": queue.map(\.raw), "recent": recent.map(\.raw), "index": index, "mode": mode, "position": position, "quality": quality]
         if let data = try? JSONSerialization.data(withJSONObject: object) { UserDefaults.standard.set(data, forKey: "lx.queue") }
     }
     func restoreQueue() {
         guard let data = UserDefaults.standard.data(forKey: "lx.queue"), let object = (try? JSONSerialization.jsonObject(with: data)) as? Object,
               text(object["server"]) == (api.credentials?.server ?? ""), text(object["username"]) == (api.credentials?.username ?? "") else { return }
         queue = (object["queue"] as? [Object] ?? []).map { Song(raw: $0) }; index = Int(number(object["index"], -1)); mode = text(object["mode"]); quality = text(object["quality"]); resumeTime = number(object["position"])
+        let recentRows = object["recent"] as? [Object] ?? (current.map { [$0.raw] } ?? [])
+        recent = recentRows.prefix(Self.recentLimit).map { Song(raw: $0) }
         if let stored = UserDefaults.standard.data(forKey: "lx.library"), let lists = (try? JSONSerialization.jsonObject(with: stored)) as? [Object] { library = lists }
     }
     func persistLibrary() { if let data = try? JSONSerialization.data(withJSONObject: library) { UserDefaults.standard.set(data, forKey: "lx.library") } }

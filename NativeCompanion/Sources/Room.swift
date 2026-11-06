@@ -20,6 +20,9 @@ final class RoomClient {
     var offset = 0.0
     var bestRTT = Double.infinity
     var refreshing = false
+    private var bindingCheck = 0
+    private var bindingChecked = false
+    private var pendingCarPlayAction: (() -> Void)?
     var refreshRetry: DispatchWorkItem?
     var refreshFailures = 0
     var needsSnapshotSync = false
@@ -46,14 +49,18 @@ final class RoomClient {
     func diagnostic()->Object {
         ["active":active,"connected":connected,"receivedFrames":receivedFrames,
          "lastFrameAge":max(0,ProcessInfo.processInfo.systemUptime-health.lastReceived),
-         "reconnectScheduled":reconnect != nil,"error":lastError,"epoch":epoch]
+         "reconnectScheduled":reconnect != nil,"error":lastError,"epoch":epoch,
+         "bindingChecked":bindingChecked,"checkingBinding":refreshing,"carPlayActionPending":pendingCarPlayAction != nil]
     }
     func recoverConnection(_ reason:String) {
-        guard active else {refresh();return}
+        guard active, bindingChecked else {refresh();return}
         let now=ProcessInfo.processInfo.systemUptime
         guard now-lastRecovery>=1 else{return};lastRecovery=now
         RuntimeTrace.record("room.recover",["reason":reason,"epoch":epoch])
-        connect();exchange(["type":"room:sync-request"]);refresh();publish()
+        needsSnapshotSync = true
+        if socket == nil || health.expired(at:now) { connect() }
+        else { send(["type":"room:sync-request"]) }
+        refresh()
     }
     func heartbeat() {
         guard active else{return}
@@ -75,39 +82,67 @@ final class RoomClient {
     func snapshot() -> Object {
         ["binding": binding as Any? ?? NSNull(), "state": state, "participants": participants, "participantId": participantID, "owner": owner, "connected": connected, "enabled": enabled, "syncOnTrack": syncTracks, "error": lastError]
     }
+    // A cold CarPlay tap can arrive before the account's room binding is known.
+    // Retain only the latest action and run it after the first room snapshot.
+    func afterInitialBinding(_ action: @escaping () -> Void) {
+        guard !bindingChecked, api.credentials?.token.isEmpty == false else { action(); return }
+        pendingCarPlayAction = action
+        refresh()
+    }
+    func cancelCarPlayAction() { pendingCarPlayAction = nil }
+    private func completeBindingCheck(_ attempt: Int) {
+        guard bindingCheck == attempt, refreshing else { return }
+        refreshing = false
+        bindingChecked = true
+        let action = pendingCarPlayAction
+        pendingCarPlayAction = nil
+        action?()
+        publish()
+    }
     func refresh() {
         guard api.credentials?.token.isEmpty == false, !refreshing else { return }
         refreshing = true
-        let originalEpoch = epoch
-        api.request("/api/music/config") { [weak self] result in
-            guard let self = self else { return }
-            guard self.epoch == originalEpoch else { return }
-            if case let .success(config) = result { self.enabled = config["room.syncEnabled"] == nil || bool(config["room.syncEnabled"]); self.syncTracks = config["room.syncOnTrack"] == nil || bool(config["room.syncOnTrack"]) }
+        bindingCheck += 1
+        let attempt = bindingCheck
+        var configuration: Result<Object, Error>?
+        var bindingResult: Result<Object, Error>?
+        let finish = { [weak self] in
+            guard let self = self, self.bindingCheck == attempt,
+                  let configuration = configuration, let bindingResult = bindingResult else { return }
+            self.applyBindingCheck(bindingResult, configuration: configuration, attempt: attempt)
         }
-        api.request("/api/room/binding") { [weak self] result in
-            guard let self = self else { return }; self.refreshing = false
-            guard self.epoch == originalEpoch else { return }
-            switch result {
-            case .success(let value):
-                self.refreshRetry?.cancel(); self.refreshRetry = nil; self.refreshFailures = 0
-                self.lastError = ""
-                let next = value["binding"] as? Object
-                let changed = self.roomID != text(next?["roomId"]) || text(self.binding?["password"]) != text(next?["password"])
-                if changed { self.disconnect(clear: true) }
-                self.binding = next
-                if self.active { if !self.connected { self.connect() } else { self.needsSnapshotSync = true; self.exchange(["type": "room:sync-request"]) } }
-                else { self.disconnect(clear: false) }
-                self.publish()
-            case .failure(let error):
-                self.lastError = error.localizedDescription; self.publish()
-                self.refreshRetry?.cancel()
-                let delay = min(30, pow(2, Double(min(self.refreshFailures, 5)))); self.refreshFailures += 1
-                let work = DispatchWorkItem { [weak self] in
-                    guard let self = self, self.epoch == originalEpoch else { return }
-                    self.refreshRetry = nil; self.refresh()
-                }
-                self.refreshRetry = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        api.request("/api/music/config", timeout: 6) { result in configuration = result; finish() }
+        api.request("/api/room/binding", timeout: 6) { result in bindingResult = result; finish() }
+    }
+    private func applyBindingCheck(_ result: Result<Object, Error>, configuration: Result<Object, Error>, attempt: Int) {
+        if case let .success(config) = configuration {
+            enabled = config["room.syncEnabled"] == nil || bool(config["room.syncEnabled"])
+            syncTracks = config["room.syncOnTrack"] == nil || bool(config["room.syncOnTrack"])
+        }
+        refreshRetry?.cancel(); refreshRetry = nil
+        switch result {
+        case .success(let value):
+            refreshFailures = 0; lastError = ""
+            let next = value["binding"] as? Object
+            let changed = roomID != text(next?["roomId"]) || text(binding?["password"]) != text(next?["password"])
+            if changed { resetConnection(clear: true) }
+            binding = next
+            guard active else { resetConnection(clear: false); completeBindingCheck(attempt); return }
+            if socket == nil { connect() }
+            needsSnapshotSync = true
+            // A proxy may delay the WebSocket handshake. The authenticated
+            // playback endpoint can restore the same state directly.
+            exchange(["type": "room:sync-request"], timeout: 6) { [weak self] in self?.completeBindingCheck(attempt) }
+        case .failure(let error):
+            lastError = error.localizedDescription
+            completeBindingCheck(attempt)
+            guard bindingCheck == attempt else { return }
+            let delay = min(30, pow(2, Double(min(refreshFailures, 5)))); refreshFailures += 1
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, self.bindingCheck == attempt else { return }
+                self.refreshRetry = nil; self.refresh()
             }
+            refreshRetry = work; DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         }
     }
     func membership(_ operation: String, values: Object = [:], completion: @escaping (Result<Object, Error>) -> Void) {
@@ -118,9 +153,14 @@ final class RoomClient {
         }
     }
     func disconnect(clear: Bool) {
-        epoch += 1; commandEpoch += 1; refreshing = false; socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false
+        bindingCheck += 1; refreshing = false; refreshRetry?.cancel(); refreshRetry = nil
+        if clear { bindingChecked = false; refreshFailures = 0; cancelCarPlayAction() }
+        resetConnection(clear: clear)
+    }
+    private func resetConnection(clear: Bool) {
+        epoch += 1; commandEpoch += 1; socket?.cancel(with: .goingAway, reason: nil); socket = nil; connected = false
         reconnect?.cancel(); reconnect = nil; ping?.invalidate(); ping = nil; outgoing = []; sending = false
-        refreshRetry?.cancel(); refreshRetry = nil; needsSnapshotSync = false; lastProgressAt = -.infinity
+        needsSnapshotSync = false; lastProgressAt = -.infinity
         if clear { binding = nil; state = [:]; participants = []; participantID = ""; owner = ""; order = RoomOrder(); offset = 0; bestRTT = .infinity; retry = 0 }
     }
     func connect() {
@@ -183,7 +223,7 @@ final class RoomClient {
             participantID = text((value["participant"] as? Object)?["id"]); owner = text(value["owner"]); participants = value["participants"] as? [Object] ?? []
             if let config = value["config"] as? Object { enabled = config["syncEnabled"] == nil || bool(config["syncEnabled"]); syncTracks = config["syncOnTrack"] == nil || bool(config["syncOnTrack"]) }
             if let initial = value["state"] as? Object, initial["song"] is Object { apply(initial) }
-            else if player.current != nil && !localRouteHeld { sendState(reason: "join-current") }
+            else if player.wanted, player.audio.currentItem != nil, !localRouteHeld, order.pendingID.isEmpty { sendState(reason: "join-current") }
         case "room:participants": participants = payload as? [Object] ?? []
         case "room:state", "room:snapshot": apply(value["state"] as? Object ?? value)
         case "room:chat-update", "room:chat-history": player.onChat?(type, value)
@@ -253,11 +293,11 @@ final class RoomClient {
         sending = true
         exchange(command) { [weak self] in guard let self = self, self.commandEpoch == version else { return }; self.sending = false; self.drain() }
     }
-    func exchange(_ values: Object, completion: (() -> Void)? = nil) {
+    func exchange(_ values: Object, timeout: TimeInterval? = nil, completion: (() -> Void)? = nil) {
         guard active else { completion?(); return }
         var body = values; body["roomId"] = roomID; body["immediateStart"] = true
         let version = commandEpoch
-        api.request("/api/room/playback", method: "POST", body: body) { [weak self] result in
+        api.request("/api/room/playback", method: "POST", body: body, timeout: timeout) { [weak self] result in
             guard let self = self, self.commandEpoch == version else { return }
             defer { completion?() }
             switch result {

@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import UIKit
 
 // Execute the production Player, RoomClient and route observer with real local
 // FLAC playback. Bluetooth/CarPlay hardware itself is not simulated here.
@@ -18,11 +19,28 @@ enum PlayerRouteTests {
     }
     static func start() {
         let player=Player.shared
-        let raw:Object=["id":"offline-test","name":"本机断开测试","source":"wy","offlineId":"B86B78E5-25E2-4986-A387-0FD79074211F"]
-        player.room.disconnect(clear:true);player.select([Song(raw:raw)],index:0)
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.12) {
+        let image = UIGraphicsImageRenderer(size: CGSize(width:32,height:32)).image { context in
+            UIColor.systemGreen.setFill(); context.fill(CGRect(x:0,y:0,width:32,height:32))
+        }
+        let cover = "data:image/png;base64," + image.pngData()!.base64EncodedString()
+        let raw:Object=["id":"offline-test","name":"本机断开测试","source":"wy","offlineId":"B86B78E5-25E2-4986-A387-0FD79074211F",
+                        "img":"data:image/png;base64,invalid","meta":["pic":cover]]
+        let song = Song(raw:raw), credentials = player.api.credentials
+        player.room.disconnect(clear:true); player.api.credentials = nil
+        player.recent = [Song(raw:["id":"earlier","source":"wy"]), song]
+        NotificationCenter.default.post(name:Notification.Name("LXOwnCarPlayAction"),object:nil,
+                                        userInfo:["type":"play","listId":"__own_recent","musicId":song.playbackIdentity])
+        player.api.credentials = credentials
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.20) {
             do {
-                try record(player.wanted && player.audio.localAudio?.isPlaying == true,"realLocalAudioStarted")
+                try record(player.wanted && player.audio.localAudio?.isPlaying == true,"carPlayRecentActionStartsRealLocalAudio")
+                try record(player.recent.first?.key == "offline-test","actualDecoderPlaybackMovesSongToFrontOfRecentHistory")
+                let saved = try JSONSerialization.jsonObject(with: UserDefaults.standard.data(forKey:"lx.queue")!) as? Object
+                try record(text((saved?["recent"] as? [Object])?.first?["id"]) == "offline-test","recentHistoryIsPersistedForCarPlayColdStart")
+                let metadata = NSMutableDictionary()
+                NotificationCenter.default.post(name:Notification.Name("LXOwnNowPlayingDiagnostic"),object:metadata)
+                try record(bool(metadata["systemHasArtwork"]) && !bool(metadata["placeholder"]) &&
+                           text((metadata["artwork"] as? Object)?["state"]) == "decoded","invalidFirstArtworkFallsBackToNestedCoverOnTheSystemCard")
                 let index=player.index
                 try record(LXOwnInvokeTransport("pause") && !player.wanted && player.audio.localAudio?.isPlaying == false,"registeredLockScreenPauseStopsActualLocalAudioWithoutJavaScript")
                 try record(LXOwnInvokeTransport("play") && player.wanted && player.audio.localAudio?.isPlaying == true,"registeredLockScreenPlayResumesActualLocalAudioWithoutJavaScript")

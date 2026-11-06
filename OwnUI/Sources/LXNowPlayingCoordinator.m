@@ -167,6 +167,7 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
     NSString *key=[value[@"songId"] isKindOfClass:NSString.class]?value[@"songId"]:@"";if(!key.length)return;
     NSInteger generation=[value[@"generation"] integerValue];if(generation<self.generation)return;
     BOOL artworkRefreshed=[value[@"artworkResolved"] boolValue]!=[self.snapshot[@"artworkResolved"] boolValue];
+    BOOL retryCover=generation!=self.generation && !self.coverTask && self.artwork==self.placeholder;
     self.generation=generation;self.snapshot=[value copy];self.targetKey=key;
     // Restoring a paused queue or reading a playlist must not initialize
     // MediaRemote, render artwork, or acquire a lock-screen session.
@@ -174,7 +175,7 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
     atomic_store(&LXNPOwned,true);
     if(!self.controlsInstalled)[self installControls];
     NSString *path=[value[@"artwork"] isKindOfClass:NSString.class]?value[@"artwork"]:@"";
-    if(![self.coverPath isEqualToString:path] || artworkRefreshed) {
+    if(![self.coverPath isEqualToString:path] || artworkRefreshed || retryCover) {
         [self.coverTask cancel];self.coverTask=nil;self.coverPath=path;NSUInteger epoch=++self.coverEpoch;
         MPMediaItemArtwork *cached=[self.covers objectForKey:path];
         self.artwork=cached?:[self defaultArtwork];
@@ -235,7 +236,8 @@ static NSDictionary<NSString *,MPRemoteCommand *> *LXNativeCommands(void) {
     // previous song's retained card.
     if(self.generation==self.presentedGeneration && [self.targetKey isEqualToString:self.presentedKey])[self publish];
     if(!artwork && self.coverPath.length) {
-        [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnArtworkMissing" object:nil userInfo:@{@"songId":self.targetKey?:@"",@"artwork":self.coverPath}];
+        [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnArtworkMissing" object:nil userInfo:@{
+            @"songId":self.targetKey?:@"",@"artwork":self.coverPath,@"generation":@(self.generation)}];
     }
 }
 - (MPMediaItemArtwork *)decodeArtwork:(NSData *)data {

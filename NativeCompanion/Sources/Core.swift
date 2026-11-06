@@ -68,6 +68,7 @@ struct Song {
     }
     var name: String { text(raw["name"]) }
     var artist: String { text(raw["singer"]).isEmpty ? text(raw["artist"]) : text(raw["singer"]) }
+    var playbackIdentity: String { text(raw["source"]) + "|" + key }
 }
 
 enum ArtworkAddress {
@@ -82,15 +83,22 @@ enum ArtworkAddress {
               ["http","https","file"].contains(url.scheme?.lowercased() ?? "") else { return "" }
         return url.absoluteString
     }
-    static func embedded(_ song: Song, base: URL?) -> String {
-        for field in ["img","picUrl","cover","artwork","albumPic"] {
-            let value=normalize(text(song.raw[field]),base:base)
-            if !value.isEmpty { return value }
+    static func candidates(_ song: Song, base: URL?) -> [String] {
+        let fields = ["img", "picUrl", "pic", "cover", "artwork", "albumPic", "pic_url", "coverUrl"]
+        let metadata = song.raw["meta"] as? Object ?? [:]
+        var seen = Set<String>()
+        return [song.raw, metadata].flatMap { raw in
+            fields.compactMap { field in
+                let address = normalize(text(raw[field]), base: base)
+                return !address.isEmpty && seen.insert(address).inserted ? address : nil
+            }
         }
-        return ""
+    }
+    static func embedded(_ song: Song, base: URL?) -> String {
+        candidates(song, base: base).first ?? ""
     }
     static func providerSong(_ song: Song) -> Object {
-        var raw=song.raw
+        var raw=(song.raw["meta"] as? Object ?? [:]).merging(song.raw) { _, top in top }
         var id=""
         for field in ["songmid","songId","id"] {
             if let value=raw[field],!(value is NSNull),!String(describing:value).isEmpty { id=String(describing:value);break }

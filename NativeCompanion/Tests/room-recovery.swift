@@ -12,7 +12,7 @@ final class API {
     var deferred: [(Result<Object, Error>) -> Void] = []
     var respond: (String, Object) -> Result<Object, Error> = { _, _ in .success([:]) }
     func url(_ path: String) -> URL? { nil }
-    func request(_ path: String, method: String = "GET", body: Object? = nil, completion: @escaping (Result<Object, Error>) -> Void) {
+    func request(_ path: String, method: String = "GET", body: Object? = nil, timeout: TimeInterval? = nil, completion: @escaping (Result<Object, Error>) -> Void) {
         requests.append((path, body ?? [:])); if postpone { deferred.append(completion) } else { completion(respond(path, body ?? [:])) }
     }
 }
@@ -114,6 +114,54 @@ final class Player {
         rapid.api.deferred.removeFirst()(.failure(ClientError("first request timed out")))
         check(rapid.api.requests.count == 2 && text((rapid.api.requests.last!.1["state"] as? Object)?["songKey"]) == "C", "the latest queued selection drains after the old in-flight request finishes")
         rapidRoom.disconnect(clear:true)
+
+        let cold = Player(), coldRoom = RoomClient(player:cold)
+        cold.wanted = false; cold.audio.currentItem = nil; cold.api.postpone = true
+        let firstTap = Song(raw:["id":"first-tap","source":"wy"]), lastTap = Song(raw:["id":"last-tap","source":"wy"])
+        func tap(_ song: Song) {
+            coldRoom.afterInitialBinding {
+                cold.select([song], index:0, paused:false, user:true, time:0)
+                coldRoom.sendState(reason:"track")
+            }
+        }
+        coldRoom.recoverConnection("carplay-connected")
+        tap(firstTap); tap(lastTap)
+        check(cold.api.requests.count == 2 && cold.current?.key == "A", "cold CarPlay taps wait for the in-flight account binding check")
+        cold.api.deferred.removeLast()(.success(["binding":["roomId":"cold-room"]]))
+        check(cold.api.requests.count == 2 && cold.selections == 0, "binding waits for the synchronization configuration even when it arrives first")
+        cold.api.deferred.removeFirst()(.success([:]))
+        check(coldRoom.roomID == "cold-room" && text(cold.api.requests.last!.1["type"]) == "room:sync-request" && cold.selections == 0,
+              "cold CarPlay restores a room through HTTP before the socket connects")
+        let beforeTap = incoming(cold,revision:9)
+        cold.api.deferred.removeFirst()(.success(["state":beforeTap,"participantId":"me"]))
+        check(cold.selections == 2 && cold.current?.key == lastTap.key, "initial room snapshot is followed only by the latest explicit CarPlay tap")
+        check(text(cold.api.requests.last!.1["roomId"]) == "cold-room" &&
+              text((cold.api.requests.last!.1["state"] as? Object)?["songKey"]) == lastTap.key,
+              "a cold CarPlay tap broadcasts its track to the restored room")
+        coldRoom.apply(beforeTap)
+        check(cold.current?.key == lastTap.key, "an old startup snapshot cannot replace the pending CarPlay track")
+        coldRoom.disconnect(clear:true)
+
+        let off = Player(), offRoom = RoomClient(player:off)
+        off.api.postpone = true
+        var standalone = false
+        offRoom.afterInitialBinding { standalone = !offRoom.active }
+        off.api.deferred.removeLast()(.success(["binding":["roomId":"configured-room"]]))
+        off.api.deferred.removeFirst()(.success(["room.syncOnTrack":false]))
+        check(standalone && off.api.requests.count == 2, "disabled room synchronization preserves local CarPlay playback")
+        offRoom.disconnect(clear:true)
+        standalone = false
+        offRoom.afterInitialBinding { standalone = true }
+        offRoom.cancelCarPlayAction()
+        off.api.deferred.removeLast()(.success(["binding":NSNull()]))
+        off.api.deferred.removeFirst()(.success([:]))
+        check(!standalone, "disconnecting CarPlay drops a tap still waiting for room discovery")
+
+        let paused = Player(), pausedRoom = RoomClient(player:paused)
+        paused.wanted = false; paused.audio.currentItem = nil; pausedRoom.binding = ["roomId":"empty"]
+        pausedRoom.handle("room:joined", ["state":["song":NSNull()]])
+        check(paused.api.requests.isEmpty, "cold room join does not broadcast an old paused queue to an empty room")
+        offRoom.disconnect(clear:true); pausedRoom.disconnect(clear:true)
         retryRoom.disconnect(clear:true); room.disconnect(clear:true)
         print(String(data:try! JSONSerialization.data(withJSONObject:checks,options:[.prettyPrinted,.sortedKeys]),encoding:.utf8)!)
     }

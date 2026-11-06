@@ -39,10 +39,11 @@ final class API {
     }
     var base: URL? { credentials?.url }
     func url(_ path: String) -> URL? { guard let base = base else { return nil }; return URL(string: path, relativeTo: base)?.absoluteURL }
-    @discardableResult func request(_ path: String, method: String = "GET", body: Object? = nil, completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask? {
+    @discardableResult func request(_ path: String, method: String = "GET", body: Object? = nil, timeout: TimeInterval? = nil, completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask? {
         guard let url = url(path), let identity = credentials else { completion(.failure(ClientError("请先打开手机页面登录音乐账号"))); return nil }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let timeout = timeout { request.timeoutInterval = timeout }
         request.setValue(identity.token, forHTTPHeaderField: "x-user-token")
         request.setValue(identity.username, forHTTPHeaderField: "x-user-name")
         if let body = body { request.httpBody = try? JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }

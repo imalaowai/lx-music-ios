@@ -62,6 +62,7 @@ enum PlaylistStartupTests {
         metrics["simulatorKeychainFixtureReadable"]=Vault.load()==credentials
         let player=Player.shared;player.api.credentials=credentials;player.restoreQueue()
         checks["restoredAccountFixtureAndLargeQueuePresent"]=player.api.credentials?.username=="fixture" && player.queue.count==500
+        checks["upgradeSeedsRecentWithOnlyTheRestoredCurrentSong"]=player.recent.map(\.key)==["saved-0"]
         player.publish()
         DispatchQueue.main.async {
             checks["restoredIdleHistoryDoesNotInitializeLockScreenServices"]=LXOwnMediaIsIdle()
@@ -131,7 +132,7 @@ enum PlaylistStartupTests {
             }else{DispatchQueue.main.asyncAfter(deadline:.now()+0.15){poll()}}
         }
     }
-    static func finishIfReady(){if checks.count>=8 {finish()}}
+    static func finishIfReady(){if checks.count>=9 {finish()}}
     static func finish(error:String?=nil) {
         guard !completed else{return};completed=true
         var report:Object=["checks":checks,"metrics":metrics]

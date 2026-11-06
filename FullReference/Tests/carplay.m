@@ -120,12 +120,26 @@ static LXFixtureScene *Scene(CPSceneDelegate *owner, LXFixtureController *contro
 }
 static void RunTests(void) {
     LXInstallFullCarPlay();
+    NSDictionary *recent=@{@"id":@"wy|saved",@"name":@"恢复的歌曲",@"singer":@"Fixture",@"listId":@"__own_recent"};
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnLibrary" object:nil userInfo:@{@"lists":@[],@"recent":@[recent]}];
     CPSceneDelegate *a=[CPSceneDelegate new];
     LXFixtureController *one=[LXFixtureController new]; LXFixtureScene *s1=Scene(a,one);
     [a templateApplicationScene:s1 didConnectInterfaceController:one];
     Check(a.audioConnects==1 && [one.rootTemplate isKindOfClass:CPTabBarTemplate.class], @"existingAudioCallbackWrapped");
     CPTabBarTemplate *tabs=(id)one.rootTemplate;
     Check(tabs.templates.count==3 && [(CPListTemplate *)tabs.templates[0] sections].count>0 && [(CPListTemplate *)tabs.templates[1] sections].count>0, @"populatedRootBeforeConnectReturns");
+    CPListTemplate *recentTab=(id)tabs.templates[2];
+    CPListItem *saved=(id)recentTab.sections.firstObject.items.firstObject;
+    Check([saved.text isEqual:recent[@"name"]] && saved.handler!=nil,@"coldCarPlayRootReadsNativeRecentCacheWithoutAReactModule");
+    __block NSDictionary *recentAction=nil;__block BOOL recentCompleted=NO;
+    NSNotificationCenter *notes=NSNotificationCenter.defaultCenter;
+    id recentObserver=[notes addObserverForName:@"LXOwnCarPlayAction" object:nil queue:nil usingBlock:^(NSNotification *note){recentAction=note.userInfo;}];
+    saved.handler(saved,^{recentCompleted=YES;});
+    [notes postNotificationName:@"LXOwnDrainCarPlay" object:nil];
+    [notes removeObserver:recentObserver];
+    Check(recentCompleted && [recentAction[@"listId"] isEqual:@"__own_recent"] && [recentAction[@"musicId"] isEqual:recent[@"id"]],
+          @"recentRowDrainsToTheNativePlaybackOwnerWithoutThePhoneBridge");
+    one.top=nil;
     CPTemplate *first=one.rootTemplate;
     [a templateApplicationScene:s1 didConnectInterfaceController:one toWindow:nil];
     Check(one.sets==1 && one.rootTemplate==first && a.windowConnects==0, @"duplicateCallbackKeepsPage");

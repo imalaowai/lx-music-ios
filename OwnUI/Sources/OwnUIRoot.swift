@@ -74,26 +74,42 @@ enum CarScene {
         })
         for name in [UIScene.didActivateNotification,UIScene.willEnterForegroundNotification] {
             tokens.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main){note in
-                if note.object is CPTemplateApplicationScene {player.room.recoverConnection("carplay-scene")}
+                if note.object is CPTemplateApplicationScene {
+                    player.room.recoverConnection("carplay-scene")
+                    player.refreshNowPlaying()
+                }
             })
         }
         tokens.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnCarPlayAction"),object:nil,queue:.main) { note in
-            let action=note.userInfo as? Object ?? [:]
-            if text(action["type"])=="refresh-library" { player.refreshLibrary(); publish(); return }
-            let lists=rawLists(),list=lists.first { text($0["id"])==text(action["listId"]) }
-            let songs=(list?["list"] as? [Object] ?? []).map { Song(raw:$0) }
-            if let index=songs.firstIndex(where:{$0.key==text(action["musicId"])}) { player.select(songs,index:index) }
+            handleCarPlayAction(note.userInfo as? Object ?? [:])
         })
         tokens.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnCarPlayConnected"),object:nil,queue:.main) { _ in
             player.room.recoverConnection("carplay-connected")
             NotificationCenter.default.post(name:Notification.Name("LXOwnDrainCarPlay"),object:nil)
+            player.refreshNowPlaying()
             publish()
+        })
+        tokens.append(NotificationCenter.default.addObserver(forName:Notification.Name("LXOwnCarPlayDisconnected"),object:nil,queue:.main) { _ in
+            player.room.cancelCarPlayAction()
         })
         NotificationCenter.default.post(name:Notification.Name("LXOwnDrainCarPlay"),object:nil)
         // CarPlay may launch while the phone WebKit view is suspended. Account
         // restoration and room networking must start without a web auth message.
         player.room.refresh()
         publish()
+    }
+    private static let recentListID = "__own_recent"
+    private static func handleCarPlayAction(_ action: Object) {
+        let player = Player.shared
+        let operation = text(action["type"])
+        if operation == "refresh-library" { player.refreshLibrary(); publish(); return }
+        guard operation == "play" else { return }
+        let listID = text(action["listId"]), musicID = text(action["musicId"])
+        let isRecent = listID == recentListID
+        let list = isRecent ? nil : rawLists().first { text($0["id"]) == listID }
+        let songs = isRecent ? player.recent : (list?["list"] as? [Object] ?? []).map { Song(raw: $0) }
+        guard let index = songs.firstIndex(where: { (isRecent ? $0.playbackIdentity : $0.key) == musicID }) else { return }
+        player.performCarPlayAction { player.select(songs, index: index) }
     }
     private static func rawLists()->[Object] {
         let player=Player.shared
@@ -111,7 +127,10 @@ enum CarScene {
             let songs=(list["list"] as? [Object] ?? []).map { raw -> Object in let song=Song(raw:raw); return ["id":song.key,"name":song.name,"singer":song.artist] }
             return ["id":text(list["id"]),"name":text(list["name"]),"musics":songs]
         }
-        let snapshot:Object=["version":3,"lists":lists,"recent":[]]
+        let recent = Player.shared.recent.map { song -> Object in
+            ["id": song.playbackIdentity, "name": song.name, "singer": song.artist, "listId": recentListID]
+        }
+        let snapshot:Object=["version":3,"lists":lists,"recent":recent]
         guard let data=try? JSONSerialization.data(withJSONObject:snapshot,options:.sortedKeys),data != lastLibrary else { return };lastLibrary=data
         NotificationCenter.default.post(name:Notification.Name("LXOwnLibrary"),object:nil,userInfo:snapshot)
     }
