@@ -258,8 +258,9 @@ final class RoomClient {
         let oldPlaybackRevision = number(state["playbackRevision"], -1)
         let song = Song(raw:raw), reason = text(incoming["reason"]), proposed = Int(number(incoming["index"], -1))
         let oldIdentity = player.current?.playbackIdentity
-        let contiguous = number(incoming["revision"], -1) == number(state["revision"], -1) + 1
-        let routine = reason == "progress" && !resynchronizing && contiguous && oldPlaybackRevision == number(incoming["playbackRevision"], -1)
+        let previousRevision = number(state["revision"], -1), revision = number(incoming["revision"], -1)
+        let routine = !resynchronizing && (revision == previousRevision ||
+            reason == "progress" && revision == previousRevision + 1 && oldPlaybackRevision == number(incoming["playbackRevision"], -1))
         let roomAlreadyMatches = roomQueueRevision == player.queueRevision
         let playlist = incoming["playlist"] as? [Object]
         let useKnownQueue = roomAlreadyMatches && !player.queue.isEmpty && (playlist == nil || routine)
@@ -273,7 +274,7 @@ final class RoomClient {
             })
         let shouldPause = bool(incoming["paused"], true) || localRouteHeld, wantedBefore = player.wanted
         var updatedState = incoming
-        updatedState["playlist"] = useKnownQueue ? state["playlist"] : playlist ?? state["playlist"]
+        if useKnownQueue || playlist == nil { updatedState["playlist"] = state["playlist"] }
         state = updatedState
         if ["list", "single", "order", "random"].contains(text(incoming["playMode"])) { player.mode = text(incoming["playMode"]) }
         let restarted = !wasPending && number(incoming["playbackRevision"], -1) > oldPlaybackRevision && ["track", "ended"].contains(reason)
@@ -301,7 +302,7 @@ final class RoomClient {
         guard active, let song = player.current else { return }
         let command = reason == "track" ? UUID().uuidString : ""
         var value: Object = ["reason": reason, "origin": "user", "userInitiated": true, "sentAt": Date().timeIntervalSince1970 * 1000, "song": song.raw, "index": player.index, "songKey": song.key, "paused": !player.wanted, "currentTime": reason == "track" ? 0 : (position ?? player.position), "duration": reason == "track" ? 0 : player.duration, "playMode": player.mode]
-        if ["queue", "join-current", "manual"].contains(reason) || reason == "track" && roomQueueRevision != player.queueRevision {
+        if ["track", "queue", "join-current", "manual"].contains(reason) {
             value["playlist"] = player.queue.map(\.raw)
         }
         if state["playbackRevision"] != nil { value["playbackRevision"] = state["playbackRevision"] }

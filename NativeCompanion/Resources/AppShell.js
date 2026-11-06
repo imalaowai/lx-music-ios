@@ -172,29 +172,33 @@ async function migrateSources(){const list=await request('serverSources'),rows=A
 async function saveLibrary(data){
  const value=data||own();if(!value)return;
  await window.ListStore?.set(value);
- await window.LXBridge?.publishLibrary(value);
  if(state.page==='mine')renderMine();
 }
 async function initLibrary(){
  if(!localStorage.getItem('lx_sync_user')){localStorage.setItem('lx_sync_user','__device__');localStorage.setItem('lx_sync_mode','device');}
  const username=localStorage.getItem('lx_sync_user'),previousLogin=window.isUserLoggedIn;
  window.isUserLoggedIn=()=>localStorage.getItem('lx_sync_user')==='__device__'||previousLogin?.();
+ const listStore=window.ListStore,write=listStore?.set.bind(listStore);
+ if(write)listStore.set=async value=>{await write(value);await window.LXBridge?.publishLibrary(value);};
  const previousPush=window.pushDataChange;
- window.pushDataChange=async data=>{libraryEdit++;await saveLibrary(data);if(state.info.hasAccount)return previousPush?.(data);};
+ window.pushDataChange=async data=>{
+  libraryEdit++;
+  if(state.info.hasAccount)return previousPush?.(data);
+  return saveLibrary(data);
+ };
  const version=libraryEdit;
  const cached=await window.ListStore?.get().catch(()=>null);
  if(version!==libraryEdit)return;
- if(cached?.username===username){window.__LX_LIBRARY_GETTERS__?.adopt(cached);await window.LXBridge?.publishLibrary(cached);}
+ if(cached?.username===username)window.__LX_LIBRARY_GETTERS__?.adopt(cached);
  else if(username==='__device__'){
   const empty={username,defaultList:[],loveList:[],userList:[]};
-  window.__LX_LIBRARY_GETTERS__?.adopt(empty);await saveLibrary(empty);
+  window.__LX_LIBRARY_GETTERS__?.adopt(empty);
  }
  if(!state.info.hasAccount)return;
  const data=await window.SyncManager?.sync();
  if(version!==libraryEdit||username!==localStorage.getItem('lx_sync_user'))return;
  if(!Array.isArray(data?.defaultList)||!Array.isArray(data.loveList)||!Array.isArray(data.userList))return;
  window.__LX_LIBRARY_GETTERS__?.adopt(data);
- await window.LXBridge?.publishLibrary(data);
  window.loadLibraryData?.();
  if(state.page==='mine')renderMine();
 }
@@ -246,6 +250,7 @@ function init(){
  window.addEventListener('lx-native-playback',event=>applyPlayback(event.detail));
  applyPlayback(window.LXBridge?.getPlayback());
  state.room=window.LXBridge?.getRoom()||{};
+ state.info={...state.info,...window.LXBridge?.getAccountInfo()};
  window.addEventListener('lx-room-unread',event=>{const button=document.querySelector('[data-native-page=room]');let badge=button.querySelector('.native-unread');if(!badge){badge=document.createElement('small');badge.className='native-unread';button.append(badge);}const count=Number(event.detail?.count)||0;badge.hidden=!count;badge.textContent=count>99?'99+':count?String(count):'';button.setAttribute('aria-label',count?'一起听，'+count+'条新消息':'一起听');});
  window.addEventListener('lx-native-room',event=>{state.room=event.detail||{};if(state.page==='room')renderRoom();});
  window.addEventListener('lx-native-download',event=>{

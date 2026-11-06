@@ -4,7 +4,7 @@
   if (document.documentElement) document.documentElement.dataset.nativeApp = 'true';
   else document.addEventListener('DOMContentLoaded', () => {document.documentElement.dataset.nativeApp = 'true';}, {once: true});
   // Installed pages own their version and never register a web service worker.
-  const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '', infoRequest;
+  const pending = new Map(), musicReads = new Map(); let sequence = 0, applying = false, installed = false, authKey = '', listKey = '', infoRequest, nativeAccount;
   let playback = {queue: [], index: -1, paused: true, position: 0, duration: 0};
   // Native time is authoritative; interpolate locally between snapshots so karaoke remains smooth.
   // Never extrapolate indefinitely if the app stops sending foreground snapshots.
@@ -15,11 +15,11 @@
     const value = clock.position + elapsed * clock.rate + clock.correction * Math.min(1, elapsed / 0.5);
     return Math.max(0, playback.duration > 0 ? Math.min(playback.duration, value) : value);
   }
-  function anchorClock(state, previous) {
+  function anchorClock(state, previous, sampledAt) {
     const now = performance.now(), projected = displayTime(now);
     let position = Math.max(0, Number(state.position) || 0);
     const running = state.playing === true && !state.paused && !state.loading && !state.seeking;
-    const transport = (Date.now() - Number(state.sampledAt)) / 1000;
+    const transport = (Date.now() - Number(sampledAt)) / 1000;
     if (running && Number.isFinite(transport) && transport >= 0 && transport <= 1.25) position += transport * (Number(state.playbackRate) > 0 ? Number(state.playbackRate) : 1);
     const continuous = running && clock.running && !foregroundSync &&
       key(state.song) === key(previous.song) && state.timelineRevision === previous.timelineRevision;
@@ -98,8 +98,9 @@
   function receiveState(state) {
     if (Number.isFinite(state.sampledAt) && Number.isFinite(playback.sampledAt) && state.sampledAt < playback.sampledAt) return;
     const previous = playback, updatedQueue = Array.isArray(state.queue);
+    const sampledAt = state.sampledAt;
     playback = {...playback, ...state}; state = playback;
-    anchorClock(state, previous);
+    anchorClock(state, previous, sampledAt);
     if (!installed) return;
     applying = true;
     try {
@@ -142,9 +143,10 @@
         }
       }
       if (renderedMode !== state.mode && typeof updatePlayModeUI === 'function') {updatePlayModeUI(); renderedMode = state.mode;}
-      if (typeof renderQueue === 'function' && renderedQueue !== state.queueRevision) {
+      if (typeof renderQueue === 'function' && updatedQueue && renderedQueue !== state.queueRevision) {
         renderQueue(); renderedQueue = state.queueRevision;
-      } else if (previous.index !== state.index && !document.getElementById('queue-drawer')?.classList.contains('translate-x-full')) {
+      } else if (renderedQueue === state.queueRevision && previous.index !== state.index &&
+          !document.getElementById('queue-drawer')?.classList.contains('translate-x-full')) {
         const list = document.getElementById('queue-list');
         for (const index of [previous.index, state.index]) {
           const row = list?.children?.[index];
@@ -182,11 +184,11 @@
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
-    publishLibrary, state: receiveState, room: receiveRoom, getPlayback: () => playback, getRoom: () => room, prepareDevice,
+    publishLibrary, state: receiveState, room: receiveRoom, getPlayback: () => playback, getRoom: () => room, getAccountInfo: () => nativeAccount, prepareDevice,
     appInfo: () => infoRequest ||= post('appInfo').catch(error => {infoRequest = null; throw error;}),
-    isReady: () => installed && !!window.NativeShell?.ready && Number.isFinite(playback.sampledAt),
+    isReady: () => installed && document.readyState !== 'loading' && !!window.NativeShell?.ready && Number.isFinite(playback.sampledAt),
     server(value) {
-      infoRequest = null;
+      nativeAccount = value; infoRequest = null;
       const label = document.querySelector('.lx-server-address');
       if (label) label.textContent = value.server;
       window.dispatchEvent(new CustomEvent('lx-native-server', {detail: value}));
@@ -223,6 +225,7 @@
       const owner = localStorage.getItem('lx_web_token_user');
       if ((!owner || owner === username) && await post('auth', {username, token})) account = {username, token};
     }
+    if (account.info) window.LXBridge.server(account.info);
     if (account.token) {
       authKey = account.username; infoRequest = null;
       localStorage.setItem('lx_sync_user', account.username);
@@ -345,7 +348,7 @@
       if (value?.state) receiveState(value.state);
       if (value?.room) receiveRoom(value.room);
     }).catch(warn);
-    send('preferences', preferences()); fetchPlayback();
+    fetchPlayback().then(()=>send('preferences', preferences()));
     receiveState(playback); receiveRoom(room);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {foregroundSync = true; fetchPlayback();}
@@ -359,13 +362,7 @@
       try {if (await post('uiReady', proof) === false && attempt < 40) setTimeout(() => reportUIReady(attempt + 1), 250);} catch (error) {warn(error);}
     };
     setTimeout(reportUIReady, 120);
-    // Foreground UI state only; audio and room networking run natively.
-    setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      const data = window.__LX_LIBRARY_GETTERS__?.getData?.();
-      if (!data) return;
-      publishLibrary(data).catch(warn);
-    }, 30000);
+
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();
 })();

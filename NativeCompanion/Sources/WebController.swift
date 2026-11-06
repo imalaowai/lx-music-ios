@@ -257,8 +257,10 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             done(info)
         case "session":
             if let account = player.api.credentials, Self.serverURL(address?.absoluteString) == Self.serverURL(account.server) {
-                done(["username":account.username, "token":account.token])
-            } else { done(["migrate":player.api.credentials == nil && !UserDefaults.standard.bool(forKey: Self.migratedSessionKey)]) }
+                done(["username":account.username, "token":account.token, "info":accountInfo])
+            } else {
+                done(["info":accountInfo, "migrate":player.api.credentials == nil && !UserDefaults.standard.bool(forKey: Self.migratedSessionKey)])
+            }
         case "signIn":
             let username = text(value["username"]).trimmingCharacters(in: .whitespacesAndNewlines), password = text(value["password"])
             guard !username.isEmpty, !password.isEmpty else { done(false, "请输入账号和密码"); return }
@@ -278,7 +280,6 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                     guard !token.isEmpty else { throw ClientError("登录服务没有返回会话") }
                     UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
                     self.player.configure(Credentials(server: endpoint.absoluteString, username: username, token: token))
-                    self.player.refreshLibrary()
                     done(true)
                     DispatchQueue.main.async { self.open(endpoint) }
                 } catch {
@@ -494,7 +495,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             }
             finish(.success(url))
         }
-        DispatchQueue.main.asyncAfter(deadline:.now()+25) { finish(.failure(ClientError("设备音乐准备超时，请重试"))) }
+        DispatchQueue.main.asyncAfter(deadline:.now()+60) { finish(.failure(ClientError("设备音乐准备超时，请重试"))) }
         return request
     }
     static func importDirectory() throws -> URL {

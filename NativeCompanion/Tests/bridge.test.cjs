@@ -1,14 +1,14 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{EventEmitter}=require('node:events');
-function fixture({readyFailures=0}={}){
+function fixture({readyFailures=0,session={migrate:true},resume=true}={}){
   const messages=[],listeners={},intervals=[],renders={queue:0,metadata:0,button:0,status:0};let htmlPlays=0;let context;let now=0;let ready;const initialized=new Promise(resolve=>ready=resolve);
   class Media extends EventEmitter {constructor(){super();this.id='audio-player';}play(){htmlPlays++;return Promise.resolve();}pause(){}load(){}dispatchEvent(e){this.emit(e.type,e);}addEventListener(n,f){this.on(n,f);}}
   class Storage{constructor(){this.map=new Map();}getItem(k){return this.map.get(k)??null;}setItem(k,v){this.map.set(k,String(v));}removeItem(k){this.map.delete(k);}clear(){this.map.clear();}}
   const storage=new Storage();storage.setItem('lx_sync_user','fixture');storage.setItem('lx_user_token','private-token');
   const audio=new Media(),queue=[{id:'a',name:'A',source:'wy'},{id:'b',name:'B',source:'wy'}];
   const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',querySelectorAll:()=>[],getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
-  const window={};window.top=window;window.window=window;
-  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}window.LXBridge.reply(value.id,true,null);if(value.op==='uiReady')ready();});}}}};
+  const window={NativeShell:{ready:false}};window.top=window;window.window=window;
+  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}const response=value.op==='session'?session:value.op==='ready'&&resume?{state:{sampledAt:1700000000000,index:0,queueRevision:0,queue:queue.slice(),paused:true,position:0,duration:0}}:true;window.LXBridge.reply(value.id,response,null);if(value.op==='uiReady')ready();});}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
@@ -23,7 +23,10 @@ function fixture({readyFailures=0}={}){
 }
 test('Foreground native recovery can distinguish an installed UI from a loading document',async()=>{
   const f=fixture();await f.settle();assert.equal(f.window.LXBridge.isReady(),false);
-  f.context.document.readyState='complete';assert.equal(f.window.LXBridge.isReady(),true);
+  f.context.document.readyState='complete';assert.equal(f.window.LXBridge.isReady(),false);
+  f.window.NativeShell.ready=true;assert.equal(f.window.LXBridge.isReady(),true);
+  const pending=fixture({resume:false});await pending.settle();pending.context.document.readyState='complete';pending.window.NativeShell.ready=true;
+  assert.equal(pending.window.LXBridge.isReady(),false);
 });
 test('Page selections transfer a complete queue; playback never starts HTML audio',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;
@@ -41,9 +44,28 @@ test('Native remote state updates UI without echoing play, pause, seek or room c
   await f.settle();assert.equal(f.audio.currentTime,34);assert.equal(f.audio.paused,false);assert.equal(f.context.currentPlayingSong.id,'remote');assert.equal(f.messages.length,0);
   f.audio.currentTime=72;await f.settle();assert.equal(f.messages.at(-1).op,'seek');assert.equal(f.messages.at(-1).time,72);
 });
-test('Login bridge sends an account token and never reads or transfers a password',async()=>{
-  const f=fixture();await f.settle();assert.equal(f.messages.find(x=>x.op==='auth').token,'private-token');assert.equal(JSON.stringify(f.messages).includes('password'),false);
-  f.storage.removeItem('lx_user_token');await f.settle();assert.equal(f.messages.filter(x=>x.op==='auth').at(-1).token,'');
+test('Legacy session migration uses the token once and a blank web store cannot sign out the native player',async()=>{
+  const f=fixture();f.storage.setItem('lx_sync_pass','old-web-password');await f.settle();
+  assert.equal(f.messages.find(x=>x.op==='auth').token,'private-token');
+  assert.equal(JSON.stringify(f.messages).includes('old-web-password'),false);
+  assert.equal(f.storage.getItem('lx_sync_pass'),null);
+  f.storage.removeItem('lx_user_token');await f.settle();
+  assert.equal(f.messages.filter(x=>x.op==='auth').length,1);assert.equal(f.messages.some(x=>x.op==='signOut'),false);
+  await f.window.LXBridge.signOut();assert.equal(f.messages.at(-1).op,'signOut');
+});
+test('Native session recovery replaces a stale WebView token before library access',async()=>{
+  const f=fixture({session:{username:'restored',token:'native-token'}});await f.settle();
+  assert.equal(f.messages.some(x=>x.op==='auth'),false);
+  assert.equal(f.storage.getItem('lx_sync_user'),'restored');
+  assert.equal(f.storage.getItem('lx_user_token'),'native-token');
+});
+test('Selecting a device song hands the queue to native playback without transferring every device file',async()=>{
+  const f=fixture();await f.settle();f.messages.length=0;
+  const tracks=['A','B','C'].map(name=>({id:name,name,source:'local',deviceKey:'device:'+name}));
+  f.context.currentPlaylist=tracks;
+  await f.window.playSong(tracks[1],1);
+  assert.equal(f.messages[0].op,'select');assert.equal(f.messages[0].queue.length,3);assert.equal(f.messages[0].index,1);
+  assert.equal(f.messages.some(m=>m.op.startsWith('import')),false);
 });
 test('Paused web history restore cannot replace the current native queue',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;

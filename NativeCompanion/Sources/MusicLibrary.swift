@@ -41,7 +41,7 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         try? data.write(to: root.appendingPathComponent("index.json"), options: .atomic)
     }
     func changed(_ id: String) {
-        if let row = records.first(where: {text($0["id"]) == id}) { onChange?(row) }
+        if let row = records.first(where: {text($0["id"]) == id}) { onChange?(webRow(row)) }
         NotificationCenter.default.post(name: .lxDownloads, object: self)
     }
     func patch(_ id: String, _ values: Object, save: Bool = true) {
@@ -70,17 +70,16 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         let url = root.appendingPathComponent("封面.jpg")
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
-    func songs() -> [Object] {
-        records.map { row in
-            var result = row, raw = row["song"] as? Object ?? [:]
-            raw["offlineId"] = row["id"]
-            // Never send web IndexedDB device keys or expired sandbox URLs back to JS.
-            raw.removeValue(forKey: "deviceKey"); raw.removeValue(forKey: "url")
-            raw["quality"] = row["quality"]
-            if bool(row["hasCover"]) { raw["img"] = "lx-local://cover/" + text(row["id"]) }
-            result["song"] = raw; return result
-        }
+    private func webRow(_ row: Object) -> Object {
+        var result = row, raw = row["song"] as? Object ?? [:]
+        raw["offlineId"] = row["id"]
+        raw.removeValue(forKey:"deviceKey"); raw.removeValue(forKey:"url")
+        raw["quality"] = row["quality"]
+        if bool(row["hasCover"]) { raw["img"] = "lx-local://cover/" + text(row["id"]) }
+        result["song"] = raw
+        return result
     }
+    func songs() -> [Object] { records.map(webRow) }
     func assets(_ id: String) throws -> Object {
         guard records.contains(where: {text($0["id"]) == id}) else { throw ClientError("没有找到这首已下载歌曲") }
         let root = try folder(id)

@@ -18,6 +18,7 @@ enum WebRecoveryTests {
             try check(c.pageRecovery.needsReload && c.pageRecovery.generation == generation, "backgroundReclaimIsRememberedWithoutLoadingTheHiddenPhoneUI")
             c.testPhoneInactive = false; c.recoverForegroundPage()
             try check(c.pageRecovery.generation > generation, "phoneActivationReloadsTheBundledPageAfterBackgroundReclaim")
+            try check(c.view.viewWithTag(214) != nil, "loadingCoverRemainsUntilTheRecoveredAppLayoutIsReady")
             try check(Player.shared.generation == audioGeneration, "pageRecoveryDoesNotReplaceTheNativePlayerOrQueue")
             waitReady(deadline:Date().addingTimeInterval(30)) {
                 guard let c = controller else { finish(ClientError("Controller disappeared")); return }

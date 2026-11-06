@@ -39,6 +39,7 @@ def package(source,components,signer,output):
         assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
         assert b'LXNativeRemoteTarget' in module,'Native play/pause/toggle transport integration missing'
+        assert b'compactLayout' in module and b'lx.queueProgress' in module, 'Phone readiness or playback checkpoint missing'
         assert b'LXOwnCarPlayDisconnected' in module and b'carPlayActionPending' in module,'Native CarPlay startup integration missing'
         assert __import__('struct').unpack_from('<I',js,8)[0]==96,'Hermes bytecode must match the retained runtime'
         assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js

@@ -68,7 +68,7 @@ final class Player {
         room.sendState(reason:"track")
         check(room.order.pendingID.isEmpty && room.needsSnapshotSync, "a failed track command releases its pending acknowledgement fence")
         check(room.outgoing.isEmpty && !room.sending, "failed control requests cannot deadlock later controls")
-        check(p.failure.isEmpty && !room.lastError.isEmpty, "a room HTTP failure does not fail a healthy audio decoder")
+        check(p.failure.isEmpty && !room.commandError.isEmpty, "a room HTTP failure does not fail a healthy audio decoder")
         room.order.pendingID = "newer"; room.order.pendingKey = "A"
         room.exchange(["type":"room:state","state":["commandId":"older"]])
         check(room.order.pendingID == "newer", "an older HTTP failure cannot cancel a newer user command")

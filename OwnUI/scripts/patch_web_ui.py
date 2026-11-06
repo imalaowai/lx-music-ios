@@ -7,6 +7,23 @@ def replace(html, old, new):
 
 
 def patch_web_ui(html):
+    html = replace(html, '    const ListStore = {', """    function ownedListKey(owner) { return LIST_KEY + ':' + owner; }
+    const ListStore = {""")
+    html = replace(html, '            return idbGet(LIST_KEY);', """            const owner = localStorage.getItem('lx_sync_user');
+            if (!window.LXBridge || !owner) return idbGet(LIST_KEY);
+            return idbGet(ownedListKey(owner)).then(async data => {
+                if (data) return data;
+                const legacy = await idbGet(LIST_KEY);
+                if (legacy?.username === owner || (legacy && !legacy.username && owner === '__device__'))
+                    return {...legacy, username:owner};
+                return null;
+            });""")
+    html = replace(html, '            return idbSet(LIST_KEY, data);', """            const owner = localStorage.getItem('lx_sync_user');
+            if (window.LXBridge && owner) return idbSet(ownedListKey(owner), {...data, username:owner});
+            return idbSet(LIST_KEY, data);""")
+    html = replace(html, '            return idbDelete(LIST_KEY);', """            const owner = localStorage.getItem('lx_sync_user');
+            if (window.LXBridge && owner) return idbDelete(ownedListKey(owner));
+            return idbDelete(LIST_KEY);""")
     html = replace(html, 'function savePlaybackState() {', 'function savePlaybackState() {\n    if (window.LXBridge) return;')
     html = replace(html, 'async function restorePlaybackState() {', 'async function restorePlaybackState() {\n    if (window.LXBridge) return;')
     html = replace(html, '    // 1. Restore cached list data (from IndexedDB) for logged in user only',
@@ -119,4 +136,26 @@ async function fetchComments() {
 }
 
 ''' + html[end:]
+    html = replace(html, 'function createCommentItemHTML(comment, isReply = false) {', """const escapeComment = value => String(value ?? '').replace(/[&<>"']/g, character =>
+    ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'})[character]);
+const commentImage = value => typeof value === 'string' && /^https?:\\/\\//i.test(value);
+
+function createCommentItemHTML(comment, isReply = false) {""")
+    html = replace(html, '    const avatar = comment.avatar || defaultAvatar;',
+                   "    const avatar = commentImage(comment.avatar) ? escapeComment(comment.avatar) : defaultAvatar;")
+    html = replace(html, '    if (comment.reply && comment.reply.length > 0) {',
+                   '    if (!isReply && Array.isArray(comment.reply) && comment.reply.length > 0) {')
+    html = replace(html, '${comment.userName}</span>', '${escapeComment(comment.userName)}</span>')
+    html = replace(html, '${comment.likedCount || 0}</span>', '${Number(comment.likedCount) || 0}</span>')
+    html = replace(html, '${comment.text}</p>', '${escapeComment(comment.text)}</p>')
+    html = replace(html, '${timeStr}${location}</span>', '${escapeComment(timeStr + location)}</span>')
+    html = replace(html, '${comment.images && comment.images.length > 0 ? `',
+                   '${Array.isArray(comment.images) && comment.images.some(commentImage) ? `')
+    html = replace(html, '${comment.images.map(img => `',
+                   '${comment.images.filter(commentImage).map(img => `')
+    html = replace(html, '<img src="${img}" \n                                 loading="lazy"',
+                   '<a href="${escapeComment(img)}" target="_blank" rel="noopener noreferrer"><img src="${escapeComment(img)}" \n                                 loading="lazy"')
+    html = replace(html, """                                 onclick="window.open('${img}', '_blank')"
+                                 onerror="this.style.display='none'">""",
+                   """                                 onerror="this.style.display='none'"></a>""")
     return html

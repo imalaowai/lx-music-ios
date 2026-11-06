@@ -98,10 +98,13 @@ enum PlaylistStartupTests {
     static func attach(_ parent:UIViewController) {
         guard let controller=parent.children.compactMap({$0 as? WebController}).first else{finish(error:"Production WebController missing");return}
         web=controller.web
+        checks["nativeCoverHidesBundledPageDuringStartup"] = controller.view.viewWithTag(214) != nil && !controller.pageRecovery.ready
+        checks["defaultServerPreservesExplicitPorts"] = WebController.defaultServer.absoluteString == "https://lx.minyue.de5.net:99" &&
+            WebController.serverURL("HTTPS://Example.com:9443/")?.absoluteString == "https://example.com:9443"
         let data=try! JSONSerialization.data(withJSONObject:PlaylistFixtureProtocol.payload)
         let json=String(data:data,encoding:.utf8)!
         let injected="""
-        localStorage.setItem('lx_sync_user','fixture');localStorage.setItem('lx_user_token','fixture-token');localStorage.setItem('songlist-source','wy');
+        localStorage.setItem('lx_sync_user','fixture');localStorage.setItem('lx_user_token','stale-web-fixture-token');localStorage.setItem('songlist-source','wy');
         const catalogueFetch=window.fetch.bind(window);
         window.fetch=function(input,options={}){
           const url=new URL(typeof input==='string'?input:input.url,location.href);
@@ -126,13 +129,31 @@ enum PlaylistStartupTests {
                     }
                 }
                 web.evaluateJavaScript("!!document.getElementById('sl-detail-list')?.textContent.includes('启动歌单测试曲')") { result,error in
-                    if result as? Bool == true {checks["playlistSongsRenderThroughRealWebKitNativeBridge"]=true;checks["browsingPlaylistDoesNotStartMediaServices"]=LXOwnMediaIsIdle();finishIfReady()}
+                    if result as? Bool == true {
+                        checks["playlistSongsRenderThroughRealWebKitNativeBridge"]=true
+                        checks["browsingPlaylistDoesNotStartMediaServices"]=LXOwnMediaIsIdle()
+                        let proof = """
+                        const detail=document.getElementById('view-player-detail');
+                        const hidden=document.getElementById('sync-form-local')?.offsetParent===null;
+                        return detail?.classList.contains('hidden') && !document.body.classList.contains('mobile-player-open') &&
+                            hidden && !document.getElementById('qiye-account') &&
+                            localStorage.getItem('lx_user_token')==='fixture-token' &&
+                            window.LXBridge.getPlayback().queue.length===500 &&
+                            document.querySelectorAll('#queue-list [data-queue-index]').length===0;
+                        """
+                        web.callAsyncJavaScript(proof,arguments:[:],in:nil,in:.page) { result in
+                            if case .success(let value)=result, value as? Bool == true {
+                                checks["compactStartupRestoresNativeSessionAndKeepsTheQueueUnrendered"]=true
+                                finishIfReady()
+                            }
+                        }
+                    }
                     if !completed {DispatchQueue.main.asyncAfter(deadline:.now()+0.15){poll()}}
                 }
             }else{DispatchQueue.main.asyncAfter(deadline:.now()+0.15){poll()}}
         }
     }
-    static func finishIfReady(){if checks.count>=9 {finish()}}
+    static func finishIfReady(){if checks.count>=12 {finish()}}
     static func finish(error:String?=nil) {
         guard !completed else{return};completed=true
         var report:Object=["checks":checks,"metrics":metrics]
