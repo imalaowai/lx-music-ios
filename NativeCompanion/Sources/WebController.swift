@@ -42,6 +42,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     var loadingBundledPage = false
     var smokeReloadRequested = false
+    private var devicePreparations: [String:(key:String, request:LocalRequest, completion:(Result<URL,Error>) -> Void)] = [:]
     var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
     var keyboardObserver: NSObjectProtocol?
     var lifecycleObservers: [NSObjectProtocol] = []
@@ -180,6 +181,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     func open(_ url: URL) {
         address = url; cancelImport()
+        for ticket in Array(devicePreparations.keys) { finishDevicePreparation(ticket, error:"页面已重新加载，请重试") }
         view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
         showRecovery("正在打开栖页音乐…", retry: false)
         guard let file = Bundle.main.url(forResource: "WebUI", withExtension: "html"), let data = try? Data(contentsOf: file) else {
@@ -416,6 +418,10 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             player.room.membership(text(value["operation"]), values: ["roomId": text(value["roomId"]), "password": text(value["password"])]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
         case "library":
             if let lists = value["lists"] as? [Object] { player.library = lists; player.libraryRevision += 1; player.persistLibrary(); NotificationCenter.default.post(name: .lxLibrary, object: player) }; done()
+        case "devicePrepared":
+            let error = text(value["error"])
+            finishDevicePreparation(text(value["ticket"]), error:error.isEmpty ? nil : error)
+            done()
         case "importLookup":
             done(player.api.importedURL(text(value["key"])).map { ["url":$0.absoluteString] } ?? [:])
         case "importBegin":
@@ -479,24 +485,28 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         DispatchQueue.main.asyncAfter(deadline:.now()+8, execute:deadline)
     }
     private func prepareDevice(_ song: Song, completion: @escaping (Result<URL, Error>) -> Void) -> Cancellable? {
-        guard phoneForeground, pageRecovery.ready else {
+        guard phoneForeground, pageRecovery.ready, let raw = script(song.raw) else {
             completion(.failure(ClientError("请打开手机 App 准备这首设备音乐"))); return nil
         }
-        let request = LocalRequest(), page = pageRecovery.generation
-        let key = text(song.raw["deviceKey"])
-        var completed = false
-        func finish(_ result: Result<URL, Error>) {
-            guard !completed, !request.isCancelled else { return }
-            completed = true; completion(result)
-        }
-        web.callAsyncJavaScript("return await window.LXBridge.prepareDevice(song);", arguments:["song":song.raw], in:nil, in:.page) { [weak self] _ in
-            guard let self = self, self.pageRecovery.generation == page, let url = self.player.api.importedURL(key) else {
-                finish(.failure(ClientError("设备音乐读取失败，请在本地音乐中重新选择文件"))); return
+        let request = LocalRequest(), ticket = UUID().uuidString
+        devicePreparations[ticket] = (text(song.raw["deviceKey"]), request, completion)
+        // Use the existing script-message channel. The Swift WebKit async
+        // overlay adds a hard dependency unavailable on older runtimes.
+        web.evaluateJavaScript("window.LXBridge?.prepareDevice(\(raw), '\(ticket)')") { [weak self] result, error in
+            if error != nil || result as? Bool != true {
+                self?.finishDevicePreparation(ticket, error:"设备音乐读取失败，请重新选择文件")
             }
-            finish(.success(url))
         }
-        DispatchQueue.main.asyncAfter(deadline:.now()+60) { finish(.failure(ClientError("设备音乐准备超时，请重试"))) }
+        DispatchQueue.main.asyncAfter(deadline:.now()+60) { [weak self] in
+            self?.finishDevicePreparation(ticket, error:"设备音乐准备超时，请重试")
+        }
         return request
+    }
+    private func finishDevicePreparation(_ ticket: String, error: String? = nil) {
+        guard let pending = devicePreparations.removeValue(forKey:ticket), !pending.request.isCancelled else { return }
+        if let error = error { pending.completion(.failure(ClientError(error))) }
+        else if let url = player.api.importedURL(pending.key) { pending.completion(.success(url)) }
+        else { pending.completion(.failure(ClientError("设备音乐读取失败，请重新选择文件"))) }
     }
     static func importDirectory() throws -> URL {
         let url = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("ImportedAudio", isDirectory: true)

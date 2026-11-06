@@ -30,7 +30,8 @@ jobs:
         run: |
           lipo build/own-ui/LXFullCarPlay.dylib -verify_arch arm64
           codesign --verify --strict build/own-ui/LXFullCarPlay.dylib
-          otool -L build/own-ui/LXFullCarPlay.dylib
+          otool -L build/own-ui/LXFullCarPlay.dylib | tee build/own-ui/native-loads.txt
+          if grep -F 'libswiftWebKit.dylib' build/own-ui/native-loads.txt; then exit 1; fi
           python3 - <<'PY'
           import json,pathlib,subprocess
           root=pathlib.Path('build/own-ui')

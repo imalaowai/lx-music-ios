@@ -184,7 +184,12 @@
   }
   window.LXBridge = {
     reply(id, value, error) {const item = pending.get(id); if (!item) return; pending.delete(id); clearTimeout(item.timer); error ? item.reject(new Error(error)) : item.resolve(value);},
-    publishLibrary, state: receiveState, room: receiveRoom, getPlayback: () => playback, getRoom: () => room, getAccountInfo: () => nativeAccount, prepareDevice,
+    publishLibrary, state: receiveState, room: receiveRoom, getPlayback: () => playback, getRoom: () => room, getAccountInfo: () => nativeAccount,
+    prepareDevice(song, ticket) {
+      prepareDevice(song).then(() => send('devicePrepared', {ticket}),
+        error => send('devicePrepared', {ticket,error:error.message || '无法读取设备文件'}));
+      return true;
+    },
     appInfo: () => infoRequest ||= post('appInfo').catch(error => {infoRequest = null; throw error;}),
     isReady: () => installed && document.readyState !== 'loading' && !!window.NativeShell?.ready && Number.isFinite(playback.sampledAt),
     server(value) {

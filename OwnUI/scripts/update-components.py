@@ -39,11 +39,14 @@ def package(source,components,signer,output):
         assert module!=z.read(prefix+'Frameworks/LXFullCarPlay.dylib'),'Expected newly rebuilt native integration'
         assert sha(js)==metadata['jsSha256'] and b'LXOwnUIRootView' in module and b'LXOwnUIBridge' in module
         assert b'LXNativeRemoteTarget' in module,'Native play/pause/toggle transport integration missing'
-        assert b'compactLayout' in module and b'lx.queueProgress' in module, 'Phone readiness or playback checkpoint missing'
+        assert b'lx.queueProgress' in module, 'Native playback checkpoint missing'
+        assert b'/usr/lib/swift/libswiftWebKit.dylib' not in module, 'WebKit Swift overlay breaks older iOS runtimes'
         assert b'LXOwnCarPlayDisconnected' in module and b'carPlayActionPending' in module,'Native CarPlay startup integration missing'
         assert __import__('struct').unpack_from('<I',js,8)[0]==96,'Hermes bytecode must match the retained runtime'
         assert b'LXOwnUI.Screen' in js and b'LXOwnUIRoot' in js
         assert metadata['clockABI']=='ios-native-seconds' and b'iOS native playback clock is unavailable' in js,'Native clock adapter missing'
+        bridge=additions.read('OwnUIResources/Bridge.js')
+        assert b'compactLayout:' in bridge and b'nativeSnapshot:' in bridge, 'Phone readiness proof missing'
         manifest=json.loads(additions.read('OwnUIResources/OwnUI.manifest.json'))
         assert manifest['phoneUI']=='own-local-ui' and manifest['entry']=='OwnUI/index.js'
         assert {'AppShell.js','AppShell.css','Bridge.js','WebUI.html','LocalEngine.js'}<=set(manifest['resources'])

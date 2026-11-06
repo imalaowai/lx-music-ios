@@ -8,7 +8,7 @@ function fixture({readyFailures=0,session={migrate:true},resume=true}={}){
   const audio=new Media(),queue=[{id:'a',name:'A',source:'wy'},{id:'b',name:'B',source:'wy'}];
   const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',querySelectorAll:()=>[],getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
   const window={NativeShell:{ready:false}};window.top=window;window.window=window;
-  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}const response=value.op==='session'?session:value.op==='ready'&&resume?{state:{sampledAt:1700000000000,index:0,queueRevision:0,queue:queue.slice(),paused:true,position:0,duration:0}}:true;window.LXBridge.reply(value.id,response,null);if(value.op==='uiReady')ready();});}}}};
+  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}const response=value.op==='session'?session:value.op==='importLookup'?{url:'file:///cached.flac'}:value.op==='ready'&&resume?{state:{sampledAt:1700000000000,index:0,queueRevision:0,queue:queue.slice(),paused:true,position:0,duration:0}}:true;window.LXBridge.reply(value.id,response,null);if(value.op==='uiReady')ready();});}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
@@ -154,4 +154,13 @@ test('Local source URL-only responses are not treated as confirmed lossless qual
   assert.match(engine,/qualityReported:!!sourceQuality/);
   assert.match(engine,/\\u97F3\\u6E90\\u8FD4\\u56DE\\u7684/);
   assert.doesNotMatch(engine,/return\\{url:A,type:w,sourceId:p\\.id\\}/);
+});
+
+
+test('Device preparation reports asynchronous completion through the existing native message handler',async()=>{
+  const f=fixture();await f.settle();f.messages.length=0;
+  assert.equal(f.window.LXBridge.prepareDevice({deviceKey:'cached'},'test-ticket'),true);
+  await new Promise(setImmediate);
+  assert.deepEqual(f.messages.map(m=>m.op),['importLookup','devicePrepared']);
+  assert.equal(f.messages[1].ticket,'test-ticket');
 });

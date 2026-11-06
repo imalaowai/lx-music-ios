@@ -150,8 +150,8 @@ enum PlaylistStartupTests {
                             window.LXBridge.getPlayback().queue.length===500 &&
                             document.querySelectorAll('#queue-list [data-queue-index]').length===0;
                         """
-                        web.callAsyncJavaScript(proof,arguments:[:],in:nil,in:.page) { result in
-                            if case .success(let value)=result, value as? Bool == true {
+                        web.evaluateJavaScript("(function(){\(proof)})()") { value, _ in
+                            if value as? Bool == true {
                                 checks["compactStartupRestoresNativeSessionAndKeepsTheQueueUnrendered"]=true
                                 finishIfReady()
                             }
