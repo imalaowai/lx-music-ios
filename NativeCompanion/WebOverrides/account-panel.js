@@ -9,6 +9,7 @@
         const safe = /^https?:\/\//i.test(src) || /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(src);
         return safe ? `<img src="${esc(src)}" alt="${esc(label)}" loading="lazy" referrerpolicy="no-referrer">` : person;
     }
+    const native = () => window.LXNative && window.LXNative.runtime !== 'browser';
     const identity = () => JSON.stringify(window.getUserAuthHeaders?.() || {});
     async function request(url, options = {}, key = identity()) {
         const response = await fetch(url, {...options, cache:'no-store', headers:{'Content-Type':'application/json',...window.getUserAuthHeaders?.(),...options.headers}});
@@ -56,12 +57,16 @@
     }
     async function open(options = {}) {
         const key = identity(), current = generation;
-        if (!window.getUserAuthHeaders?.()['x-user-token']) { window.showInfo?.('请先登录账号'); return; }
+        if (!window.getUserAuthHeaders?.()['x-user-token']) {
+            if (native()) window.NativeShell?.accountUnavailable('此设备的登录需要恢复');
+            else window.showInfo?.('请先登录账号');
+            return;
+        }
         returnFocus = document.activeElement;
         try {
-            const [p,a] = await Promise.all([request('/api/user/profile',{},key),request('/api/user/activity',{},key)]);
+            const [p,a] = await Promise.all([request('/api/user/profile',{},key),request('/api/user/activity',{},key).catch(() => null)]);
             if (key !== identity() || current !== generation) return;
-            profile = p.profile; avatar = profile.avatar || ''; activity = a.activity.records || []; page = 0;
+            profile = p.profile; avatar = profile.avatar || ''; activity = a?.activity?.records || []; page = 0;
             close();
             const modal = document.createElement('div'); modal.id = 'account-panel'; modal.className = 'apple-dialog-backdrop';
             modal.setAttribute('role','dialog'); modal.setAttribute('aria-modal','true'); modal.setAttribute('aria-labelledby','account-title');
@@ -135,12 +140,16 @@
                 finally{save.disabled=false;}
             };
             records();if(options.tab)$('account-panel').querySelector('[data-account-tab="'+options.tab+'"]')?.click();$('account-close').focus();renderHeader();
-        } catch(error) { window.showError?.(error.message === 'Unauthorized' ? '请先登录同步账号' : error.message); }
+        } catch(error) {
+            if (key !== identity()) return;
+            if (native()) window.NativeShell?.accountUnavailable(error.message);
+            else window.showError?.(error.message === 'Unauthorized' ? '请先登录同步账号' : error.message);
+        }
     }
     function logged(){return !!window.getUserAuthHeaders?.()['x-user-token'];}
     async function signOut(){
         hideMenu();
-        try{await window.handleSyncLogout?.(true);}
+        try{if(native())await window.LXBridge.signOut();else await window.handleSyncLogout?.(true);}
         catch(error){window.showError?.(error.message);}
     }
     function signIn(){
@@ -159,6 +168,7 @@
         button.classList.toggle('is-guest',!logged());button.setAttribute('aria-label',logged()?name+'，账号菜单':'登录账号');button.title=logged()?name:'登录账号';
     }
     function mountHeader(){
+        if(native())return;
         if(!$('qiye-account')){
             const wrap=document.createElement('div');wrap.id='qiye-account';
             wrap.innerHTML='<button type="button" id="qiye-account-button" aria-haspopup="menu" aria-expanded="false"></button><div id="qiye-account-menu" role="menu" hidden><p id="qiye-account-name"></p><button type="button" role="menuitem" data-account-action="avatar">更改头像与资料</button><button type="button" role="menuitem" data-account-action="password">修改密码</button><button type="button" role="menuitem" data-account-action="logout">退出登录</button></div>';
@@ -185,10 +195,10 @@
         }
     }
     function init() {
-        $('account-panel-open')?.addEventListener('click',()=>open());mountHeader();void refresh();window.addEventListener('qiye-shell-ready',mountHeader);
+        $('account-panel-open')?.addEventListener('click',()=>open());mountHeader();if(!native())void refresh();window.addEventListener('qiye-shell-ready',mountHeader);
         window.addEventListener('lx-auth-change',() => { close();hideMenu();activity=[];void refresh(); });
         window.addEventListener('focus',refresh);
     }
-    window.AccountPanel = {open,close,refresh,avatarHtml,mountHeader};
+    window.AccountPanel = {open,close,refresh,avatarHtml,mountHeader,getProfile:()=>profile};
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();

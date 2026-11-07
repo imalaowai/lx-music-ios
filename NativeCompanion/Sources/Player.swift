@@ -47,6 +47,9 @@ final class Player {
     var lastWebQueueSignature = ""
     var interruptionWanted = false
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
+    var playbackAdvancing: Bool {
+        wanted && !loading && !seeking && !endGuard.handled && audio.timeControlStatus == .playing
+    }
     var position: Double { let n = audio.currentTime().seconds; return n.isFinite ? max(0, n) : 0 }
     var duration: Double { let n = audio.currentItem?.duration.seconds ?? 0; return n.isFinite ? max(0, n) : 0 }
 
@@ -116,12 +119,13 @@ final class Player {
         try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
         try session.setActive(true)
     }
-    func select(_ songs: [Song], index target: Int, paused: Bool = false, user: Bool = true, time: Double = 0) {
+    func select(_ songs: [Song], index target: Int, paused: Bool = false, user: Bool = true, time: Double = 0, reuseQueue: Bool = false) {
         guard songs.indices.contains(target) else { return }
         if room.active, songs[target].raw["deviceKey"] != nil || text(songs[target].raw["url"]).hasPrefix("file:") {
             failure = "设备文件仅能在本机播放，请先退出房间，或使用已分享的在线/网盘音源"; publish(); return
         }
-        queue = songs; queueRevision += 1; index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; resolvedQuality = ""; resolvedQualityReported = false; generation += 1
+        if !reuseQueue { queue = songs; queueRevision += 1 }
+        index = target; wanted = !paused; resumeTime = max(0, time); loading = true; failure = ""; resolvedQuality = ""; resolvedQualityReported = false; generation += 1
         timelineRevision += 1; seeking = false
         endGuard.reset(generation, now: ProcessInfo.processInfo.systemUptime)
         finishTransition()

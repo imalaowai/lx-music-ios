@@ -16,6 +16,18 @@ struct RoomConnectionHealth {
     mutating func received(at now: Double) { lastReceived = now }
     func expired(at now: Double) -> Bool { now - lastReceived >= 20 }
 }
+// The UI process can be reclaimed while the native audio process is still alive.
+// Remember that event until the phone scene becomes active again.
+struct PageRecovery {
+    private(set) var generation = 0
+    private(set) var needsReload = false
+    private(set) var ready = false
+    private(set) var startedAt = 0.0
+    mutating func loading(at now: Double) { generation += 1; startedAt = now; ready = false; needsReload = false }
+    mutating func terminated() { needsReload = true; ready = false }
+    mutating func acknowledged() { ready = true; needsReload = false }
+    func canReload(active: Bool, at now: Double) -> Bool { active && (needsReload || (!ready && now - startedAt >= 15)) }
+}
 enum RuntimeTrace {
     private static let lock = NSLock()
     private static let io = DispatchQueue(label:"net.minyue.lx.runtime-trace",qos:.utility)
@@ -49,9 +61,68 @@ enum RuntimeTrace {
 }
 struct Song {
     var raw: Object
-    var key: String { for k in ["songmid", "mid", "id"] { if let v = raw[k], !(v is NSNull) { return String(describing: v) } }; return name + "-" + artist }
+    var key: String {
+        if let id = raw["id"], !(id is NSNull), !String(describing:id).isEmpty { return String(describing:id) }
+        for k in ["songmid", "mid"] { if let v = raw[k], !(v is NSNull), !String(describing:v).isEmpty { return text(raw["source"]) + ":" + String(describing:v) } }
+        return name + "-" + artist
+    }
     var name: String { text(raw["name"]) }
     var artist: String { text(raw["singer"]).isEmpty ? text(raw["artist"]) : text(raw["singer"]) }
+    var playbackIdentity: String { text(raw["source"]) + "|" + key }
+}
+
+enum ArtworkAddress {
+    static func normalize(_ value: String, base: URL?) -> String {
+        let value=value.trimmingCharacters(in:.whitespacesAndNewlines)
+            .replacingOccurrences(of:"{size}",with:"500")
+        guard !value.isEmpty else { return "" }
+        if value.hasPrefix("data:image/"),value.utf8.count<=12*1024*1024 { return value }
+        if value.hasPrefix("//") { return normalize("https:"+value,base:base) }
+        if value.hasPrefix("/"), !value.hasPrefix("//"), base == nil { return value }
+        guard let url=URL(string:value,relativeTo:base)?.absoluteURL,
+              ["http","https","file"].contains(url.scheme?.lowercased() ?? "") else { return "" }
+        return url.absoluteString
+    }
+    static func candidates(_ song: Song, base: URL?) -> [String] {
+        let fields = ["img", "picUrl", "pic", "cover", "artwork", "albumPic", "pic_url", "coverUrl"]
+        let metadata = song.raw["meta"] as? Object ?? [:]
+        var seen = Set<String>()
+        return [song.raw, metadata].flatMap { raw in
+            fields.compactMap { field in
+                let address = normalize(text(raw[field]), base: base)
+                return !address.isEmpty && seen.insert(address).inserted ? address : nil
+            }
+        }
+    }
+    static func embedded(_ song: Song, base: URL?) -> String {
+        candidates(song, base: base).first ?? ""
+    }
+    static func providerSong(_ song: Song) -> Object {
+        var raw=(song.raw["meta"] as? Object ?? [:]).merging(song.raw) { _, top in top }
+        var id=""
+        for field in ["songmid","songId","id"] {
+            if let value=raw[field],!(value is NSNull),!String(describing:value).isEmpty { id=String(describing:value);break }
+        }
+        let prefix=text(raw["source"])+"_"
+        if id.hasPrefix(prefix) { id=String(id.dropFirst(prefix.count)) }
+        raw["songmid"]=id
+        return raw
+    }
+}
+
+enum SongInterval {
+    // LX provider rows store interval as seconds or mm:ss / hh:mm:ss.
+    static func seconds(_ value: Any?) -> Double {
+        if let number=value as? NSNumber { let n=number.doubleValue;return n.isFinite ? max(0,n):0 }
+        let parts=text(value).split(separator:":",omittingEmptySubsequences:false)
+        guard (1...3).contains(parts.count) else { return 0 }
+        var result=0.0
+        for (index,part) in parts.enumerated() {
+            guard let n=Double(part),n.isFinite,n>=0,index==0 || n<60 else { return 0 }
+            result=result*60+n
+        }
+        return result.isFinite ? result:0
+    }
 }
 
 // Mirror the bundled WebUI QualityManager before a track is handed to the native
@@ -127,6 +198,11 @@ struct ResolvedAudio {
     let qualityReported: Bool
 }
 enum QueuePolicy {
+    static func matchingIndex(in songs: [Song], key: String?, proposed: Int) -> Int? {
+        guard let key = key else { return nil }
+        if songs.indices.contains(proposed), songs[proposed].key == key { return proposed }
+        return songs.firstIndex { $0.key == key }
+    }
     static func next(count: Int, index: Int, mode: String, previous: Bool = false, automatic: Bool = false) -> Int? {
         guard count > 0 else { return nil }
         if mode == "single", automatic { return max(0, min(index, count - 1)) }

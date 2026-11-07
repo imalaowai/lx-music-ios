@@ -1,10 +1,13 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
-function engine(){
+function engine(options={}){
  const calls=[],pending=new Map();let sequence=0,context;
  const http=(id,json)=>{const request=JSON.parse(json);calls.push(request);let body={ok:true,url:'https://audio.invalid/song.mp3'};
   if(request.url.includes('search.kuwo.cn'))body={TOTAL:'1',abslist:[{MUSICRID:'MUSIC_123',SONGNAME:'测试歌曲',ARTIST:'歌手',ALBUM:'专辑',DURATION:'180',N_MINFO:'level:standard,bitrate:128,format:mp3,size:3.2Mb',SONGID:'123'}]};
   if(request.url.includes('/playlist/list'))body={code:200,total:1,playlists:[{id:123,name:'真实 SDK 歌单',creator:{nickname:'Creator'},coverImgUrl:'https://image.invalid/cover.jpg',trackCount:10,playCount:100}]};
+  if(request.url.includes('/hotcomments/R_SO_4_'))body={code:200,hotComments:[],total:0};
   if(request.url.includes('/song/lyric'))body={code:200,lrc:{lyric:'[00:00.00]本机歌词'},tlyric:{lyric:'[00:00.00]Local lyrics'}};
+  if(request.url.includes('/get_res_privilege'))body={error_code:0,data:[{info:{image:'https://image.invalid/kg/{size}/cover.jpg'}}]};
+  if(request.url.includes('/getSongPic'))body=options.miguCoverFailure?{returnCode:'999999'}:{returnCode:'000000',largePic:'//image.invalid/mg/cover.jpg'};
   const payload=Buffer.from(JSON.stringify(body));queueMicrotask(()=>context.__nativeReply(id,JSON.stringify({statusCode:200,headers:{'content-type':'application/json'},base64:payload.toString('base64'),text:payload.toString()}),''));
  };
  context={__nativeRandom:n=>crypto.randomBytes(n).toString('base64'),__nativeHTTP:http,__nativeCancel(){},__nativeTimer:(id,delay)=>{const timer=setTimeout(()=>context.__runTimer(id),delay);timer.unref();},__nativeURL:(value,base)=>{const u=new URL(value,base||undefined);return JSON.stringify({origin:u.origin,protocol:u.protocol,host:u.host,hostname:u.hostname,port:u.port,pathname:u.pathname,search:u.search,hash:u.hash});},__nativeComplete:(id,json,error)=>{const item=pending.get(id);if(!item)return;pending.delete(id);clearTimeout(item.timer);error?item.reject(new Error(error)):item.resolve(JSON.parse(json));},console};
@@ -42,9 +45,37 @@ test('Provider lyric requests return their resolved content for display and offl
  assert.ok(e.calls.some(call=>call.url.includes('/song/lyric')));
 });
 
+test('Provider cover lookup resolves Kugou image URL and its size template',async()=>{
+ const e=engine(),result=await e.run('api',{path:'/api/music/pic?source=kg',body:{songInfo:{source:'kg',songmid:'123',hash:'0123456789abcdef0123456789abcdef',albumId:'456'}}});
+ assert.equal(result.url,'https://image.invalid/kg/1000/cover.jpg');assert.ok(e.calls.some(call=>call.url.includes('/get_res_privilege')));
+});
+test('Provider cover lookup unwraps the asynchronous Migu HTTP request into image content',async()=>{
+ const e=engine(),result=await e.run('api',{path:'/api/music/pic?source=mg',body:{songInfo:{source:'mg',songmid:'456',copyrightId:'mg-456'}}});
+ assert.equal(result.url,'http://image.invalid/mg/cover.jpg');assert.ok(e.calls.some(call=>call.url.includes('/getSongPic')));
+});
+test('Migu cover failure stops after three requests instead of recursively restarting its retry count',async()=>{
+ const e=engine({miguCoverFailure:true});await assert.rejects(e.run('api',{path:'/api/music/pic?source=mg',body:{songInfo:{source:'mg',songmid:'456',copyrightId:'mg-456'}}}),/Provider artwork request failed/);
+ assert.equal(e.calls.filter(call=>call.url.includes('/getSongPic')).length,3);
+});
+
 test('The iOS 15 bundle contains no unsupported lookbehind expression',()=>{const source=fs.readFileSync(path.join(__dirname,'../generated/LocalEngine.js'),'utf8');assert.ok(!source.includes('(?<=')&&!source.includes('(?<!'));});
 
 test('Home and catalogue requests do not cancel each other in the provider SDK',async()=>{
  const e=engine();const results=await Promise.all([e.run('api',{path:'/api/music/songList/list?source=wy&sortId=new&page=1'}),e.run('api',{path:'/api/music/songList/list?source=wy&sortId=hot&page=1'})]);
  assert.equal(results[0].list[0].name,'真实 SDK 歌单');assert.equal(results[1].list[0].id,'123');assert.equal(e.calls.length,2);
+});
+
+test('NetEase comments use a provider ID stripped of the LX playlist prefix',async()=>{
+ const e=engine();
+ const result=await e.run('api',{path:'/api/music/comment',body:{songInfo:{id:'wy_123',meta:{source:'wy',songId:'wy_123'}},type:'hot'}});
+ assert.deepEqual(result.comments,[]);
+ assert.ok(e.calls.some(call=>call.url.includes('/hotcomments/R_SO_4_123')));
+ assert.ok(e.calls.every(call=>!call.url.includes('/hotcomments/R_SO_4_wy_')));
+});
+
+test('Device tracks and missing provider IDs return actionable comment errors without making a request',async()=>{
+ const e=engine();
+ const local=await e.run('api',{path:'/api/music/comment',body:{songInfo:{source:'local',id:'123'}}});
+ const missing=await e.run('api',{path:'/api/music/comment',body:{songInfo:{source:'wy'}}});
+ assert.equal(local.code,'unsupported');assert.equal(missing.code,'missing-id');assert.equal(e.calls.length,0);
 });

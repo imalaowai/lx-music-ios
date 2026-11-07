@@ -12,19 +12,14 @@ static atomic_bool LXOutputHeld = false;
 static __weak id LXTrackInstance, LXFlacInstance;
 static IMP LXTrackPlay, LXTrackPause, LXFlacResume, LXFlacPause, LXMetadataPlay;
 static IMP LXTrackEmit;
-extern void LXOwnDeliverRemoteCommand(NSString *command,NSNumber *position,NSTimeInterval eventAt);
 static void LXTrackEmitted(id self,SEL selector,NSString *name,id body) {
     if([name hasPrefix:@"remote-"]) {
         NSMutableDictionary *event=[body isKindOfClass:NSDictionary.class]?[body mutableCopy]:[NSMutableDictionary dictionary];
         // Stamp at the native event source. Stamping after JS wakes would turn
         // a pre-disconnect queued remote command into a seemingly new action.
         event[@"nativeEventAt"]=@(NSProcessInfo.processInfo.systemUptime);body=event;
-        // Next/previous are handled by LXNowPlayingCoordinator's direct native targets.
-        // TrackPlayer has only one decoder item, so forwarding its skip events too would
-        // create a second, competing route into Swift's authoritative song queue.
-        NSDictionary *commands=@{@"remote-play":@"play",@"remote-pause":@"pause",@"remote-stop":@"pause",@"remote-seek":@"seek"};
-        NSString *command=commands[name];
-        if(command)LXOwnDeliverRemoteCommand(command,event[@"position"],[event[@"nativeEventAt"] doubleValue]);
+        // All transport is owned directly by LXNowPlayingCoordinator. Retain SDK
+        // event delivery for diagnostics, never create a duplicate control path.
     }
     ((void (*)(id,SEL,id,id))LXTrackEmit)(self,selector,name,body);
 }

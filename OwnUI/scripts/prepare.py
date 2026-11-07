@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Materialize the exact owned UI and local source engine for the integrated IPA."""
 import hashlib,json,lzma,pathlib,re,shutil
+from patch_web_ui import patch_web_ui
 root=pathlib.Path(__file__).resolve().parents[2]
 old=root/'NativeCompanion'
 out=root/'build/own-ui/resources';out.mkdir(parents=True,exist_ok=True)
@@ -13,6 +14,22 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
         replacement=b'let sourceQuality=typeof E==="object"&&E!==null?(typeof E.type==="string"?E.type:typeof E.quality==="string"?E.quality:""):"";let qualityOrder=["master","atmos_plus","atmos","hires","flac24bit","flac","320k","192k","128k"];let requestedRank=qualityOrder.indexOf(w),actualRank=qualityOrder.indexOf(sourceQuality),urlPath=new URL(A).pathname.toLowerCase();if((sourceQuality&&requestedRank>=0&&actualRank>requestedRank)||((w==="flac"||w==="flac24bit")&&/\\.(mp3|m4a|aac|ogg|opus)$/.test(urlPath)))throw new Error("\\u97F3\\u6E90\\u8FD4\\u56DE\\u7684\\u5B9E\\u9645\\u683C\\u5F0F\\u6216\\u97F3\\u8D28\\u4F4E\\u4E8E\\u8BF7\\u6C42\\u6863\\u4F4D");return{url:A,type:sourceQuality||w,qualityReported:!!sourceQuality,sourceId:p.id}'
         assert data.count(marker)==1,'Local source quality return anchor changed; review resolver before rebuilding'
         data=data.replace(marker,replacement)
+        marker=b'var Bx=e=>e?.promise||e;'
+        replacement=b'var Bx=async e=>{for(let i=0;i<8;i++){e=await e;if(e&&typeof e.promise?.then==="function"){e=e.promise;continue}return e}throw new Error("Provider response nesting is too deep")};'
+        assert data.count(marker)==1,'Provider response unwrap anchor changed; review cover/lyric resolver'
+        data=data.replace(marker,replacement)
+        marker=b'return r.promise.then(({body:a})=>{if(a.returnCode!=="000000")'
+        replacement=b'return r.promise=r.promise.then(({body:a})=>{if(a.returnCode!=="000000")'
+        assert data.count(marker)==1,'Migu cover response mapping anchor changed'
+        data=data.replace(marker,replacement)
+        marker=rb'if(t>5)return Promise.reject(new Error("\u56FE\u7247\u83B7\u53D6\u5931\u8D25"));let u=this.getPic(e,++t);return r.cancelHttp=u.cancelHttp.bind(u),u.promise'
+        replacement=b'if(t>=2)throw new Error("Provider artwork request failed");return this.getPicUrl(e,t+1).then(u=>u.promise||u)'
+        assert data.count(marker)==1,'Migu cover retry anchor changed'
+        data=data.replace(marker,replacement)
+        marker=b'case"/api/music/comment":return kx(i.songInfo).comment[i.type==="hot"?"getHotComment":"getComment"](i.songInfo,i.page||1,i.limit||20);'
+        assert data.count(marker)==1,'Provider comment route anchor changed'
+        helper=(old/'Engine/src/comment.cjs').read_bytes().split(b'if (typeof module',1)[0]
+        data=helper+b'\n'+data.replace(marker,b'case"/api/music/comment":return routeComment(i,kx);')
     if name=='WebUI':
         html=data.decode()
         for override in sorted((old/'WebOverrides').glob('*.js')):
@@ -25,7 +42,7 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
                 count=1
             assert count==1,'Missing bundled script: '+override.name
         html=html.replace('<title>LX Music', '<title>栖页音乐')
-        data=html.encode()
+        data=patch_web_ui(html).encode()
     (out/f'{name}.{extension}').write_bytes(data)
 for name in ['Bridge.js','AppShell.js','AppShell.css','ThirdPartyNotices.txt']:
     shutil.copy2(old/'Resources'/name,out/name)

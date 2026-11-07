@@ -23,10 +23,10 @@ test('idle preference restoration and clearing do not initialize media services'
  assert.equal(f.calls.length,0);
  await f.load(2);assert.equal(f.calls.filter(x=>x[0]==='setupPlayer').length,1);
 });
-test('Swift owns track skipping; TrackPlayer does not register competing next/previous handlers',async()=>{
+test('native transport owns play, pause, toggle, seek and skips without competing SDK handlers',async()=>{
  const f=fixture();await f.load(1);
  const options=f.calls.find(x=>x[0]==='updateOptions')[1];
- assert.deepEqual(options.capabilities,[Capability.Play,Capability.Pause,Capability.Stop,Capability.SeekTo]);
+ assert.deepEqual(options.capabilities,[]);
 });
 test('changing tracks does not reset the lock-screen session',async()=>{
  const f=fixture();await f.load(1);await f.load(2);
@@ -92,4 +92,42 @@ test('a queued play superseded by a newer pause cannot transiently restart sound
  const f=fixture();await f.load(1,{paused:true});let release;const seek=f.player.seekTo;f.player.seekTo=async p=>{await seek(p);await new Promise(r=>release=r);};
  const seeking=f.driver.run({operation:'seek',generation:1,args:{position:20}});await settle();
  const play=f.driver.run({operation:'play',generation:1}),pause=f.driver.run({operation:'pause',generation:1});release();await Promise.all([seeking,play,pause]);assert.equal(f.calls.filter(c=>c[0]==='play').length,0);
+});
+
+test('A decoder sample that straddles a seek cannot restore the old position',async()=>{
+ const f=fixture();await f.load(1);await settle();f.reports.length=0;
+ let release;
+ f.player.getPosition=()=>new Promise(resolve=>{release=resolve;});
+ const old=f.driver.sample();
+ f.player.getPosition=async()=>f.state.position;
+ await f.driver.run({operation:'seek',generation:1,args:{position:60}});
+ release(12);await old;await settle();
+ assert.equal(f.reports.some(value=>value.position===12),false);
+ assert.equal(f.reports.at(-1).position,60);
+});
+
+test('A buffering transition during an in-flight probe triggers a fresh paused clock sample',async()=>{
+ const f=fixture();await f.load(1);await settle();f.reports.length=0;
+ let release;
+ f.player.getPosition=()=>new Promise(resolve=>{release=resolve;});
+ const old=f.driver.sample();
+ f.player.getPosition=async()=>f.state.position;
+ f.state.state=State.Buffering;
+ f.driver.nativeEvent('track-player',{state:State.Buffering});
+ release(10);await old;await settle();
+ assert.deepEqual(f.reports.map(({playing,loading})=>[playing,loading]),[[false,true]]);
+});
+
+test('An end event survives a pending probe and a decoder state transition',async()=>{
+ const f=fixture();await f.load(1);await settle();f.reports.length=0;
+ let release;
+ f.player.getPosition=()=>new Promise(resolve=>{release=resolve;});
+ const old=f.driver.sample();
+ f.player.getPosition=async()=>f.state.position;
+ f.state.position=180;
+ f.driver.nativeEvent('track-player',{type:'ended'});
+ f.state.state=State.Paused;
+ f.driver.nativeEvent('track-player',{state:State.Paused});
+ release(179);await old;await settle();
+ assert.equal(f.reports.filter(value=>value.ended).length,1);
 });

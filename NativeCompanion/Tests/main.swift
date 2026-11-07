@@ -1,11 +1,37 @@
 import Foundation
 
 func check(_ condition: @autoclosure () -> Bool, _ message: String) { if !condition() { fatalError(message) } }
+check(Song(raw:["id":"kg_47_hashA","songmid":47,"source":"kg"]).key == "kg_47_hashA", "canonical song identity wins over a raw provider ID")
+check(Song(raw:["songmid":47,"source":"wy"]).key != Song(raw:["songmid":47,"source":"tx"]).key, "bare numeric IDs remain provider scoped")
+check(ArtworkAddress.embedded(Song(raw:["img":"","picUrl":"//image.invalid/cover.jpg"]),base:nil)=="https://image.invalid/cover.jpg","missing img falls back to picUrl and protocol-relative CDN")
+let mixedArtwork=Song(raw:["img":"https://image.invalid/first.jpg","meta":["img":"https://image.invalid/first.jpg","pic":"//image.invalid/album.jpg"]])
+check(ArtworkAddress.candidates(mixedArtwork,base:nil)==["https://image.invalid/first.jpg","https://image.invalid/album.jpg"],"native metadata retains the Web UI's nested pic and deduplicates fallback URLs")
+check(ArtworkAddress.embedded(Song(raw:["pic":"https://image.invalid/legacy.jpg"]),base:nil)=="https://image.invalid/legacy.jpg","native metadata reads older playlist pic fields")
+check(ArtworkAddress.normalize("https://image.invalid/{size}/cover.jpg",base:nil)=="https://image.invalid/500/cover.jpg","provider cover size templates resolve before fetching")
+check(ArtworkAddress.normalize("/covers/a.jpg",base:URL(string:"https://music.invalid/"))=="https://music.invalid/covers/a.jpg","relative covers resolve against the configured server")
+check(ArtworkAddress.normalize("lx-local://cover/file",base:nil).isEmpty && ArtworkAddress.normalize("javascript:alert(1)",base:nil).isEmpty,"WebKit-only cover schemes never reach native image loading")
+check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","id":"wy_123"]))["songmid"])=="123","synced provider IDs normalize for native cover lookup")
+check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","songmid":123]))["songmid"])=="123","numeric provider IDs survive native cover lookup")
+check(SongInterval.seconds("03:20")==200 && SongInterval.seconds("1:03:20")==3800,"provider interval supplies seekable seconds before decoder metadata arrives")
+check(SongInterval.seconds(180.5)==180.5 && SongInterval.seconds("180.5")==180.5,"interval preserves native fractional seconds")
+check(SongInterval.seconds("03:99")==0 && SongInterval.seconds("nan")==0 && SongInterval.seconds(-1)==0,"invalid provider duration cannot reach system metadata")
+var pageRecovery = PageRecovery()
+pageRecovery.loading(at:10); let pageGeneration = pageRecovery.generation
+pageRecovery.acknowledged(); pageRecovery.terminated()
+check(!pageRecovery.canReload(active:false,at:100), "a background content process loss waits for the phone scene")
+check(pageRecovery.needsReload && pageRecovery.canReload(active:true,at:100), "foreground recovery remembers the background termination")
+pageRecovery.loading(at:100)
+check(pageRecovery.generation != pageGeneration && !pageRecovery.canReload(active:true,at:110), "a reload invalidates old callbacks without starting a reload loop")
+check(pageRecovery.canReload(active:true,at:115), "an unacknowledged page has a finite readiness deadline")
+pageRecovery.acknowledged(); check(!pageRecovery.canReload(active:true,at:1000), "a healthy page is retained")
 check(QueuePolicy.next(count: 3, index: 2, mode: "list") == 0, "list wraps")
 check(QueuePolicy.next(count: 3, index: 2, mode: "order") == nil, "order stops")
 check(QueuePolicy.next(count: 3, index: 0, mode: "list", previous: true) == 2, "previous wraps")
 check(QueuePolicy.next(count: 3, index: 1, mode: "single", automatic: true) == 1, "single repeats on EOF")
 check(QueuePolicy.next(count: 0, index: -1, mode: "list") == nil, "empty queue does not play")
+let repeatedQueue = ["A","B","A","C"].map { Song(raw:["id":$0]) }
+check(QueuePolicy.matchingIndex(in:repeatedQueue,key:"A",proposed:2) == 2, "a Web queue edit preserves the second occurrence of the active song")
+check(QueuePolicy.matchingIndex(in:repeatedQueue,key:"A",proposed:99) == 0, "an invalid Web queue position falls back to a matching entry")
 let losslessSong:Object = ["source":"tx","meta":["_qualitys":["128k":["size":1],"320k":["size":1],"flac":["size":1]]]]
 check(QualityPolicy.best(for: losslessSong, preference: "flac", allowFallback: true) == "flac", "prefer advertised lossless quality")
 let compressedSong:Object = ["source":"kw","meta":["_qualitys":["128k":["size":1],"320k":["size":1]]]]

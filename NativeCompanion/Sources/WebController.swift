@@ -2,14 +2,56 @@ import UIKit
 import WebKit
 import UniformTypeIdentifiers
 
+private final class WeakScriptHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: WKScriptMessageHandler?
+    init(_ owner: WKScriptMessageHandler) { self.owner = owner }
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) { owner?.userContentController(controller, didReceive: message) }
+}
+
 final class WebController: UIViewController, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate, UIDocumentPickerDelegate {
     let player = Player.shared
     var web: WKWebView!
     var address: URL?
+    var loginTask: URLSessionDataTask?
+    var serverGeneration = 0
+    static let defaultServer = URL(string: "https://lx.minyue.de5.net:99")!
+    static let serverKey = "lx.server"
+    static let migratedSessionKey = "lx.webSessionMigrated"
+    private var guestOrigin: URL {
+        let defaults = UserDefaults.standard
+        if let saved = defaults.string(forKey:"lx.guestOrigin"), let origin = URL(string:saved) { return origin }
+        let legacy = !defaults.bool(forKey:Self.migratedSessionKey) ? defaults.string(forKey:Self.serverKey) : nil
+        let origin = legacy.flatMap(URL.init(string:)) ?? Self.deviceOrigin
+        defaults.set(origin.absoluteString, forKey:"lx.guestOrigin")
+        return origin
+    }
+    var server: URL {
+        Self.serverURL(UserDefaults.standard.string(forKey: Self.serverKey)) ?? player.api.base ?? Self.defaultServer
+    }
+    static func serverURL(_ value: String?) -> URL? {
+        guard let value = value, var parts = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = parts.host?.lowercased(), !host.isEmpty, parts.user == nil, parts.password == nil,
+              parts.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
+        parts.scheme = scheme; parts.host = host; parts.path = ""; parts.query = nil; parts.fragment = nil
+        if parts.port == (scheme == "https" ? 443 : 80) { parts.port = nil }
+        return parts.url
+    }
+    var accountInfo: Object {
+        ["server":server.absoluteString, "username":player.api.credentials?.username ?? "", "hasAccount":player.api.credentials != nil]
+    }
     var loadingBundledPage = false
     var smokeReloadRequested = false
+    private var devicePreparations: [String:(key:String, request:LocalRequest, completion:(Result<URL,Error>) -> Void)] = [:]
     var importing: (ticket: String, key: String, url: URL, handle: FileHandle, bytes: Int)?
     var keyboardObserver: NSObjectProtocol?
+    var lifecycleObservers: [NSObjectProtocol] = []
+    var recoveryTimer: Timer?
+    var pageRecovery = PageRecovery()
+    var pageProbeInFlight = false
+    #if LX_OWN_UI_TESTING
+    var testPhoneInactive = false
+    #endif
     var lastSong = ""
     var pickerPurpose = ""
     static let deviceOrigin = URL(string: "https://lx-device.invalid/")!
@@ -20,9 +62,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
-        config.userContentController.add(self, name: "lxNative")
+        config.userContentController.add(WeakScriptHandler(self), name: "lxNative")
         config.setURLSchemeHandler(MusicLibrary.shared, forURLScheme: "lx-local")
-        let bootstrap: Object = ["server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil]
+        let bootstrap = accountInfo
         if let value = script(bootstrap) { config.userContentController.addUserScript(WKUserScript(source: "window.__LX_NATIVE_BOOTSTRAP__=" + value + ";", injectionTime: .atDocumentStart, forMainFrameOnly: true)) }
         if let path = Bundle.main.url(forResource: "Bridge", withExtension: "js"), let script = try? String(contentsOf: path) {
             config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -38,10 +80,15 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(web)
         NSLayoutConstraint.activate([web.leadingAnchor.constraint(equalTo: view.leadingAnchor), web.trailingAnchor.constraint(equalTo: view.trailingAnchor), web.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), web.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)])
+        showRecovery("正在打开栖页音乐…", retry: false)
         keyboardObserver = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
             guard let self = self, let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
             let local = self.view.convert(frame, from: nil)
             self.emit("keyboard", ["visible": local.minY < self.view.bounds.maxY - 80, "duration": number(note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey], 0.25)])
+        }
+        player.api.prepareDevice = { [weak self] song, completion in
+            guard let self = self else { completion(.failure(ClientError("请在手机上准备设备音乐"))); return nil }
+            return self.prepareDevice(song, completion:completion)
         }
         player.onState = { [weak self] value in self?.emit("state", value) }
         player.onRoom = { [weak self] value in self?.emit("room", value) }
@@ -49,6 +96,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         player.onChat = { [weak self] type, value in self?.emitChat(type, value) }
         MusicLibrary.shared.onChange = { [weak self] value in self?.emit("download", value) }
         MusicLibrary.shared.restoreTasks()
+        for name in [UIApplication.didBecomeActiveNotification, UIScene.didActivateNotification] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(forName:name, object:nil, queue:.main) { [weak self] _ in self?.recoverForegroundPage() })
+        }
+        let timer = Timer(timeInterval:5, repeats:true) { [weak self] _ in self?.recoverForegroundPage() }
+        recoveryTimer = timer; RunLoop.main.add(timer, forMode:.common)
         let rules: [Object] = ["listen_room", "queue_audio", "pwa_update", "ios-background-audio", "ios_audio_output", "room_start"].map { name in
             ["trigger": ["url-filter": ".*/js/" + name + "[.]js.*", "resource-type": ["script"]], "action": ["type": "block"]]
         }
@@ -69,13 +121,14 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("-LXUISmoke") { self.open(URL(string: "https://lx-ui-check.invalid/")!); return }
                 #endif
-                if let saved = UserDefaults.standard.string(forKey: "lx.server"), let url = URL(string: saved) { self.open(url) }
-                else { self.open(Self.deviceOrigin) }
+                let guest = self.guestOrigin
+                self.open(self.player.api.base ?? guest)
             }
         }
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated); emit("state", player.snapshot()); emit("room", player.room.snapshot())
+        recoverForegroundPage()
         #if DEBUG
         // Native regressions do not depend on a third WebKit process becoming ready.
         // The separate UI launch above already verifies the real bundled page/reload.
@@ -94,23 +147,92 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     @objc func editAddress() {
         guard presentedViewController == nil else { return }
-        let dialog = UIAlertController(title: "连接同步服务器", message: "用于账号同步、一起听和网盘。公网地址请使用 HTTPS；局域网可使用 HTTP。本地功能无需连接。", preferredStyle: .alert)
-        dialog.addTextField { field in field.placeholder = "https://你的域名:端口/"; field.text = UserDefaults.standard.string(forKey: "lx.server"); field.keyboardType = .URL; field.autocapitalizationType = .none; field.autocorrectionType = .no }
+        let dialog = UIAlertController(title: "同步服务器", message: "用于账号同步、一起听和网盘。填写服务器域名及端口。", preferredStyle: .alert)
+        dialog.addTextField { field in
+            field.placeholder = Self.defaultServer.absoluteString
+            field.text = self.server.absoluteString
+            field.keyboardType = .URL; field.autocapitalizationType = .none; field.autocorrectionType = .no
+        }
         dialog.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if UserDefaults.standard.string(forKey: "lx.server") != nil { dialog.addAction(UIAlertAction(title: "断开服务器", style: .destructive) { [weak self] _ in UserDefaults.standard.removeObject(forKey: "lx.server"); self?.player.configure(nil); self?.open(Self.deviceOrigin) }) }
-        dialog.addAction(UIAlertAction(title: "连接", style: .default) { [weak self, weak dialog] _ in
-            guard let self = self, let url = URL(string: dialog?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil, url.user == nil, url.password == nil else { self?.alert("地址无效，请填写 http:// 或 https:// 开头的网址"); return }
-            if self.address?.absoluteString != url.absoluteString { self.player.configure(nil); self.cancelImport() }
-            UserDefaults.standard.set(url.absoluteString, forKey: "lx.server"); self.open(url)
+        if server != Self.defaultServer {
+            dialog.addAction(UIAlertAction(title: "恢复默认", style: .default) { [weak self] _ in self?.changeServer(Self.defaultServer) })
+        }
+        dialog.addAction(UIAlertAction(title: "保存", style: .default) { [weak self, weak dialog] _ in
+            guard let self = self else { return }
+            guard let url = Self.serverURL(dialog?.textFields?.first?.text) else {
+                DispatchQueue.main.async { self.alert("请输入有效的 HTTP 或 HTTPS 服务器地址") }; return
+            }
+            self.changeServer(url)
         })
         present(dialog, animated: true)
     }
+    func changeServer(_ url: URL) {
+        guard server != url else { return }
+        serverGeneration += 1; loginTask?.cancel(); loginTask = nil
+        let wasSignedIn = player.api.credentials != nil
+        UserDefaults.standard.set(url.absoluteString, forKey: Self.serverKey)
+        UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
+        if wasSignedIn {
+            player.configure(nil)
+            open(guestOrigin)
+        } else {
+            emit("server", accountInfo)
+        }
+    }
     func open(_ url: URL) {
-        address = url; view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
-        guard let file = Bundle.main.url(forResource: "WebUI", withExtension: "html"), let data = try? Data(contentsOf: file) else { alert("内置界面缺失，请重新安装完整安装包。"); return }
+        address = url; cancelImport()
+        for ticket in Array(devicePreparations.keys) { finishDevicePreparation(ticket, error:"页面已重新加载，请重试") }
+        view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
+        showRecovery("正在打开栖页音乐…", retry: false)
+        guard let file = Bundle.main.url(forResource: "WebUI", withExtension: "html"), let data = try? Data(contentsOf: file) else {
+            showRecovery("内置界面缺失，请重新安装完整安装包。"); return
+        }
         let response = URLResponse(url: url, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8")
+        pageRecovery.loading(at:ProcessInfo.processInfo.systemUptime); pageProbeInFlight = false
+        RuntimeTrace.record("ui.loading", ["generation":pageRecovery.generation])
         loadingBundledPage = true
         web.loadSimulatedRequest(URLRequest(url: url), response: response, responseData: data)
+    }
+    var phoneForeground: Bool {
+        #if LX_OWN_UI_TESTING
+        if testPhoneInactive { return false }
+        #endif
+        return isViewLoaded && view.window?.windowScene?.activationState == .foregroundActive
+    }
+    func recoverForegroundPage() {
+        guard phoneForeground, let address = address else { return }
+        if pageRecovery.canReload(active:true, at:ProcessInfo.processInfo.systemUptime) {
+            open(address); return
+        }
+        guard pageRecovery.ready, !pageProbeInFlight else { return }
+        pageProbeInFlight = true
+        let generation = pageRecovery.generation
+        web.evaluateJavaScript("window.LXBridge?.isReady?.() === true") { [weak self] value, error in
+            guard let self = self, self.pageRecovery.generation == generation, self.pageProbeInFlight else { return }
+            self.pageProbeInFlight = false
+            if error != nil || value as? Bool != true {
+                self.pageRecovery.terminated(); self.recoverForegroundPage()
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline:.now()+3) { [weak self] in
+            guard let self = self, self.pageRecovery.generation == generation, self.pageProbeInFlight else { return }
+            self.pageProbeInFlight = false; self.pageRecovery.terminated(); self.recoverForegroundPage()
+        }
+    }
+    func showRecovery(_ message: String, retry: Bool = true) {
+        view.viewWithTag(214)?.removeFromSuperview()
+        let panel = UIView(); panel.tag = 214; panel.backgroundColor = .systemBackground; panel.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel(); label.text = message; label.numberOfLines = 0; label.textAlignment = .center
+        let button = UIButton(type:.system); button.setTitle("重新加载", for:.normal); button.addTarget(self, action:#selector(retryPage), for:.touchUpInside)
+        let stack = UIStackView(arrangedSubviews:retry ? [label, button] : [label]); stack.axis = .vertical; stack.spacing = 20; stack.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(stack); view.addSubview(panel)
+        NSLayoutConstraint.activate([panel.leadingAnchor.constraint(equalTo:view.leadingAnchor),panel.trailingAnchor.constraint(equalTo:view.trailingAnchor),panel.topAnchor.constraint(equalTo:view.safeAreaLayoutGuide.topAnchor),panel.bottomAnchor.constraint(equalTo:view.bottomAnchor),stack.centerYAnchor.constraint(equalTo:panel.centerYAnchor),stack.leadingAnchor.constraint(equalTo:panel.leadingAnchor,constant:28),stack.trailingAnchor.constraint(equalTo:panel.trailingAnchor,constant:-28)])
+    }
+    @objc func retryPage() { if let address = address { open(address) } }
+    deinit {
+        if let observer = keyboardObserver { NotificationCenter.default.removeObserver(observer) }
+        for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
+        recoveryTimer?.invalidate(); cancelImport()
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { nil }
     func scrollViewDidScroll(_ scrollView: UIScrollView) { if scrollView === web.scrollView, abs(scrollView.contentOffset.y) > 0.5 || abs(scrollView.contentOffset.x) > 0.5 { scrollView.setContentOffset(.zero, animated: false) } }
@@ -122,11 +244,59 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, allowed(message.frameInfo.securityOrigin), let value = message.body as? Object, let id = value["id"] as? NSNumber else { return }
         let op = text(value["op"])
-        func done(_ result: Any = true, _ error: String? = nil) { self.reply(id.intValue, result, error) }
+        let pageGeneration = pageRecovery.generation
+        func done(_ result: Any = true, _ error: String? = nil) {
+            guard self.pageRecovery.generation == pageGeneration else { return }
+            self.reply(id.intValue, result, error)
+        }
         switch op {
         case "editServer": done(); editAddress()
         case "appInfo":
-            done(["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", "server": UserDefaults.standard.string(forKey: "lx.server") ?? "", "username": player.api.credentials?.username ?? "", "hasAccount": player.api.credentials != nil, "bundledUI": true, "localPlayback": true, "carplay": CarScene.diagnostic, "legacySourceFallback": !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")])
+            var info = accountInfo
+            info["version"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+            info["bundledUI"] = true; info["localPlayback"] = true
+            info["legacySourceFallback"] = !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")
+            done(info)
+        case "session":
+            if let account = player.api.credentials, Self.serverURL(address?.absoluteString) == Self.serverURL(account.server) {
+                done(["username":account.username, "token":account.token, "info":accountInfo])
+            } else {
+                done(["info":accountInfo, "migrate":player.api.credentials == nil && !UserDefaults.standard.bool(forKey: Self.migratedSessionKey)])
+            }
+        case "signIn":
+            let username = text(value["username"]).trimmingCharacters(in: .whitespacesAndNewlines), password = text(value["password"])
+            guard !username.isEmpty, !password.isEmpty else { done(false, "请输入账号和密码"); return }
+            guard loginTask == nil else { done(false, "正在登录"); return }
+            let endpoint = server, attempt = serverGeneration
+            var deviceID = text(value["deviceId"])
+            if deviceID.isEmpty { deviceID = UserDefaults.standard.string(forKey: "lx.loginDeviceId") ?? UUID().uuidString }
+            UserDefaults.standard.set(deviceID, forKey: "lx.loginDeviceId")
+            let payload = ["username":username, "password":password, "deviceId":deviceID, "deviceName":"栖页音乐 · " + UIDevice.current.model]
+            loginTask = player.api.requestServer(endpoint, path: "/api/user/login", body: payload, timeout: 10) { [weak self] result in
+                guard let self = self, self.serverGeneration == attempt else { return }
+                self.loginTask = nil
+                guard self.pageRecovery.generation == pageGeneration else { return }
+                do {
+                    let session = try result.get()
+                    let token = text(session["token"])
+                    guard !token.isEmpty else { throw ClientError("登录服务没有返回会话") }
+                    UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
+                    self.player.configure(Credentials(server: endpoint.absoluteString, username: username, token: token))
+                    done(true)
+                    DispatchQueue.main.async { self.open(endpoint) }
+                } catch {
+                    let message = error.localizedDescription
+                    done(false, message == "Invalid credentials" ? "账号或密码不正确" : message)
+                }
+            }
+        case "returnToGuest":
+            done()
+            if player.api.credentials == nil, address != guestOrigin { DispatchQueue.main.async { self.open(self.guestOrigin) } }
+        case "signOut":
+            UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
+            if player.api.credentials != nil { player.api.request("/api/user/logout", method: "POST", body: [:], timeout: 4) { _ in } }
+            player.configure(nil); done()
+            DispatchQueue.main.async { self.open(self.guestOrigin) }
         case "carplayStatus": done(CarScene.diagnostic)
         case "shareCarPlayDiagnostic":
             let data = try? JSONSerialization.data(withJSONObject: ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "", "iOS": UIDevice.current.systemVersion, "carplay": CarScene.diagnostic], options: [.prettyPrinted, .sortedKeys])
@@ -135,8 +305,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             do { try data.write(to: file, options: .atomic); let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil); sheet.popoverPresentationController?.sourceView = view; sheet.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 100, width: 1, height: 1); present(sheet, animated: true); done() } catch { done(false, error.localizedDescription) }
         case "uiReady":
             #if LX_OWN_UI
-            done(OwnIntegration.uiReady(value))
+            let ready = OwnIntegration.uiReady(value)
+            if ready { pageRecovery.acknowledged(); view.viewWithTag(214)?.removeFromSuperview() }
+            done(ready)
             #else
+            pageRecovery.acknowledged(); view.viewWithTag(214)?.removeFromSuperview()
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-LXUISmoke"), !smokeReloadRequested {
                 smokeReloadRequested = true
@@ -150,21 +323,24 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             done()
             #endif
         case "auth":
-            guard let address = address else { done(false, "服务器地址无效"); return }
             let username = text(value["username"]), token = text(value["token"])
-            let credentials = username.isEmpty || token.isEmpty ? nil : Credentials(server: address.absoluteString, username: username, token: token)
-            let changedIdentity = credentials?.server != player.api.credentials?.server || credentials?.username != player.api.credentials?.username
-            if changedIdentity { cancelImport() }
-            player.configure(credentials)
-            web.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-                for cookie in cookies { HTTPCookieStorage.shared.setCookies([cookie], for: address, mainDocumentURL: address) }
+            guard let address = address, !username.isEmpty, username != "__device__", !token.isEmpty,
+                  Self.serverURL(address.absoluteString) == server else { done(false); return }
+            if let identity = player.api.credentials {
+                done(identity.username == username && identity.token == token); return
             }
+            guard !UserDefaults.standard.bool(forKey: Self.migratedSessionKey) else { done(false); return }
+            UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
+            cancelImport(); player.configure(Credentials(server: address.absoluteString, username: username, token: token))
             done()
-        case "ready": player.onState?(player.snapshot()); player.onRoom?(player.room.snapshot()); player.room.refresh(); done()
+        case "ready":
+            done(["state":player.snapshot(), "room":player.room.snapshot()]); player.room.refresh()
         case "musicApi":
             let path = text(value["path"])
             guard path.hasPrefix("/api/music/") || path.hasPrefix("/api/custom-source/") else { done(false, "不是本地音乐接口"); return }
-            LocalEngine.shared.call("api", ["path": path, "body": value["body"] as? Object ?? [:]]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
+            let body = value["body"] as? Object ?? [:]
+            if path == "/api/music/comment" { loadComments(body, page:pageGeneration) { done($0) }; return }
+            LocalEngine.shared.call("api", ["path": path, "body": body]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
         case "sources": LocalEngine.shared.call("sources") { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
         case "sourcePreferences": UserDefaults.standard.set(!bool(value["legacySourceFallback"]), forKey: "lx.disableLegacySourceFallback"); player.api.sourceCache.removeAll(); done()
         case "sourceRemove", "sourceEnable":
@@ -222,7 +398,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         case "queue":
             guard let list = value["queue"] as? [Object], list.count <= 20000 else { done(false, "播放队列无效"); return }
             let selected = player.current?.key
-            let songs = list.map { Song(raw: $0) }, found = songs.firstIndex(where: {$0.key == selected})
+            let songs = list.map { Song(raw: $0) }, found = QueuePolicy.matchingIndex(in:songs,key:selected,proposed:Int(number(value["index"],-1)))
             if !songs.isEmpty, selected != nil, found == nil {
                 player.select(songs, index: max(0, min(Int(number(value["index"])), songs.count - 1)), paused: !player.wanted)
             } else {
@@ -242,9 +418,12 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             player.room.membership(text(value["operation"]), values: ["roomId": text(value["roomId"]), "password": text(value["password"])]) { result in switch result { case .success(let response): done(response); case .failure(let error): done(false, error.localizedDescription) } }
         case "library":
             if let lists = value["lists"] as? [Object] { player.library = lists; player.libraryRevision += 1; player.persistLibrary(); NotificationCenter.default.post(name: .lxLibrary, object: player) }; done()
+        case "devicePrepared":
+            let error = text(value["error"])
+            finishDevicePreparation(text(value["ticket"]), error:error.isEmpty ? nil : error)
+            done()
         case "importLookup":
-            let key = "lx.import." + (player.api.credentials?.server ?? "") + "." + (player.api.credentials?.username ?? "") + "." + text(value["key"])
-            if let stored = UserDefaults.standard.string(forKey: key), let url = URL(string: stored), url.path.hasPrefix((try? Self.importDirectory().path) ?? "INVALID"), FileManager.default.fileExists(atPath: url.path) { done(["url": stored]) } else { done([:]) }
+            done(player.api.importedURL(text(value["key"])).map { ["url":$0.absoluteString] } ?? [:])
         case "importBegin":
             do {
                 cancelImport()
@@ -252,7 +431,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
                 guard ["mp3", "flac", "m4a", "aac", "wav", "aiff", "alac", "ogg", "opus"].contains(ext) else { throw ClientError("请选择音频文件") }
                 let url = directory.appendingPathComponent(ticket).appendingPathExtension(ext)
                 FileManager.default.createFile(atPath: url.path, contents: nil)
-                importing = (ticket, "lx.import." + (player.api.credentials?.server ?? "") + "." + (player.api.credentials?.username ?? "") + "." + text(value["key"]), url, try FileHandle(forWritingTo: url), 0); done(["ticket": ticket])
+                importing = (ticket, player.api.importKey(text(value["key"])), url, try FileHandle(forWritingTo: url), 0); done(["ticket": ticket])
             } catch { done(false, error.localizedDescription) }
         case "importChunk":
             guard var item = importing, item.ticket == text(value["ticket"]), let data = Data(base64Encoded: text(value["data"])), data.count <= 65536, item.bytes + data.count <= 500 * 1024 * 1024 else { done(false, "设备文件接收状态无效"); return }
@@ -279,6 +458,56 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             } catch { alert(error.localizedDescription) }
         } else if purpose == "audio" { MusicLibrary.shared.importFiles(urls) { [weak self] result in switch result { case .success(let count): self?.emit("sources", ["importedAudio": count]); case .failure(let error): self?.alert(error.localizedDescription) } } }
     }
+    private func loadComments(_ body: Object, page: Int, completion: @escaping (Object) -> Void) {
+        let endpoint = server, serverVersion = serverGeneration
+        let failure: Object = ["error":"评论暂时不可用，请稍后重试"]
+        let fallback: (Object, Object) -> Void = { [weak self] response, request in
+            guard let self = self, self.pageRecovery.generation == page, self.serverGeneration == serverVersion else { return }
+            self.player.api.requestServer(endpoint, path:"/api/music/comment", body:request, timeout:5) { result in
+                guard self.serverGeneration == serverVersion else { completion(failure); return }
+                if case .success(let result) = result, result["comments"] is [Object] { completion(result) }
+                else { completion(response) }
+            }
+        }
+        var answered = false
+        var task: Cancellable?
+        let deadline = DispatchWorkItem {
+            guard !answered else { return }
+            answered = true; task?.cancel(); completion(failure)
+        }
+        task = LocalEngine.shared.call("api", ["path":"/api/music/comment", "body":body]) { result in
+            guard !answered else { return }
+            answered = true; deadline.cancel()
+            guard case .success(let data) = result, var response = data as? Object else { completion(failure); return }
+            if let request = response.removeValue(forKey:"request") as? Object { fallback(response, request) }
+            else { completion(response) }
+        }
+        DispatchQueue.main.asyncAfter(deadline:.now()+8, execute:deadline)
+    }
+    private func prepareDevice(_ song: Song, completion: @escaping (Result<URL, Error>) -> Void) -> Cancellable? {
+        guard phoneForeground, pageRecovery.ready, let raw = script(song.raw) else {
+            completion(.failure(ClientError("请打开手机 App 准备这首设备音乐"))); return nil
+        }
+        let request = LocalRequest(), ticket = UUID().uuidString
+        devicePreparations[ticket] = (text(song.raw["deviceKey"]), request, completion)
+        // Use the existing script-message channel. The Swift WebKit async
+        // overlay adds a hard dependency unavailable on older runtimes.
+        web.evaluateJavaScript("window.LXBridge?.prepareDevice(\(raw), '\(ticket)')") { [weak self] result, error in
+            if error != nil || result as? Bool != true {
+                self?.finishDevicePreparation(ticket, error:"设备音乐读取失败，请重新选择文件")
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline:.now()+60) { [weak self] in
+            self?.finishDevicePreparation(ticket, error:"设备音乐准备超时，请重试")
+        }
+        return request
+    }
+    private func finishDevicePreparation(_ ticket: String, error: String? = nil) {
+        guard let pending = devicePreparations.removeValue(forKey:ticket), !pending.request.isCancelled else { return }
+        if let error = error { pending.completion(.failure(ClientError(error))) }
+        else if let url = player.api.importedURL(pending.key) { pending.completion(.success(url)) }
+        else { pending.completion(.failure(ClientError("设备音乐读取失败，请重新选择文件"))) }
+    }
     static func importDirectory() throws -> URL {
         let url = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("ImportedAudio", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true); return url
@@ -293,7 +522,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         guard isViewLoaded, view.window?.windowScene?.activationState == .foregroundActive, let data = script(value) else { return }
         web.evaluateJavaScript("window.LXBridge?.\(method)(\(data))", completionHandler: nil)
     }
-    func emitChat(_ type: String, _ value: Object) { guard let a = script(type), let b = script(value) else { return }; web.evaluateJavaScript("window.LXBridge?.chat(\(a),\(b))", completionHandler: nil) }
+    func emitChat(_ type: String, _ value: Object) { guard phoneForeground, pageRecovery.ready, let a = script(type), let b = script(value) else { return }; web.evaluateJavaScript("window.LXBridge?.chat(\(a),\(b))", completionHandler: nil) }
     func alert(_ message: String) { guard presentedViewController == nil else { return }; let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default)); present(dialog, animated: true) }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
@@ -315,8 +544,15 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         }
         else { decisionHandler(.cancel); if navigationAction.navigationType == .linkActivated { UIApplication.shared.open(url) } }
     }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { alert("连接失败：\(error.localizedDescription)") }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if view.window?.windowScene?.activationState == .foregroundActive, let address = address { open(address) } }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard (error as NSError).code != NSURLErrorCancelled else { return }
+        pageRecovery.terminated(); showRecovery("页面暂时无法加载，请重试。")
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { self.webView(webView, didFailProvisionalNavigation:navigation, withError:error) }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageRecovery.terminated(); RuntimeTrace.record("ui.process-terminated")
+        recoverForegroundPage()
+    }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let dialog = UIAlertController(title: "栖页音乐", message: message, preferredStyle: .alert); dialog.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() }); present(dialog, animated: true)
     }

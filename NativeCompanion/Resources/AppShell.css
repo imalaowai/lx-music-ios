@@ -191,3 +191,16 @@ body.native-shell #native-room-back{width:28px;min-width:28px;height:38px;border
 
 /* Desktop theme rules must not move the compact player over room controls. */
 @media(min-width:768px){body.native-shell.native-has-player:not(.native-chat-keyboard){--native-mini:96px}}
+
+html[data-native-app] #header-user-info,
+html[data-native-app] #qiye-account,
+html[data-native-app] #btn-admin-login,
+html[data-native-app] .native-legacy-account {display:none!important}
+.native-sign-in {display:grid;gap:14px}
+.native-sign-in label {display:grid;gap:6px}
+.native-sign-in input {width:100%;min-height:42px;padding:9px 12px;border:1px solid var(--border-main,#8885);border-radius:11px;background:var(--bg-main,transparent);color:inherit;font-size:16px}
+.native-sign-in-server {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.native-sign-in-server small {overflow-wrap:anywhere}
+.native-sign-in .native-note:empty {display:none}
+
+#native-room-command:empty {display:none}

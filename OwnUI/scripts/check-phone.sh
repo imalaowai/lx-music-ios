@@ -17,17 +17,35 @@ xcrun clang -c -target "$(uname -m)-apple-ios15.0-simulator" -isysroot "$SDK" -f
 xcrun clang -c -target "$(uname -m)-apple-ios15.0-simulator" -isysroot "$SDK" -fobjc-arc -fblocks OwnUI/Sources/LXNowPlayingCoordinator.m -o build/own-ui/now-playing.o
 xcrun swiftc -emit-executable -O -module-name LXOwnHost -target "$(uname -m)-apple-ios15.0-simulator" -sdk "$SDK" -D LX_OWN_UI -D LX_OWN_UI_TESTING -import-objc-header OwnUI/Tests/PhoneLookup.h \
   NativeCompanion/Sources/Core.swift NativeCompanion/Sources/API.swift NativeCompanion/Sources/Room.swift NativeCompanion/Sources/LocalEngine.swift NativeCompanion/Sources/MusicLibrary.swift NativeCompanion/Sources/WebController.swift \
-  OwnUI/Sources/Player.swift OwnUI/Sources/ReferenceAudio.swift OwnUI/Sources/OwnUIRoot.swift OwnUI/Tests/PhoneHost.swift OwnUI/Tests/PlaylistStartupTests.swift OwnUI/Tests/OfflinePlayback.swift OwnUI/Tests/PlayerRouteTests.swift build/own-ui/phone-lookup.o build/own-ui/audio-route-safety.o build/own-ui/now-playing.o \
+  OwnUI/Sources/Player.swift OwnUI/Sources/ReferenceAudio.swift OwnUI/Sources/OwnUIRoot.swift OwnUI/Tests/PhoneHost.swift OwnUI/Tests/PlaylistStartupTests.swift OwnUI/Tests/OfflinePlayback.swift OwnUI/Tests/PlayerRouteTests.swift OwnUI/Tests/WebRecoveryTests.swift build/own-ui/phone-lookup.o build/own-ui/audio-route-safety.o build/own-ui/now-playing.o \
   -framework Foundation -framework UIKit -framework WebKit -framework AVFoundation -framework MediaPlayer -framework CarPlay -framework JavaScriptCore -framework Security -framework UniformTypeIdentifiers -framework ImageIO -o "$HOST_DIR/LXOwnHost"
 codesign --force --sign - "$HOST_DIR"
 DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(next(v["udid"] for group in d["devices"].values() for v in group if v["name"].startswith("iPhone")))')
 xcrun simctl boot "$DEVICE_ID" || true
 xcrun simctl bootstatus "$DEVICE_ID" -b
 xcrun simctl install "$DEVICE_ID" "$HOST_DIR"
-xcrun simctl launch "$DEVICE_ID" net.minyue.lxownui.verify
+LAUNCH_LOG=build/own-ui/own-phone-launch.log
+launched=false
+for attempt in 1 2 3; do
+  if xcrun simctl launch "$DEVICE_ID" net.minyue.lxownui.verify 2>&1 | tee -a "$LAUNCH_LOG"; then
+    launched=true
+    break
+  fi
+  xcrun simctl spawn "$DEVICE_ID" log show --last 5m --style compact --predicate 'process == "LXOwnHost" OR eventMessage CONTAINS "net.minyue.lxownui.verify"' > build/own-ui/own-phone-launch-system.log || true
+  if test "$attempt" = 2; then
+    xcrun simctl shutdown "$DEVICE_ID" || true
+    xcrun simctl boot "$DEVICE_ID"
+    xcrun simctl bootstatus "$DEVICE_ID" -b
+  fi
+  sleep 2
+done
+if test "$launched" != true; then
+  tail -60 build/own-ui/own-phone-launch-system.log
+  exit 1
+fi
 CONTAINER_DIR=$(xcrun simctl get_app_container "$DEVICE_ID" net.minyue.lxownui.verify data)
 for attempt in $(seq 1 30); do
-  if test -f "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json" && test -f "$CONTAINER_DIR/Documents/LX-Offline-Playback.json" && test -f "$CONTAINER_DIR/Documents/LX-Player-Route-Checks.json" && test -f "$CONTAINER_DIR/Documents/LX-Playlist-Startup-Checks.json"; then break; fi
+  if test -f "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json" && test -f "$CONTAINER_DIR/Documents/LX-Offline-Playback.json" && test -f "$CONTAINER_DIR/Documents/LX-Player-Route-Checks.json" && test -f "$CONTAINER_DIR/Documents/LX-Playlist-Startup-Checks.json" && test -f "$CONTAINER_DIR/Documents/LX-Web-Recovery-Checks.json"; then break; fi
   sleep 2
 done
 xcrun simctl io "$DEVICE_ID" screenshot build/own-ui/own-phone-launch.png
@@ -47,8 +65,10 @@ cp "$CONTAINER_DIR/Documents/LX-OwnUI-Ready.json" build/own-ui/own-phone-ready.j
 cp "$CONTAINER_DIR/Documents/LX-Offline-Playback.json" build/own-ui/offline-playback.json
 cp "$CONTAINER_DIR/Documents/LX-Player-Route-Checks.json" build/own-ui/player-route-checks.json
 cp "$CONTAINER_DIR/Documents/LX-Playlist-Startup-Checks.json" build/own-ui/playlist-startup-checks.json
+cp "$CONTAINER_DIR/Documents/LX-Web-Recovery-Checks.json" build/own-ui/web-recovery-checks.json
 cat build/own-ui/playlist-startup-checks.json
 cat build/own-ui/player-route-checks.json
+cat build/own-ui/web-recovery-checks.json
 python3 - <<'PY'
 import json,pathlib
 d=json.loads(pathlib.Path('build/own-ui/own-phone-ready.json').read_text())
@@ -58,4 +78,5 @@ assert d['roomChat'] and d['mine'] and d['downloads']
 offline=json.loads(pathlib.Path('build/own-ui/offline-playback.json').read_text());assert all(offline.values()),offline
 routes=json.loads(pathlib.Path('build/own-ui/player-route-checks.json').read_text());assert all(value is True for value in routes.values()),routes
 startup=json.loads(pathlib.Path('build/own-ui/playlist-startup-checks.json').read_text());assert len(startup['checks'])>=7 and all(value is True for value in startup['checks'].values()),startup
+recovery=json.loads(pathlib.Path('build/own-ui/web-recovery-checks.json').read_text());assert len(recovery)>=7 and all(value is True for value in recovery.values()),recovery
 PY

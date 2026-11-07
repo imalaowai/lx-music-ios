@@ -2,7 +2,7 @@
 #import <CarPlay/CarPlay.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <objc/runtime.h>
-#ifndef LX_CARPLAY_TESTING
+#if !defined(LX_CARPLAY_TESTING) && !defined(LX_OWN_UI)
 #import <React/RCTEventEmitter.h>
 #import <React/RCTBridgeModule.h>
 #endif
@@ -125,7 +125,7 @@ static NSArray *LXSongRows(NSArray *songs, NSString *listID, NSUInteger offset) 
         NSString *musicID = LXText(song[@"id"], @""), *owner = LXText(song[@"listId"], listID);
         if (!musicID.length || !owner.length) continue;
         [rows addObject:LXRow(LXText(song[@"name"], @"未知歌曲"), LXText(song[@"singer"], @""), ^{
-            [LXFullLibrary.shared enqueue:@{@"type": @"play", @"listId": owner, @"musicId": musicID}];
+            [LXFullLibrary.shared enqueue:@{@"type": @"play", @"listId": owner, @"musicId": musicID, @"index": @(index)}];
             LXPush(CPNowPlayingTemplate.sharedTemplate);
         })];
     }
@@ -238,6 +238,10 @@ static void LXRelease(LXCarConnection *c) {
     objc_setAssociatedObject(c.owner, &LXConnectionKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     LXRecord(@"车机连接已释放", nil);
     LXCurrent = nil;
+    #ifdef LX_OWN_UI
+    [LXFullLibrary.shared drain];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnCarPlayDisconnected" object:nil];
+    #endif
     LXRecord(@"车机已断开", nil);
 }
 static void LXConnect(id owner, id scene, CPInterfaceController *controller, CPWindow *window, BOOL audio, NSString *callback) {
@@ -344,7 +348,7 @@ static void LXReconcileLiveScenes(void) {
             LXRecoverScene(scene.delegate,(id)scene,@"live-scene-reconcile");
 }
 
-#ifndef LX_CARPLAY_TESTING
+#if !defined(LX_CARPLAY_TESTING) && !defined(LX_OWN_UI)
 @interface LXFullCarPlayModule : RCTEventEmitter <RCTBridgeModule>
 @property(atomic, assign) BOOL listening;
 @end
@@ -381,6 +385,18 @@ __attribute__((constructor))
 #endif
 static void LXInstallFullCarPlay(void) {
     @autoreleasepool {
+        #ifdef LX_OWN_UI
+        // The car scene can start before React Native creates any module.
+        // Cache its lists and dispatch its actions on the native main queue.
+        NSNotificationCenter *notes = NSNotificationCenter.defaultCenter;
+        [notes addObserverForName:@"LXOwnLibrary" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            [LXFullLibrary.shared update:note.userInfo error:nil];
+        }];
+        [notes addObserverForName:@"LXOwnDrainCarPlay" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            for (NSDictionary *action in [LXFullLibrary.shared drain])
+                [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnCarPlayAction" object:nil userInfo:action];
+        }];
+        #endif
         Class reference = NSClassFromString(@"CPSceneDelegate");
         if (!reference) { dispatch_async(dispatch_get_main_queue(), ^{ LXRecord(@"缺少参考 CarPlaySupport 接入", @"install"); }); return; }
         LXReferenceRoot = LXHook(reference, @"setupRootTemplate", (IMP)LXBuildRoot, "v@:");

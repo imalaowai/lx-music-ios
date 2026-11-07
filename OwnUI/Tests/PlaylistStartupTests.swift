@@ -62,6 +62,7 @@ enum PlaylistStartupTests {
         metrics["simulatorKeychainFixtureReadable"]=Vault.load()==credentials
         let player=Player.shared;player.api.credentials=credentials;player.restoreQueue()
         checks["restoredAccountFixtureAndLargeQueuePresent"]=player.api.credentials?.username=="fixture" && player.queue.count==500
+        checks["upgradeSeedsRecentWithOnlyTheRestoredCurrentSong"]=player.recent.map(\.key)==["saved-0"]
         player.publish()
         DispatchQueue.main.async {
             checks["restoredIdleHistoryDoesNotInitializeLockScreenServices"]=LXOwnMediaIsIdle()
@@ -80,6 +81,12 @@ enum PlaylistStartupTests {
             }else{checks["realProviderSDKAndURLSessionReturnPlaylistSongs"]=false}
             finishIfReady()
         }
+        player.api.cover(Song(raw:["source":"wy","id":"wy_1231"])) { result in
+            if case .success(let address)=result {
+                checks["nativeCoverLookupUsesProviderSDKWithoutPhoneWebView"]=address.hasPrefix("data:image/png;base64,")
+            } else {checks["nativeCoverLookupUsesProviderSDKWithoutPhoneWebView"]=false}
+            finishIfReady()
+        }
         engine.call("resolve",["song":["source":"kw","songmid":"123"],"quality":"128k"]) { result in
             if case .success(let response)=result,let value=response as? Object {
                 checks["playbackResolutionWaitsForSavedSourceInitialization"]=text(value["url"])=="https://audio.invalid/restored.mp3" && ProcessInfo.processInfo.systemUptime-began>=3.5
@@ -91,10 +98,13 @@ enum PlaylistStartupTests {
     static func attach(_ parent:UIViewController) {
         guard let controller=parent.children.compactMap({$0 as? WebController}).first else{finish(error:"Production WebController missing");return}
         web=controller.web
+        checks["nativeCoverHidesBundledPageDuringStartup"] = controller.view.viewWithTag(214) != nil && !controller.pageRecovery.ready
+        checks["defaultServerPreservesExplicitPorts"] = WebController.defaultServer.absoluteString == "https://lx.minyue.de5.net:99" &&
+            WebController.serverURL("HTTPS://Example.com:9443/")?.absoluteString == "https://example.com:9443"
         let data=try! JSONSerialization.data(withJSONObject:PlaylistFixtureProtocol.payload)
         let json=String(data:data,encoding:.utf8)!
         let injected="""
-        localStorage.setItem('lx_sync_user','fixture');localStorage.setItem('lx_user_token','fixture-token');localStorage.setItem('songlist-source','wy');
+        localStorage.setItem('lx_sync_user','fixture');localStorage.setItem('lx_user_token','stale-web-fixture-token');localStorage.setItem('songlist-source','wy');
         const catalogueFetch=window.fetch.bind(window);
         window.fetch=function(input,options={}){
           const url=new URL(typeof input==='string'?input:input.url,location.href);
@@ -107,21 +117,52 @@ enum PlaylistStartupTests {
     }
     static func poll() {
         guard !completed,let web=web else{return}
-        web.evaluateJavaScript("typeof window.SongListManager?.openDetail==='function'") { value,error in
+        // The script defines SongListManager before HTML parsing and bridge
+        // installation finish. Do not simulate a tap against an unfinished DOM.
+        web.evaluateJavaScript("document.readyState!=='loading' && window.LXBridge?.isReady?.()===true && window.NativeShell?.ready===true && typeof window.SongListManager?.openDetail==='function' && typeof window.ListSearch?.init==='function' && !!document.getElementById('sl-detail-list')") { value,error in
             guard !completed else{return}
             if value as? Bool == true {
                 if !opened {
                     opened=true
-                    web.evaluateJavaScript("window.SongListManager.openDetail('123','wy');true",completionHandler:nil)
+                    web.evaluateJavaScript("window.SongListManager.openDetail('123','wy');true") { _,error in
+                        if let error=error {metrics["detailOpenError"]=error.localizedDescription;opened=false}
+                    }
                 }
                 web.evaluateJavaScript("!!document.getElementById('sl-detail-list')?.textContent.includes('启动歌单测试曲')") { result,error in
-                    if result as? Bool == true {checks["playlistSongsRenderThroughRealWebKitNativeBridge"]=true;checks["browsingPlaylistDoesNotStartMediaServices"]=LXOwnMediaIsIdle();finishIfReady()}
+                    if result as? Bool == true {
+                        checks["playlistSongsRenderThroughRealWebKitNativeBridge"]=true
+                        checks["browsingPlaylistDoesNotStartMediaServices"]=LXOwnMediaIsIdle()
+                        let proof = """
+                        const detail=document.getElementById('view-player-detail');
+                        const settings=document.getElementById('btn-mode-local')?.parentElement?.parentElement;
+                        const shell=window.NativeShell, info=shell.state.info;
+                        shell.state.info={...info,hasAccount:false};
+                        document.getElementById('native-person-avatar').click();
+                        const login=document.querySelector('.native-sign-in');
+                        const loginReady=!!login?.querySelector('[autocomplete="username"]') &&
+                            !!login?.querySelector('[autocomplete="current-password"]') &&
+                            login.querySelector('small').textContent===info.server;
+                        document.querySelector('.native-sheet-close')?.click();
+                        shell.state.info=info;
+                        return detail?.classList.contains('hidden') && !document.body.classList.contains('mobile-player-open') &&
+                            loginReady && settings && getComputedStyle(settings).display==='none' && !document.getElementById('qiye-account') &&
+                            localStorage.getItem('lx_user_token')==='fixture-token' &&
+                            window.LXBridge.getPlayback().queue.length===500 &&
+                            document.querySelectorAll('#queue-list [data-queue-index]').length===0;
+                        """
+                        web.evaluateJavaScript("(function(){\(proof)})()") { value, _ in
+                            if value as? Bool == true {
+                                checks["compactStartupRestoresNativeSessionAndKeepsTheQueueUnrendered"]=true
+                                finishIfReady()
+                            }
+                        }
+                    }
                     if !completed {DispatchQueue.main.asyncAfter(deadline:.now()+0.15){poll()}}
                 }
             }else{DispatchQueue.main.asyncAfter(deadline:.now()+0.15){poll()}}
         }
     }
-    static func finishIfReady(){if checks.count>=7 {finish()}}
+    static func finishIfReady(){if checks.count>=12 {finish()}}
     static func finish(error:String?=nil) {
         guard !completed else{return};completed=true
         var report:Object=["checks":checks,"metrics":metrics]

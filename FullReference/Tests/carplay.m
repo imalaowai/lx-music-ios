@@ -120,12 +120,26 @@ static LXFixtureScene *Scene(CPSceneDelegate *owner, LXFixtureController *contro
 }
 static void RunTests(void) {
     LXInstallFullCarPlay();
+    NSDictionary *recent=@{@"id":@"wy|saved",@"name":@"恢复的歌曲",@"singer":@"Fixture",@"listId":@"__own_recent"};
+    [NSNotificationCenter.defaultCenter postNotificationName:@"LXOwnLibrary" object:nil userInfo:@{@"lists":@[],@"recent":@[recent]}];
     CPSceneDelegate *a=[CPSceneDelegate new];
     LXFixtureController *one=[LXFixtureController new]; LXFixtureScene *s1=Scene(a,one);
     [a templateApplicationScene:s1 didConnectInterfaceController:one];
     Check(a.audioConnects==1 && [one.rootTemplate isKindOfClass:CPTabBarTemplate.class], @"existingAudioCallbackWrapped");
     CPTabBarTemplate *tabs=(id)one.rootTemplate;
     Check(tabs.templates.count==3 && [(CPListTemplate *)tabs.templates[0] sections].count>0 && [(CPListTemplate *)tabs.templates[1] sections].count>0, @"populatedRootBeforeConnectReturns");
+    CPListTemplate *recentTab=(id)tabs.templates[2];
+    CPListItem *recentRow=(id)recentTab.sections.firstObject.items.firstObject;
+    Check([recentRow.text isEqual:recent[@"name"]] && recentRow.handler!=nil,@"coldCarPlayRootReadsNativeRecentCacheWithoutAReactModule");
+    __block NSDictionary *recentAction=nil;__block BOOL recentCompleted=NO;
+    NSNotificationCenter *notes=NSNotificationCenter.defaultCenter;
+    id recentObserver=[notes addObserverForName:@"LXOwnCarPlayAction" object:nil queue:nil usingBlock:^(NSNotification *note){recentAction=note.userInfo;}];
+    recentRow.handler(recentRow,^{recentCompleted=YES;});
+    [notes postNotificationName:@"LXOwnDrainCarPlay" object:nil];
+    [notes removeObserver:recentObserver];
+    Check(recentCompleted && [recentAction[@"listId"] isEqual:@"__own_recent"] && [recentAction[@"musicId"] isEqual:recent[@"id"]],
+          @"recentRowDrainsToTheNativePlaybackOwnerWithoutThePhoneBridge");
+    one.top=nil;
     CPTemplate *first=one.rootTemplate;
     [a templateApplicationScene:s1 didConnectInterfaceController:one toWindow:nil];
     Check(one.sets==1 && one.rootTemplate==first && a.windowConnects==0, @"duplicateCallbackKeepsPage");
@@ -282,11 +296,13 @@ static void RunTests(void) {
     [skipOwner receive:@{@"songId":@"skip-route-test",@"generation":@500,@"title":@"skip route test",@"wanted":@YES,@"loading":@NO}];
     __block NSUInteger forwardedSkips=0;
     id skipObserver=[NSNotificationCenter.defaultCenter addObserverForName:@"LXOwnRemoteCommand" object:nil queue:nil usingBlock:^(NSNotification *note){
-        NSString *command=note.userInfo[@"command"];if([command isEqual:@"next"]||[command isEqual:@"previous"])forwardedSkips++;
+        forwardedSkips++;
     }];
-    [track sendEventWithName:@"remote-next" body:@{}];[track sendEventWithName:@"remote-previous" body:@{}];
+    for(NSString *event in @[@"remote-next",@"remote-previous",@"remote-play",@"remote-pause",@"remote-stop",@"remote-seek"]) {
+        [track sendEventWithName:event body:@{@"position":@20}];
+    }
     [NSNotificationCenter.defaultCenter removeObserver:skipObserver];
-    Check(forwardedSkips==0,@"trackPlayerSkipEventsCannotCompeteWithDirectNativeQueueTargets");
+    Check(forwardedSkips==0,@"trackPlayerTransportEventsCannotDuplicateDirectNativeTargets");
     [skipOwner clear];
 }
 
@@ -298,10 +314,15 @@ static void RunTests(void) {
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds]; self.window.rootViewController=[UIViewController new]; [self.window makeKeyAndVisible];
     dispatch_async(dispatch_get_main_queue(), ^{
         LXResults=[NSMutableDictionary dictionary];
-        @try { RunTests(); } @catch (NSException *error) { LXResults[@"failure"]=error.reason ?: error.name; }
-        NSData *data=[NSJSONSerialization dataWithJSONObject:LXResults options:NSJSONWritingPrettyPrinted error:nil];
-        NSURL *doc=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-        [data writeToURL:[doc URLByAppendingPathComponent:@"carplay-lifecycle.json"] options:NSDataWritingAtomic error:nil];
+        void (^writeReport)(void)=^{
+            NSData *data=[NSJSONSerialization dataWithJSONObject:LXResults options:NSJSONWritingPrettyPrinted error:nil];
+            NSURL *doc=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+            [data writeToURL:[doc URLByAppendingPathComponent:@"carplay-lifecycle.json"] options:NSDataWritingAtomic error:nil];
+        };
+        @try { RunTests(); } @catch (NSException *error) { LXResults[@"failure"]=error.reason ?: error.name;writeReport();return; }
+        // Async checks record every result and write only after completion.
+        // A false result still fails the script's all-values-true assertion.
+        LXRunArtworkHTTPTests(^(BOOL pass,NSString *name){LXResults[name]=@(pass);},writeReport);
     });
     return YES;
 }

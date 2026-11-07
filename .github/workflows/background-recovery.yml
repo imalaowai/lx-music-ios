@@ -1,0 +1,61 @@
+name: Background room and phone recovery
+on:
+  push:
+    branches: [fix/background-carplay-room-recovery-20261104]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: background-recovery-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  room:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          mkdir -p build/recovery
+          python3 OwnUI/scripts/prepare.py
+          node --test OwnUI/Tests/*.test.cjs NativeCompanion/Tests/bridge.test.cjs NativeCompanion/Tests/lyrics.test.cjs NativeCompanion/Tests/engine.test.cjs
+          xcrun swiftc NativeCompanion/Sources/Core.swift NativeCompanion/Tests/main.swift -o build/recovery/core-tests
+          build/recovery/core-tests
+          xcrun swiftc -D LX_OWN_UI NativeCompanion/Sources/Core.swift NativeCompanion/Sources/Room.swift NativeCompanion/Tests/room-recovery.swift -o build/recovery/room-tests
+          build/recovery/room-tests | tee build/recovery/room-checks.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Background-Room-Checks
+          path: build/recovery/*.json
+          if-no-files-found: ignore
+  phone:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 OwnUI/scripts/prepare.py
+      - run: bash OwnUI/scripts/check-phone.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Background-Phone-Recovery
+          path: |
+            build/own-ui/*.json
+            build/own-ui/*.log
+            build/own-ui/*.png
+          if-no-files-found: ignore
+  carplay:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash OwnUI/scripts/check-carplay.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Background-CarPlay-Lifecycle
+          path: build/own-ui/carplay-lifecycle.json
+          if-no-files-found: ignore

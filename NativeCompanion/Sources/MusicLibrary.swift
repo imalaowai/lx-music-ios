@@ -9,12 +9,19 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
     var records: [Object] = []
     var onChange: ((Object) -> Void)?
     var backgroundCompletion: (() -> Void)?
-    var progressAt: [String: Date] = [:]
+    private var progressAt: [String: Date] = [:]
+    private var resolving = Set<String>()
+    private var finalizing = Set<String>()
+    private(set) var playableRevision = 0
     lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: "net.minyue.lxcompanion.downloads")
         config.httpMaximumConnectionsPerHost = 2; config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
-        return URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
+        let queue = OperationQueue()
+        queue.name = "net.minyue.lxcompanion.downloads"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 1
+        return URLSession(configuration: config, delegate: self, delegateQueue: queue)
     }()
     override init() {
         super.init()
@@ -34,12 +41,16 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         try? data.write(to: root.appendingPathComponent("index.json"), options: .atomic)
     }
     func changed(_ id: String) {
-        if let row = records.first(where: {text($0["id"]) == id}) { onChange?(row) }
+        if let row = records.first(where: {text($0["id"]) == id}) { onChange?(webRow(row)) }
         NotificationCenter.default.post(name: .lxDownloads, object: self)
     }
     func patch(_ id: String, _ values: Object, save: Bool = true) {
         guard let index = records.firstIndex(where: {text($0["id"]) == id}) else { return }
-        records[index].merge(values) { _, value in value }; if save { persist() }; changed(id)
+        let finished = text(records[index]["status"]) == "finished"
+        records[index].merge(values) { _, value in value }
+        if finished != (text(records[index]["status"]) == "finished") { playableRevision += 1 }
+        if save { persist() }
+        changed(id)
     }
     func localURL(_ song: Song) -> URL? {
         let offlineID = text(song.raw["offlineId"])
@@ -59,17 +70,16 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         let url = root.appendingPathComponent("封面.jpg")
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
-    func songs() -> [Object] {
-        records.map { row in
-            var result = row, raw = row["song"] as? Object ?? [:]
-            raw["offlineId"] = row["id"]
-            // Never send web IndexedDB device keys or expired sandbox URLs back to JS.
-            raw.removeValue(forKey: "deviceKey"); raw.removeValue(forKey: "url")
-            raw["quality"] = row["quality"]
-            if bool(row["hasCover"]) { raw["img"] = "lx-local://cover/" + text(row["id"]) }
-            result["song"] = raw; return result
-        }
+    private func webRow(_ row: Object) -> Object {
+        var result = row, raw = row["song"] as? Object ?? [:]
+        raw["offlineId"] = row["id"]
+        raw.removeValue(forKey:"deviceKey"); raw.removeValue(forKey:"url")
+        raw["quality"] = row["quality"]
+        if bool(row["hasCover"]) { raw["img"] = "lx-local://cover/" + text(row["id"]) }
+        result["song"] = raw
+        return result
     }
+    func songs() -> [Object] { records.map(webRow) }
     func assets(_ id: String) throws -> Object {
         guard records.contains(where: {text($0["id"]) == id}) else { throw ClientError("没有找到这首已下载歌曲") }
         let root = try folder(id)
@@ -84,10 +94,12 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
             patch(id, ["status": "assets", "quality": quality]); cacheAssets(id, song: song)
             completion(.success(["id": id])); return
         }
+        resolving.insert(id)
         api.resolve(song, quality: quality, allowFallback: true) { [weak self] result in
+            self?.resolving.remove(id)
             guard let self = self, self.records.contains(where: {text($0["id"]) == id && text($0["status"]) == "resolving"}) else { completion(.failure(ClientError("下载已取消"))); return }
             do {
-                let (url, actual) = try result.get()
+                let media = try result.get(), url = media.url, actual = media.playbackQuality
                 guard ["http", "https"].contains(url.scheme ?? "") else { throw ClientError("这首歌曲已在设备中，无需再次下载") }
                 self.patch(id, ["status": "downloading", "quality": actual])
                 let task = self.session.downloadTask(with: url); task.taskDescription = id; task.resume()
@@ -140,7 +152,12 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
         session.getAllTasks { [weak self] tasks in
             DispatchQueue.main.async {
                 guard let self = self else { return }; let ids = Set(tasks.compactMap(\.taskDescription))
-                for row in self.records where ["downloading", "resolving"].contains(text(row["status"])) && !ids.contains(text(row["id"])) { self.patch(text(row["id"]), ["status": "error", "error": "下载已中断，可重新下载"]) }
+                for row in self.records where ["downloading", "resolving"].contains(text(row["status"])) {
+                    let id = text(row["id"])
+                    if !ids.contains(id), !self.resolving.contains(id), !self.finalizing.contains(id) {
+                        self.patch(id, ["status":"error", "error":"下载已中断，可重新下载"])
+                    }
+                }
             }
         }
     }
@@ -151,7 +168,10 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
     func remove(_ id: String) throws {
         guard let row = records.first(where: {text($0["id"]) == id}) else { return }
         if text(row["status"]) == "downloading" { cancel(id) }
-        try FileManager.default.removeItem(at: folder(id)); records.removeAll { text($0["id"]) == id }; persist(); onChange?(["id": id, "deleted": true])
+        try FileManager.default.removeItem(at: folder(id)); records.removeAll { text($0["id"]) == id }
+        if text(row["status"]) == "finished" { playableRevision += 1 }
+        persist(); onChange?(["id":id, "deleted":true])
+        NotificationCenter.default.post(name:.lxDownloads, object:self)
     }
     func shareFiles(_ id: String) throws -> [URL] {
         guard let row = records.first(where: {text($0["id"]) == id}) else { throw ClientError("没有找到这条下载记录") }
@@ -184,27 +204,62 @@ final class MusicLibrary: NSObject, URLSessionDownloadDelegate, WKURLSchemeHandl
                     let song: Object = ["id": "device-" + id, "name": title, "singer": artist, "source": "local", "isLocal": true, "offlineId": id, "url": root.appendingPathComponent(name).absoluteString]
                     added.append(["id": id, "song": song, "filename": name, "status": "finished", "quality": url.pathExtension.lowercased(), "progress": 100, "hasCover": hasCover, "hasLyric": hasLyric, "bytes": (try? FileManager.default.attributesOfItem(atPath: root.appendingPathComponent(name).path)[.size]) ?? 0, "createdAt": Date().timeIntervalSince1970 * 1000])
                 }
-                DispatchQueue.main.async { self.records.insert(contentsOf: added, at: 0); self.persist(); for row in added { self.changed(text(row["id"])) }; completion(.success(added.count)) }
+                DispatchQueue.main.async { self.records.insert(contentsOf: added, at: 0); self.playableRevision += 1; self.persist(); for row in added { self.changed(text(row["id"])) }; completion(.success(added.count)) }
             } catch { DispatchQueue.main.async { completion(.failure(error)) } }
         }
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard let id = downloadTask.taskDescription, Date().timeIntervalSince(progressAt[id] ?? .distantPast) > 0.5 else { return }; progressAt[id] = Date()
-        patch(id, ["status": "downloading", "bytes": totalBytesWritten, "progress": totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100 : 0], save: false)
+        guard let id = downloadTask.taskDescription, Date().timeIntervalSince(progressAt[id] ?? .distantPast) > 0.5 else { return }
+        progressAt[id] = Date()
+        let progress = totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100 : 0
+        DispatchQueue.main.async {
+            guard self.isDownloading(id) else { return }
+            self.patch(id, ["bytes":totalBytesWritten, "progress":progress], save:false)
+        }
+    }
+    private func isDownloading(_ id: String) -> Bool {
+        records.contains { text($0["id"]) == id && text($0["status"]) == "downloading" }
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let id = downloadTask.taskDescription, let row = records.first(where: {text($0["id"]) == id}), text(row["status"]) == "downloading" else { return }
-        do {
-            guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else { throw ClientError("下载失败，请重新解析音源") }
-            let raw = row["song"] as? Object ?? [:]
-            let target = try DownloadedAudioFile.persist(source: location, directory: folder(id), name: text(raw["name"]))
-            let filename = target.lastPathComponent
-            let size = (try FileManager.default.attributesOfItem(atPath: target.path)[.size]) ?? 0
-            patch(id, ["filename": filename, "status": "finished", "progress": 100, "bytes": size, "error": ""])
-        } catch { patch(id, ["status": "error", "error": error.localizedDescription]) }
+        guard let id = downloadTask.taskDescription else { return }
+        let song: Object? = DispatchQueue.main.sync {
+            guard let row = self.records.first(where:{ text($0["id"]) == id && text($0["status"]) == "downloading" }) else { return nil }
+            self.finalizing.insert(id)
+            return row["song"] as? Object ?? [:]
+        }
+        guard let song = song else { return }
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory:true)
+        let result = Result { () -> (URL, NSNumber) in
+            guard let response = downloadTask.response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+                throw ClientError("下载失败，请重新解析音源")
+            }
+            let file = try DownloadedAudioFile.persist(source:location, directory:staging, name:text(song["name"]))
+            let bytes = (try FileManager.default.attributesOfItem(atPath:file.path)[.size]) as? NSNumber ?? 0
+            return (file, bytes)
+        }
+        DispatchQueue.main.async {
+            defer {
+                self.finalizing.remove(id)
+                DispatchQueue.global(qos:.utility).async { try? FileManager.default.removeItem(at:staging) }
+            }
+            guard self.isDownloading(id) else { return }
+            do {
+                let (file, bytes) = try result.get()
+                let destination = try self.folder(id).appendingPathComponent(file.lastPathComponent)
+                if FileManager.default.fileExists(atPath:destination.path) {
+                    _ = try FileManager.default.replaceItemAt(destination, withItemAt:file)
+                } else { try FileManager.default.moveItem(at:file, to:destination) }
+                self.patch(id, ["filename":file.lastPathComponent, "status":"finished", "progress":100, "bytes":bytes, "error":""])
+            } catch { self.patch(id, ["status":"error", "error":error.localizedDescription]) }
+        }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let id = task.taskDescription, let error = error, records.contains(where: {text($0["id"]) == id && text($0["status"]) == "downloading"}) else { return }; patch(id, ["status": "error", "error": error.localizedDescription])
+        guard let id = task.taskDescription else { return }
+        progressAt.removeValue(forKey:id)
+        guard let error = error else { return }
+        DispatchQueue.main.async {
+            if self.isDownloading(id) { self.patch(id, ["status":"error", "error":error.localizedDescription]) }
+        }
     }
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) { DispatchQueue.main.async { self.backgroundCompletion?(); self.backgroundCompletion = nil } }
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {

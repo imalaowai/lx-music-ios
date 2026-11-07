@@ -8,6 +8,10 @@ build/own-ui/brand-venv/bin/pip install --quiet Pillow==11.3.0
 build/own-ui/brand-venv/bin/python OwnUI/Brand/generate.py
 mkdir -p build/own-ui/brand
 xcrun actool OwnUI/Brand/Images.xcassets --compile build/own-ui/brand --platform iphoneos --minimum-deployment-target 15.0 --target-device iphone --target-device ipad --app-icon AppIcon --output-partial-info-plist build/own-ui/brand/BrandInfo.plist --output-format human-readable-text
+# Head units and older icon lookup paths also use these standalone PNGs.
+cp OwnUI/Brand/Images.xcassets/AppIcon.appiconset/Qiye-car-60-2.png build/own-ui/brand/AppIcon60x60@2x~car.png
+cp OwnUI/Brand/Images.xcassets/AppIcon.appiconset/Qiye-car-60-3.png build/own-ui/brand/AppIcon60x60@3x~car.png
+cp OwnUI/Brand/Images.xcassets/AppIcon.appiconset/Qiye-iphone-60-3.png build/own-ui/brand/AppIcon60x60@3x.png
 mkdir -p build/own-ui/include/React build/own-ui/objects
 python3 - <<'PY'
 import pathlib
@@ -33,7 +37,7 @@ python3 - <<'PY'
 import hashlib,json,pathlib,struct,zipfile
 d=pathlib.Path('build/own-ui');b=(d/'main.jsbundle').read_bytes()
 assert struct.unpack_from('<I',b,8)[0]==96
-metadata={'source':'Own local UI, rooms and chat with reference native audio','ownUI':True,'hermesVersion':96,'jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.9','build':'97','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip()}
+metadata={'source':'Own local UI with native playback, CarPlay and room recovery','ownUI':True,'hermesVersion':96,'clockABI':'ios-native-seconds','jsSha256':hashlib.sha256(b).hexdigest(),'version':'1.9.15','build':'103','minimumOS':'15.0','sourceCommit':__import__('subprocess').check_output(['git','rev-parse','HEAD'],text=True).strip(),'iconMasterSha256':hashlib.sha256(pathlib.Path('OwnUI/Brand/CartoonIcon.png').read_bytes()).hexdigest(),'brandResources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (d/'brand').iterdir() if p.is_file() and p.suffix in ['.png','.car']}}
 (d/'components.json').write_text(json.dumps(metadata,indent=2)+'\n')
 with zipfile.ZipFile(d/'LX-OwnUI-Native-Components.zip','w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     for name in ['main.jsbundle','LXFullCarPlay.dylib','components.json']:z.write(d/name,name)

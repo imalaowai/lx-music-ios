@@ -1,14 +1,14 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{EventEmitter}=require('node:events');
-function fixture({readyFailures=0}={}){
+function fixture({readyFailures=0,session={migrate:true},resume=true}={}){
   const messages=[],listeners={},intervals=[],renders={queue:0,metadata:0,button:0,status:0};let htmlPlays=0;let context;let now=0;let ready;const initialized=new Promise(resolve=>ready=resolve);
   class Media extends EventEmitter {constructor(){super();this.id='audio-player';}play(){htmlPlays++;return Promise.resolve();}pause(){}load(){}dispatchEvent(e){this.emit(e.type,e);}addEventListener(n,f){this.on(n,f);}}
   class Storage{constructor(){this.map=new Map();}getItem(k){return this.map.get(k)??null;}setItem(k,v){this.map.set(k,String(v));}removeItem(k){this.map.delete(k);}clear(){this.map.clear();}}
   const storage=new Storage();storage.setItem('lx_sync_user','fixture');storage.setItem('lx_user_token','private-token');
   const audio=new Media(),queue=[{id:'a',name:'A',source:'wy'},{id:'b',name:'B',source:'wy'}];
   const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',querySelectorAll:()=>[],getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
-  const window={};window.top=window;window.window=window;
-  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}window.LXBridge.reply(value.id,true,null);if(value.op==='uiReady')ready();});}}}};
+  const window={NativeShell:{ready:false}};window.top=window;window.window=window;
+  window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}const response=value.op==='session'?session:value.op==='importLookup'?{url:'file:///cached.flac'}:value.op==='ready'&&resume?{state:{sampledAt:1700000000000,index:0,queueRevision:0,queue:queue.slice(),paused:true,position:0,duration:0}}:true;window.LXBridge.reply(value.id,response,null);if(value.op==='uiReady')ready();});}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
@@ -21,6 +21,13 @@ function fixture({readyFailures=0}={}){
   context.currentPlaylist=queue.slice();context.currentIndex=0;
   return {window,context,audio,messages,intervals,storage,renders,advance:ms=>{now+=ms;},visibility:value=>{document.visibilityState=value;listeners.visibilitychange();},htmlPlays:()=>htmlPlays,settle:async()=>{await initialized;await new Promise(setImmediate);}};
 }
+test('Foreground native recovery can distinguish an installed UI from a loading document',async()=>{
+  const f=fixture();await f.settle();assert.equal(f.window.LXBridge.isReady(),false);
+  f.context.document.readyState='complete';assert.equal(f.window.LXBridge.isReady(),false);
+  f.window.NativeShell.ready=true;assert.equal(f.window.LXBridge.isReady(),true);
+  const pending=fixture({resume:false});await pending.settle();pending.context.document.readyState='complete';pending.window.NativeShell.ready=true;
+  assert.equal(pending.window.LXBridge.isReady(),false);
+});
 test('Page selections transfer a complete queue; playback never starts HTML audio',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;
   await f.window.playSong(f.context.currentPlaylist[1],1);
@@ -37,9 +44,28 @@ test('Native remote state updates UI without echoing play, pause, seek or room c
   await f.settle();assert.equal(f.audio.currentTime,34);assert.equal(f.audio.paused,false);assert.equal(f.context.currentPlayingSong.id,'remote');assert.equal(f.messages.length,0);
   f.audio.currentTime=72;await f.settle();assert.equal(f.messages.at(-1).op,'seek');assert.equal(f.messages.at(-1).time,72);
 });
-test('Login bridge sends an account token and never reads or transfers a password',async()=>{
-  const f=fixture();await f.settle();assert.equal(f.messages.find(x=>x.op==='auth').token,'private-token');assert.equal(JSON.stringify(f.messages).includes('password'),false);
-  f.storage.removeItem('lx_user_token');await f.settle();assert.equal(f.messages.filter(x=>x.op==='auth').at(-1).token,'');
+test('Legacy session migration uses the token once and a blank web store cannot sign out the native player',async()=>{
+  const f=fixture();f.storage.setItem('lx_sync_pass','old-web-password');await f.settle();
+  assert.equal(f.messages.find(x=>x.op==='auth').token,'private-token');
+  assert.equal(JSON.stringify(f.messages).includes('old-web-password'),false);
+  assert.equal(f.storage.getItem('lx_sync_pass'),null);
+  f.storage.removeItem('lx_user_token');await f.settle();
+  assert.equal(f.messages.filter(x=>x.op==='auth').length,1);assert.equal(f.messages.some(x=>x.op==='signOut'),false);
+  await f.window.LXBridge.signOut();assert.equal(f.messages.at(-1).op,'signOut');
+});
+test('Native session recovery replaces a stale WebView token before library access',async()=>{
+  const f=fixture({session:{username:'restored',token:'native-token'}});await f.settle();
+  assert.equal(f.messages.some(x=>x.op==='auth'),false);
+  assert.equal(f.storage.getItem('lx_sync_user'),'restored');
+  assert.equal(f.storage.getItem('lx_user_token'),'native-token');
+});
+test('Selecting a device song hands the queue to native playback without transferring every device file',async()=>{
+  const f=fixture();await f.settle();f.messages.length=0;
+  const tracks=['A','B','C'].map(name=>({id:name,name,source:'local',deviceKey:'device:'+name}));
+  f.context.currentPlaylist=tracks;
+  await f.window.playSong(tracks[1],1);
+  assert.equal(f.messages[0].op,'select');assert.equal(f.messages[0].queue.length,3);assert.equal(f.messages[0].index,1);
+  assert.equal(f.messages.some(m=>m.op.startsWith('import')),false);
 });
 test('Paused web history restore cannot replace the current native queue',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;
@@ -79,9 +105,9 @@ test('Visual clock stops for pause, buffering, seeking, hidden pages and stale n
   const f=fixture();await f.settle();
   const state={song:{id:'a',name:'A'},paused:false,playing:true,position:20,duration:180,timelineRevision:1};
   f.window.LXBridge.state(state);f.advance(250);assert.equal(f.audio.currentTime,20.25);
-  f.window.LXBridge.state({playing:false,position:20.2});f.advance(900);assert.equal(f.audio.currentTime,20.2);
+  f.window.LXBridge.state({playing:false,position:20.2});f.advance(900);assert.equal(f.audio.currentTime,20.25);
   f.window.LXBridge.state({playing:true,position:20.2});f.advance(250);assert.equal(f.audio.currentTime,20.45);
-  f.window.LXBridge.state({paused:true,playing:false,position:20.4});f.advance(500);assert.equal(f.audio.currentTime,20.4);
+  f.window.LXBridge.state({paused:true,playing:false,position:20.4});f.advance(500);assert.equal(f.audio.currentTime,20.45);
   f.window.LXBridge.state({...state,position:80,seeking:true,timelineRevision:2});f.advance(250);assert.equal(f.audio.currentTime,80);assert.equal(f.audio.seeking,true);
   f.window.LXBridge.state({seeking:false,position:80});f.advance(250);assert.equal(f.audio.currentTime,80.25);
   f.visibility('hidden');const hidden=f.audio.currentTime;f.advance(20000);assert.equal(f.audio.currentTime,hidden);
@@ -119,7 +145,7 @@ test('Per-song lyric calibration never seeks audio and separates identical IDs f
  f.window.LXNative.setLyricOffset(500);assert.equal(f.audio.currentTime,12);assert.equal(f.window.LXNative.lyricTime(),12.5);
  const before=f.renders.metadata;f.window.LXBridge.state({song:{id:'same',source:'kw',name:'B'},position:12});assert.equal(f.window.LXNative.getLyricOffset(),0);assert.equal(f.renders.metadata,before+1);
  f.window.LXBridge.state({song:{id:'same',source:'wy',name:'A'},position:12});assert.equal(f.window.LXNative.getLyricOffset(),500);
- f.window.LXBridge.state({position:0});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
+ f.window.LXBridge.state({position:0,timelineRevision:1});f.window.LXNative.setLyricOffset(-500);assert.equal(f.window.LXNative.lyricTime(),-0.5,'Delayed lyrics can remain before their first timestamp');
  assert.equal(f.messages.some(m=>m.op==='seek'),false);
 });
 
@@ -128,4 +154,41 @@ test('Local source URL-only responses are not treated as confirmed lossless qual
   assert.match(engine,/qualityReported:!!sourceQuality/);
   assert.match(engine,/\\u97F3\\u6E90\\u8FD4\\u56DE\\u7684/);
   assert.doesNotMatch(engine,/return\\{url:A,type:w,sourceId:p\\.id\\}/);
+});
+
+
+test('Device preparation reports asynchronous completion through the existing native message handler',async()=>{
+  const f=fixture();await f.settle();f.messages.length=0;
+  assert.equal(f.window.LXBridge.prepareDevice({deviceKey:'cached'},'test-ticket'),true);
+  await new Promise(setImmediate);
+  assert.deepEqual(f.messages.map(m=>m.op),['importLookup','devicePrepared']);
+  assert.equal(f.messages[1].ticket,'test-ticket');
+});
+
+test('A buffering snapshot cannot rewind the same song and an intentional seek can',async()=>{
+ const f=fixture();await f.settle();f.messages.length=0;
+ const song={id:'a',name:'A',source:'wy'};
+ f.window.LXBridge.state({song,paused:false,playing:true,position:20.1,duration:180,timelineRevision:1});
+ f.advance(1000);const before=f.audio.currentTime;
+ f.window.LXBridge.state({playing:false,loading:true,position:20.2});
+ assert.equal(f.audio.currentTime,before);
+ f.advance(1200);assert.equal(f.audio.currentTime,before);
+ f.window.LXBridge.state({playing:true,loading:false,position:20.2});
+ f.advance(500);assert.equal(f.audio.currentTime,before);
+ f.advance(500);assert.ok(f.audio.currentTime>before);
+ assert.equal(f.messages.some(message=>message.op==='seek'),false);
+ f.window.LXBridge.state({seeking:true,position:8,timelineRevision:2});
+ assert.equal(f.audio.currentTime,8);
+});
+
+test('Repeated UI snapshots cannot renew extrapolation from one old decoder sample',async()=>{
+ const f=fixture();await f.settle();
+ const sampledAt=1700000000000;
+ f.window.LXBridge.state({song:{id:'a',name:'A'},paused:false,playing:true,position:40,duration:180,
+   timelineRevision:1,sampledAt,positionSampledAt:sampledAt});
+ f.advance(2000);assert.equal(f.audio.currentTime,41.25);
+ f.window.LXBridge.state({sampledAt:sampledAt+2000,position:40,positionSampledAt:sampledAt});
+ f.advance(1000);assert.equal(f.audio.currentTime,41.25);
+ f.window.LXBridge.state({sampledAt:sampledAt+3000,position:42,positionSampledAt:sampledAt+3000});
+ assert.equal(f.audio.currentTime,42);
 });

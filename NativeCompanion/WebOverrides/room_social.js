@@ -5,7 +5,7 @@
   const state={roomId:'',revision:-1,messages:[],selected:new Set(),unread:new Set(),members:[],epoch:0,open:false,multi:false,seen:null,limit:60,sending:false};
   let scrollLock;
   const nodeCache=new Map();
-  let request=0,returnFocus,memberSignature='',emojiGroup=0,pressTimer,contextId='';
+  let refreshing,returnFocus,memberSignature='',emojiGroup=0,pressTimer,contextId='';
   const binding=()=>window.ListenRoom?.getBinding?.()?.roomId || '',owner=()=>window.DeviceLibrary.identity();
   const markerKey=()=>`lx_room_chat_read:${owner()}:${state.roomId}`;
   const atBottom=()=>{const box=$('room-chat-messages');return !box || box.scrollHeight-box.scrollTop-box.clientHeight<70;};
@@ -29,7 +29,7 @@
   }
   function ensureBinding(){
     const roomId=binding();if(roomId===state.roomId)return false;
-    state.epoch++;request++;state.roomId=roomId;state.revision=-1;state.messages=[];state.selected.clear();state.unread.clear();state.multi=false;state.seen=roomId?readMarker():null;state.limit=60;state.sending=false;nodeCache.clear();
+    state.epoch++;state.roomId=roomId;state.revision=-1;state.messages=[];state.selected.clear();state.unread.clear();state.multi=false;state.seen=roomId?readMarker():null;state.limit=60;state.sending=false;nodeCache.clear();
     if($('room-chat-input'))$('room-chat-input').value='';close();renderMessages(true);renderHeader();return true;
   }
   function adopt(history,roomId){
@@ -40,10 +40,18 @@
     else{const seen=state.seen || {time:0,ids:[]};state.unread=new Set(state.messages.filter(m=>m.author.name!==owner() && (m.time>seen.time || m.time===seen.time && !seen.ids.includes(m.id))).map(m=>m.id));}
     renderMessages(bottom);if(state.open && document.visibilityState==='visible' && bottom)markSeen();renderHeader();
   }
-  async function refresh(){
-    ensureBinding();if(!state.roomId)return;const roomId=state.roomId,epoch=state.epoch,version=++request;
-    try{const history=await window.DeviceLibrary.api('/api/room/chat');if(epoch===state.epoch && version===request)adopt(history,roomId);}
-    catch(error){if(epoch===state.epoch && version===request)$('room-chat-status').textContent=error.message;}
+  function refresh(){
+    ensureBinding();if(!state.roomId)return;
+    const roomId=state.roomId,epoch=state.epoch;
+    if(refreshing?.epoch===epoch)return refreshing.task;
+    const task=(async()=>{
+      try{
+        const history=await window.DeviceLibrary.api('/api/room/chat');
+        if(epoch===state.epoch){adopt(history,roomId);$('room-chat-status').textContent='';}
+      }catch(error){if(epoch===state.epoch)$('room-chat-status').textContent=error.message;}
+    })();
+    refreshing={epoch,task};task.finally(()=>{if(refreshing?.task===task)refreshing=null;});
+    return task;
   }
   function avatar(author){
     const member=state.members.find(m=>m.name===author.name) || author;
@@ -59,14 +67,14 @@
     catch(error){if(epoch===state.epoch)window.showError?.(error.message);}finally{button.disabled=false;}
   }
   function renderMessages(bottom=atBottom()){
-    const box=$('room-chat-messages');if(!box || (document.documentElement.dataset.nativeApp && !state.open))return;const scroll=box.scrollTop,nodes=[],members=new Map(state.members.map(m=>[m.name,m]));
+    const box=$('room-chat-messages');if(!box || (document.documentElement.dataset.nativeApp && !state.open))return;const scroll=box.scrollTop,nodes=[],members=new Map(state.members.map(m=>[m.name,m])),username=owner();
     if(state.messages.length>state.limit){const b=document.createElement('button');b.className='room-chat-earlier';b.textContent='查看更早的消息';b.onclick=()=>{const height=box.scrollHeight;state.limit+=60;renderMessages(false);box.scrollTop=box.scrollHeight-height+scroll;};nodes.push(b);}
     let lastTime=0;
     for(const m of state.messages.slice(-state.limit)){
       if(m.time-lastTime>300000){const time=document.createElement('p');time.className='room-chat-time';time.textContent=new Date(m.time).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});nodes.push(time);}lastTime=m.time;
-      const signature=JSON.stringify([m,members.get(m.author.name),state.multi,state.selected.has(m.id),owner()]),cached=nodeCache.get(m.id);
-      if(cached?.signature===signature){nodes.push(cached.row);continue;}
-      const own=m.author.name===owner(),row=document.createElement('article'),label=m.author.nickname || m.author.name;row.dataset.messageId=m.id;row.className='room-chat-message'+(own?' is-own':'')+(state.multi?' is-selecting':'')+(state.selected.has(m.id)?' is-selected':'');
+      const member=members.get(m.author.name),selected=state.selected.has(m.id),cached=nodeCache.get(m.id);
+      if(cached?.message===m&&cached.member===member&&cached.multi===state.multi&&cached.selected===selected&&cached.username===username){nodes.push(cached.row);continue;}
+      const own=m.author.name===username,row=document.createElement('article'),label=m.author.nickname || m.author.name;row.dataset.messageId=m.id;row.className='room-chat-message'+(own?' is-own':'')+(state.multi?' is-selecting':'')+(state.selected.has(m.id)?' is-selected':'');
       const emojiOnly=m.kind==='text' && window.RoomEmojis?.items.some(e=>e.emoji===m.text.trim());
       row.innerHTML=`${state.multi?`<input type="checkbox" class="room-chat-check" aria-label="选择 ${esc(label)} 的消息" ${state.selected.has(m.id)?'checked':''}>`:''}<span class="room-chat-avatar" title="${esc(label)}">${avatar(m.author)}</span><div class="room-chat-body"><span class="room-chat-author">${esc(label)}</span><div class="room-chat-bubble${emojiOnly?' is-emoji':''}">${['playlist','song'].includes(m.kind)?`<div class="room-share-card"><span class="room-share-cover">${m.playlist.cover?`<img src="${esc(m.playlist.cover)}" alt="" loading="lazy">`:'♫'}</span><div class="room-share-info"><strong>${esc(m.playlist.name)}</strong><p>${m.playlist.count} 首歌曲</p></div><div class="room-share-actions"><button type="button" class="apple-link" data-mode="play">立即播放</button><button type="button" class="apple-link" data-mode="next">下一首播放</button><button type="button" class="apple-link" data-mode="queue">添加播放列表</button><button type="button" class="apple-link" data-mode="append">添加到我的歌单</button><button type="button" class="apple-link" data-mode="copy">保存当前</button>${m.playlist.subscribable!==false && m.kind!=='song'?'<button type="button" class="apple-link" data-mode="subscribe">订阅歌单 ↻</button>':''}</div></div>`:m.kind==='link'?`<div class="room-share-card"><span class="room-share-cover">♫</span><div class="room-share-info"><strong>${esc(m.link.title)}</strong><p>${m.link.count} 首歌曲 · 播放链接</p><a class="apple-link" href="${esc(m.link.path)}" target="_blank" rel="noopener">打开播放页 ↗</a></div></div>`:`<p>${esc(m.text)}</p>`}</div></div>`;
       const toggle=()=>{state.selected.has(m.id)?state.selected.delete(m.id):state.selected.add(m.id);row.classList.toggle('is-selected',state.selected.has(m.id));const check=row.querySelector('input');if(check)check.checked=state.selected.has(m.id);renderSelection();};
@@ -74,7 +82,7 @@
       row.oncontextmenu=e=>{if(e.target.closest('button'))return;e.preventDefault();showContext(m.id,e.clientX,e.clientY);};
       let startX=0,startY=0;row.addEventListener('pointerdown',e=>{if(e.pointerType!=='touch' || e.target.closest('button,input'))return;startX=e.clientX;startY=e.clientY;clearTimeout(pressTimer);pressTimer=setTimeout(()=>showContext(m.id,startX,startY),550);});
       row.addEventListener('pointermove',e=>{if(Math.abs(e.clientX-startX)+Math.abs(e.clientY-startY)>12)clearTimeout(pressTimer);});for(const type of ['pointerup','pointercancel'])row.addEventListener(type,()=>clearTimeout(pressTimer));
-      for(const b of row.querySelectorAll('[data-mode]'))b.onclick=()=>saveShare(m,b.dataset.mode,b);nodeCache.set(m.id,{signature,row});nodes.push(row);
+      for(const b of row.querySelectorAll('[data-mode]'))b.onclick=()=>saveShare(m,b.dataset.mode,b);nodeCache.set(m.id,{message:m,member,selected,multi:state.multi,username,row});nodes.push(row);
     }
     const live=new Set(state.messages.slice(-state.limit).map(m=>m.id));for(const id of nodeCache.keys())if(!live.has(id))nodeCache.delete(id);
     let cursor=box.firstChild;for(const node of nodes){if(node===cursor)cursor=cursor.nextSibling;else box.insertBefore(node,cursor);}while(cursor){const next=cursor.nextSibling;cursor.remove();cursor=next;}
@@ -102,7 +110,16 @@
     catch(error){if(epoch===state.epoch)$('room-chat-status').textContent=error.message;}finally{if(epoch===state.epoch){state.sending=false;$('room-chat-send').disabled=false;if($('room-emoji-panel').hidden&&document.activeElement===input)input.focus({preventScroll:true});}}
   }
   function open(){
-    ensureBinding();if(!state.roomId){window.showInfo?.('先加入听歌房间再聊天');window.ListenRoom?.open();return;}returnFocus=document.activeElement;state.open=true;scrollLock?.lock();$('listen-room-modal')?.classList.add('hidden');$('room-chat-modal').hidden=false;document.body.classList.add('room-chat-open');renderMessages(true);markSeen();renderHeader();if(!matchMedia("(max-width:767px), (max-width:1024px) and (pointer:coarse)").matches)$('room-chat-input').focus({preventScroll:true});else if(!document.documentElement.dataset.nativeApp)$('room-chat-close').focus({preventScroll:true});refresh();
+    ensureBinding();if(!state.roomId){window.showInfo?.('先加入听歌房间再聊天');window.ListenRoom?.open?.();return;}
+    if(state.open)return;
+    const epoch=state.epoch,native=!!document.documentElement.dataset.nativeApp;
+    returnFocus=document.activeElement;state.open=true;scrollLock?.lock();$('listen-room-modal')?.classList.add('hidden');$('room-chat-modal').hidden=false;document.body.classList.add('room-chat-open');renderHeader();
+    const load=()=>{if(state.open&&epoch===state.epoch){renderMessages(true);markSeen();refresh();}};
+    if(native)requestAnimationFrame(()=>setTimeout(load,0));
+    else{
+      load();
+      if(!matchMedia("(max-width:767px), (max-width:1024px) and (pointer:coarse)").matches)$('room-chat-input').focus({preventScroll:true});else $('room-chat-close').focus({preventScroll:true});
+    }
   }
   function close(){if(document.activeElement?.closest?.('#room-chat-modal'))document.activeElement.blur();scrollLock?.unlock();document.body.classList.remove('room-chat-open');state.open=false;state.multi=false;state.selected.clear();clearTimeout(pressTimer);closeContext();hideEmoji();if($('room-chat-modal'))$('room-chat-modal').hidden=true;if($('room-chat-btn'))renderHeader();if(!document.documentElement.dataset.nativeApp && returnFocus?.isConnected && !returnFocus.matches('input,textarea,[contenteditable=true]'))returnFocus.focus({preventScroll:true});returnFocus=null;}
   async function share(listId){
