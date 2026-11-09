@@ -20,7 +20,7 @@ final class PlaylistFixtureProtocol: URLProtocol {
         return ["success":true,"code":200,"enabled":false,"room":NSNull(),"binding":NSNull(),"total":1,"playlist":list,"playlists":[list],"songs":[track],"privileges":[["id":1231,"maxbr":320000,"maxBrLevel":"exhigh"]],"sub":[["category":0,"name":"全部"]],"categories":["0":"全部"],"tags":[],"user":["name":"fixture","username":"fixture"],"username":"fixture","data":lists,"loveList":[],"defaultList":lists["defaultList"]!,"userList":[]]
     }
     override func startLoading() {
-        if let url = request.url, url.host == "qiye-fixture.invalid" {
+        if let url = request.url, url.host == "qiye-session.invalid" {
             switch url.path {
             case "/api/user/login":
                 DispatchQueue.main.async { Self.loginReply = { [weak self] in self?.reply(200, ["success":true, "token":Self.renewedToken]) } }

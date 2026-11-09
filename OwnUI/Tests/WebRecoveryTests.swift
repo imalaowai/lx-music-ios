@@ -47,6 +47,12 @@ enum WebRecoveryTests {
     }
     @MainActor static func checkSessionRecovery(_ c: WebController) async throws {
         let player = Player.shared
+        let server = URL(string: "https://qiye-session.invalid/")!
+        // Earlier playback and CarPlay checks have their own source fixture.
+        UserDefaults.standard.set(server.absoluteString, forKey: WebController.serverKey)
+        player.configure(Credentials(server: server.absoluteString, username: "fixture", token: "fixture-token"))
+        c.open(server)
+        try await waitFor("Old account page is ready") { c.pageRecovery.ready }
         try check(player.api.credentials?.token == "fixture-token", "sessionRecoveryStartsWithTheOldToken")
         var obsoleteError: URLError?
         player.api.request("/api/user/list?session-test=obsolete", timeout: 30) { result in
