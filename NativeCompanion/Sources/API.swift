@@ -49,8 +49,14 @@ final class API {
     var onSessionExpired: (() -> Void)?
     var sourceCache: [String: (ResolvedAudio, Date)] = [:]
     let session: URLSession
+    #if LX_OWN_UI_TESTING
+    static var fixtureProtocol: AnyClass?
+    #endif
     private lazy var directSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
+        #if LX_OWN_UI_TESTING
+        if let fixture = Self.fixtureProtocol { configuration.protocolClasses = [fixture] }
+        #endif
         configuration.httpShouldSetCookies = false
         configuration.timeoutIntervalForResource = 15
         return URLSession(configuration: configuration, delegate: DirectServerRequest(), delegateQueue: nil)
@@ -58,6 +64,9 @@ final class API {
     init() {
         credentials = Vault.load()
         let configuration = URLSessionConfiguration.default
+        #if LX_OWN_UI_TESTING
+        if let fixture = Self.fixtureProtocol { configuration.protocolClasses = [fixture] }
+        #endif
         configuration.timeoutIntervalForRequest = 35
         configuration.timeoutIntervalForResource = 60
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData

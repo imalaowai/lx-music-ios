@@ -60,6 +60,7 @@ enum PlaylistStartupTests {
     static var web:WKWebView?
     static func prepare() {
         _ = URLProtocol.registerClass(PlaylistFixtureProtocol.self)
+        API.fixtureProtocol = PlaylistFixtureProtocol.self
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[PlaylistFixtureProtocol.self]
         LocalEngine.shared=LocalEngine(configuration:configuration)
         let credentials=Credentials(server:"https://qiye-fixture.invalid/",username:"fixture",token:"fixture-token")

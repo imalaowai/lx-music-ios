@@ -47,6 +47,7 @@ enum WebRecoveryTests {
     }
     @MainActor static func checkSessionRecovery(_ c: WebController) async throws {
         let player = Player.shared
+        try check(player.api.credentials?.token == "fixture-token", "sessionRecoveryStartsWithTheOldToken")
         var obsoleteError: URLError?
         player.api.request("/api/user/list?session-test=obsolete", timeout: 30) { result in
             if case .failure(let error) = result { obsoleteError = error as? URLError }

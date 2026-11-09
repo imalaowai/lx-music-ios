@@ -2,7 +2,7 @@ name: Build Qiye 1.9.16 session and playback components
 on:
   push:
     branches: [fix/ios-session-playback-recovery-20261109]
-    paths: ['OwnUI/scripts/build.sh', 'OwnUI/scripts/update-components.py', '.github/workflows/build-background-ipa-components.yml']
+    paths: ['OwnUI/scripts/build.sh', 'OwnUI/scripts/update-components.py', 'NativeCompanion/Sources/API.swift', '.github/workflows/build-background-ipa-components.yml']
   workflow_dispatch:
 permissions:
   contents: read
