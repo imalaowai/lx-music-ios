@@ -69,6 +69,7 @@ final class Player {
 
     var lastOutputLossAt = 0.0
     private init() {
+        api.onSessionExpired = { [weak self] in self?.revokeSession() }
         restoreQueue()
         if UserDefaults.standard.bool(forKey:"lx.routeHold") {
             routeGate.suspend()
@@ -162,13 +163,24 @@ final class Player {
     }
     func configure(_ credentials: Credentials?) {
         if api.credentials == credentials { return }
-        prefetchTask?.cancel(); api.sourceCache.removeAll()
+        prefetchTask?.cancel()
         if let old = api.credentials, let credentials = credentials, old.server == credentials.server, old.username == credentials.username {
-            api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true); room.refresh(); return
+            api.credentials = credentials; Vault.save(credentials); room.disconnect(clear: true)
+            if loading, current != nil { select(queue, index:index, paused:!wanted, user:false, time:resumeTime, reuseQueue:true) }
+            else { failure = ""; publish() }
+            room.refresh(); return
         }
         finishTransition(); pause(user: false); generation += 1; resolution?.cancel(); audio.replaceCurrentItem(with: nil); currentURL = nil
+        loading = false; seeking = false; endGuard.reset(generation, now:ProcessInfo.processInfo.systemUptime)
         room.disconnect(clear: true); queue = []; recent = []; recentRevision += 1; queueRevision += 1; index = -1; resumeTime = 0; failure = ""
         library = []; libraryRevision += 1; api.credentials = credentials; Vault.save(credentials); persistQueue(); persistLibrary(); room.refresh(); publish()
+    }
+    func revokeSession() {
+        guard api.credentials != nil else { return }
+        UserDefaults.standard.set(true, forKey:Vault.webSessionMigratedKey)
+        configure(nil)
+        failure = "账号登录已失效，请重新登录"
+        publish(); onRevoked?()
     }
     func activate() throws {
         let session = AVAudioSession.sharedInstance()

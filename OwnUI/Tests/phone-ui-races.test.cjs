@@ -84,3 +84,26 @@ test('Legacy token refresh cannot clear a session restored by the native app', a
     assert.equal(await f.context.ensureUserAuthToken({force:true}),false);
     assert.equal(reads,0);
 });
+
+test('The mini player shows the native transport action even while the clock is stopped', () => {
+    const f = fixture(section('function progress(){\n  const audio=', 'function resetDiagnostics()'));
+    f.context.$ = f.element;
+    const audio = f.element('audio-player'), button = f.element('mobile-mini-play');
+    f.element('mobile-mini-progress').style = {};
+    button.dataset = {};
+    button.setAttribute = (name, value) => { button[name] = value; };
+    audio.paused = true;
+    let paused = false;
+    f.context.window.LXBridge = {getPlayback: () => ({paused, playing:false})};
+    f.context.progress();
+    assert.equal(button['aria-label'], '暂停');
+    assert.match(button.innerHTML, /fa-pause/);
+    paused = true;
+    f.context.progress();
+    assert.equal(button['aria-label'], '播放');
+    assert.match(button.innerHTML, /fa-play/);
+    delete f.context.window.LXBridge;
+    audio.paused = false;
+    f.context.progress();
+    assert.match(button.innerHTML, /fa-pause/);
+});

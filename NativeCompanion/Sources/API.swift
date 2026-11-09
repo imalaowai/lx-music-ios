@@ -9,6 +9,7 @@ struct Credentials: Codable, Equatable {
 }
 enum Vault {
     static let service = "net.minyue.lxcompanion"
+    static let webSessionMigratedKey = "lx.webSessionMigrated"
     static func load() -> Credentials? {
         let query: Object = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "session", kSecReturnData as String: true]
         var result: CFTypeRef?
@@ -32,8 +33,20 @@ private final class DirectServerRequest: NSObject, URLSessionTaskDelegate {
     }
 }
 
+private struct ServerSessionExpired: LocalizedError {
+    var errorDescription: String? { "账号登录已失效，请重新登录" }
+}
+
 final class API {
-    var credentials: Credentials?
+    var credentials: Credentials? {
+        didSet {
+            guard credentials != oldValue else { return }
+            sessionRevision += 1
+            sourceCache.removeAll()
+        }
+    }
+    private var sessionRevision = 0
+    var onSessionExpired: (() -> Void)?
     var sourceCache: [String: (ResolvedAudio, Date)] = [:]
     let session: URLSession
     private lazy var directSession: URLSession = {
@@ -54,8 +67,10 @@ final class API {
     func url(_ path: String) -> URL? { guard let base = base else { return nil }; return URL(string: path, relativeTo: base)?.absoluteURL }
     @discardableResult func request(_ path: String, method: String = "GET", body: Object? = nil, timeout: TimeInterval? = nil, completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask? {
         guard let url = url(path), let identity = credentials else { completion(.failure(ClientError("请先打开手机页面登录音乐账号"))); return nil }
+        let revision = sessionRevision
         return requestJSON(url, via: session, method: method, body: body, timeout: timeout, identity: identity) { [weak self] result in
-            guard self?.credentials == identity else { completion(.failure(URLError(.cancelled))); return }
+            guard let self = self, self.sessionRevision == revision else { completion(.failure(URLError(.cancelled))); return }
+            if case .failure(let error) = result, error is ServerSessionExpired { self.onSessionExpired?() }
             completion(result)
         }
     }
@@ -75,10 +90,15 @@ final class API {
         request.setValue(identity?.username, forHTTPHeaderField: "x-user-name")
         if let body = body { request.httpBody = try? JSONSerialization.data(withJSONObject: body); request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let task = transport.dataTask(with: request) { data, response, error in
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let value = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? Object }
             var result: Result<Object, Error>
             if let error = error { result = .failure(error) }
-            else if let data = data, let value = (try? JSONSerialization.jsonObject(with: data)) as? Object {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            else if code == 401, identity != nil,
+                    text(value?["code"]) == "AUTH_REQUIRED" || ["/api/music/url", "/api/user/list", "/api/room/binding"].contains(url.path) {
+                result = .failure(ServerSessionExpired())
+            }
+            else if let value = value {
                 if (200..<300).contains(code), value["success"] == nil || bool(value["success"]) { result = .success(value) }
                 else { result = .failure(ClientError(text(value["message"]).isEmpty ? (text(value["error"]).isEmpty ? "请求失败（\(code)）" : text(value["error"])) : text(value["message"]))) }
             } else { result = .failure(ClientError("服务返回了无法读取的数据")) }
@@ -178,22 +198,29 @@ final class API {
             } catch { completion(.failure(error)) }
             return nil
         }
+        let revision = sessionRevision
         return LocalEngine.shared.call("resolve", ["song": song.raw, "quality": quality, "allowFallback": allowFallback]) { [weak self] result in
+            guard let self = self, self.sessionRevision == revision else { completion(.failure(URLError(.cancelled))); return }
             do {
                 guard let value = try result.get() as? Object else { throw ClientError("音源没有返回播放地址") }
-                let base = self?.base ?? URL(string: "https://lx-device.invalid/")!
+                let base = self.base ?? URL(string: "https://lx-device.invalid/")!
                 guard !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }
                 let url = try MediaAddress.direct(text(value["url"]), base: base)
                 let reported = text(value["type"]).isEmpty ? text(value["quality"]) : text(value["type"])
                 let qualityReported = bool(value["qualityReported"], !reported.isEmpty)
-                let media = self?.resolvedAudio(url: url, reportedQuality: reported, requestedQuality: quality, qualityReported: qualityReported) ?? ResolvedAudio(url: url, playbackQuality: reported.isEmpty ? quality : reported, qualityReported: qualityReported)
-                if (self?.sourceCache.count ?? 0) > 24 { self?.sourceCache.removeAll() }
-                self?.sourceCache[key] = (media, Date())
+                let media = self.resolvedAudio(url: url, reportedQuality: reported, requestedQuality: quality, qualityReported: qualityReported)
+                if self.sourceCache.count > 24 { self.sourceCache.removeAll() }
+                self.sourceCache[key] = (media, Date())
                 completion(.success(media))
             } catch {
-                if error.localizedDescription.hasPrefix("请在"), self?.credentials != nil, !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback") {
-                    self?.resolveOnServer(song, quality: quality, allowFallback: allowFallback, completion: completion)
-                } else { completion(.failure(error)) }
+                let useServer = !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")
+                if useServer, self.credentials != nil, (error as? URLError)?.code != .cancelled {
+                    self.resolveOnServer(song, quality: quality, allowFallback: allowFallback, completion: completion)
+                } else if useServer, self.credentials == nil, error.localizedDescription.hasPrefix("请在") {
+                    completion(.failure(ClientError("请登录同步账号使用服务器音源，或在「音源管理」导入本机音源")))
+                } else {
+                    completion(.failure(error))
+                }
             }
         }
     }

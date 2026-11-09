@@ -7,6 +7,9 @@ import UIKit
 final class PlaylistFixtureProtocol: URLProtocol {
     private let stateLock=NSLock()
     private var stopped=false
+    static let renewedToken = "renewed-fixture-token"
+    static var loginReply: (() -> Void)?
+    static var obsoleteReply: (() -> Void)?
     override class func canInit(with request:URLRequest)->Bool { ["http","https"].contains(request.url?.scheme ?? "") }
     override class func canonicalRequest(for request:URLRequest)->URLRequest { request }
     static var payload:Object {
@@ -17,14 +20,34 @@ final class PlaylistFixtureProtocol: URLProtocol {
         return ["success":true,"code":200,"enabled":false,"room":NSNull(),"binding":NSNull(),"total":1,"playlist":list,"playlists":[list],"songs":[track],"privileges":[["id":1231,"maxbr":320000,"maxBrLevel":"exhigh"]],"sub":[["category":0,"name":"全部"]],"categories":["0":"全部"],"tags":[],"user":["name":"fixture","username":"fixture"],"username":"fixture","data":lists,"loveList":[],"defaultList":lists["defaultList"]!,"userList":[]]
     }
     override func startLoading() {
+        if let url = request.url, url.host == "qiye-fixture.invalid" {
+            switch url.path {
+            case "/api/user/login":
+                DispatchQueue.main.async { Self.loginReply = { [weak self] in self?.reply(200, ["success":true, "token":Self.renewedToken]) } }
+                return
+            case "/api/user/list" where url.query == "session-test=obsolete":
+                DispatchQueue.main.async { Self.obsoleteReply = { [weak self] in self?.reply(401, ["success":false]) } }
+                return
+            case "/api/music/url":
+                if request.value(forHTTPHeaderField: "x-user-token") == Self.renewedToken,
+                   let audio = Bundle.main.url(forResource: "local-audio", withExtension: "flac") {
+                    reply(200, ["url":audio.absoluteString, "quality":"flac"])
+                } else { reply(401, ["message":"Unauthorized"]) }
+                return
+            default: break
+            }
+        }
         let delay=request.url?.path=="/source-delayed" ? 4.0 : 0.01
         DispatchQueue.global().asyncAfter(deadline:.now()+delay) { [weak self] in
-            guard let self=self,let url=self.request.url else{return}
-            self.stateLock.lock();let stopped=self.stopped;self.stateLock.unlock();if stopped{return}
-            let data=try! JSONSerialization.data(withJSONObject:Self.payload)
-            self.client?.urlProtocol(self,didReceive:HTTPURLResponse(url:url,statusCode:200,httpVersion:"HTTP/1.1",headerFields:["Content-Type":"application/json"])!,cacheStoragePolicy:.notAllowed)
-            self.client?.urlProtocol(self,didLoad:data);self.client?.urlProtocolDidFinishLoading(self)
+            self?.reply(200, Self.payload)
         }
+    }
+    private func reply(_ status: Int, _ payload: Object) {
+        guard let url = request.url else { return }
+        stateLock.lock();let stopped = self.stopped;stateLock.unlock();if stopped { return }
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:url,statusCode:status,httpVersion:"HTTP/1.1",headerFields:["Content-Type":"application/json"])!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didLoad:data);client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {stateLock.lock();stopped=true;stateLock.unlock()}
 }

@@ -29,18 +29,67 @@ enum WebRecoveryTests {
                         if let error = error { finish(error); return }
                         c.recoverForegroundPage()
                         waitReady(after:generation,deadline:Date().addingTimeInterval(30)) {
-                            do {
-                                try check(c.pageRecovery.ready && c.pageRecovery.generation > generation, "foregroundLivenessProbeRecoversABlankBridgeWithoutATerminationCallback")
-                                weak var released: WebController?
-                                autoreleasepool { var orphan: WebController? = WebController(); released = orphan; orphan?.loadViewIfNeeded(); orphan = nil }
-                                try check(released == nil, "scriptMessageHandlerDoesNotRetainAnAbandonedPhoneController")
-                                finish()
-                            } catch { finish(error) }
+                            Task { @MainActor in
+                                do {
+                                    try check(c.pageRecovery.ready && c.pageRecovery.generation > generation, "foregroundLivenessProbeRecoversABlankBridgeWithoutATerminationCallback")
+                                    try await checkSessionRecovery(c)
+                                    weak var released: WebController?
+                                    autoreleasepool { var orphan: WebController? = WebController(); released = orphan; orphan?.loadViewIfNeeded(); orphan = nil }
+                                    try check(released == nil, "scriptMessageHandlerDoesNotRetainAnAbandonedPhoneController")
+                                    finish()
+                                } catch { finish(error) }
+                            }
                         }
                     }
                 } catch { finish(error) }
             }
         } catch { finish(error) }
+    }
+    @MainActor static func checkSessionRecovery(_ c: WebController) async throws {
+        let player = Player.shared
+        var obsoleteError: URLError?
+        player.api.request("/api/user/list?session-test=obsolete", timeout: 30) { result in
+            if case .failure(let error) = result { obsoleteError = error as? URLError }
+        }
+        try await waitFor("Old session request reached the server") { PlaylistFixtureProtocol.obsoleteReply != nil }
+
+        let selectSong = "window.playSong({id:'session-track',name:'重登播放测试曲',singer:'Fixture',source:'wy'},0); true"
+        let signedInPage = c.pageRecovery.generation
+        _ = try await c.web.evaluateJavaScript(selectSong)
+        try await waitFor("An unauthorized playback request opens the signed-out page") {
+            player.api.credentials == nil && c.pageRecovery.generation > signedInPage && c.pageRecovery.ready
+        }
+        let cleared = try await c.web.evaluateJavaScript("localStorage.getItem('lx_user_token') === null")
+        try check(cleared as? Bool == true && player.current == nil && !player.loading, "evictedPlaybackClearsStaleSessionAndQueue")
+
+        _ = try await c.web.evaluateJavaScript("void window.LXNative.request('signIn',{username:'fixture',password:'fixture-password',deviceId:'simulator-fixture'}); true")
+        try await waitFor("Login reached the server") { PlaylistFixtureProtocol.loginReply != nil }
+        c.retryPage()
+        let reloadedPage = c.pageRecovery.generation
+        PlaylistFixtureProtocol.loginReply?(); PlaylistFixtureProtocol.loginReply = nil
+        try await waitFor("A login in flight survives the page reload") {
+            player.api.credentials?.token == PlaylistFixtureProtocol.renewedToken && c.pageRecovery.generation > reloadedPage && c.pageRecovery.ready
+        }
+        let restored = try await c.web.evaluateJavaScript("localStorage.getItem('lx_user_token') === 'renewed-fixture-token'")
+        try check(restored as? Bool == true, "reloadedPageUsesFreshNativeCredentials")
+
+        PlaylistFixtureProtocol.obsoleteReply?(); PlaylistFixtureProtocol.obsoleteReply = nil
+        try await waitFor("Obsolete HTTP 401 was discarded") { obsoleteError?.code == .cancelled }
+        try check(player.api.credentials?.token == PlaylistFixtureProtocol.renewedToken, "obsoleteAuthorizationFailureCannotRevokeNewLogin")
+        _ = try await c.web.evaluateJavaScript(selectSong)
+        try await waitFor("A track plays after login using the fresh token") {
+            player.current?.key == "session-track" && player.playbackAdvancing && player.position > 0
+        }
+        let pauseIcon = try await c.web.evaluateJavaScript("!!document.querySelector('#mobile-mini-play .fa-pause') && !!document.querySelector('#btn-play .fa-pause')")
+        try check(pauseIcon as? Bool == true && player.failure.isEmpty, "firstTrackAfterLoginPlaysAndUpdatesBothButtons")
+        player.pause(user: false)
+    }
+    @MainActor static func waitFor(_ description: String, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(8)
+        while !condition() {
+            guard Date() < deadline else { throw ClientError(description) }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
     static func waitReady(after generation: Int = -1, deadline: Date, completion: @escaping () -> Void) {
         guard !finished else { return }

@@ -35,7 +35,7 @@
     foregroundSync = false;
   }
   let renderedQueue = -1, renderedSong = '', renderedQuality = '', selection = 0;
-  let renderedPlaying = null, renderedStatus = null, renderedMode = null;
+  let renderedPaused = null, renderedStatus = null, renderedMode = null;
   let roomMemberSignature = '';
   let room = {binding: null, state: {}, participants: [], connected: false, enabled: true, syncOnTrack: true};
   const post = (op, values = {}) => new Promise((resolve, reject) => {
@@ -108,6 +108,9 @@
     if (!installed) return;
     applying = true;
     try {
+      // Match togglePlay while the decoder is loading, buffering or seeking.
+      const paused = state.paused !== false;
+      if (renderedPaused !== paused) {updatePlayButton(!paused); renderedPaused = paused;}
       if (updatedQueue || currentPlaylist !== state.queue && renderedQueue === -1) currentPlaylist = state.queue;
       currentIndex = state.index; playMode = state.mode || 'list';
       currentPlayingSong = state.song?.name ? state.song : null; window.currentPlayingSong = currentPlayingSong;
@@ -123,7 +126,6 @@
         if (state.song?.name) {try {fetchLyric(state.song, state.quality); savePlayHistory(state.song, state.quality);} catch {}}
       }
       const playing = state.playing === true;
-      if (renderedPlaying !== playing) {updatePlayButton(playing); renderedPlaying = playing;}
       const status = state.error || (state.loading ? '正在获取播放链接' : state.ended && !state.paused ? '等待房间下一首' : !state.paused && !playing ? '正在缓冲' : '');
       const statusKey = JSON.stringify([status, playing]);
       if (renderedStatus !== statusKey) {setPlayerStatus(status, playing); renderedStatus = statusKey;}
@@ -205,8 +207,7 @@
     keyboard(value) {window.dispatchEvent(new CustomEvent('lx-native-keyboard', {detail:value}));},
     download(value) {window.dispatchEvent(new CustomEvent('lx-native-download', {detail: value}));},
     sources(value) {window.dispatchEvent(new CustomEvent('lx-native-sources', {detail: value}));},
-    chat(type, data) {window.dispatchEvent(new CustomEvent(type === 'room:chat-history' ? 'lx-room-chat-history' : 'lx-room-chat-update', {detail: {...data, roomId: room.binding?.roomId || ''}}));},
-    revoked() {listKey = ''; infoRequest = null; window.dispatchEvent(new CustomEvent('lx-auth-revoked')); send('returnToGuest');}
+    chat(type, data) {window.dispatchEvent(new CustomEvent(type === 'room:chat-history' ? 'lx-room-chat-history' : 'lx-room-chat-update', {detail: {...data, roomId: room.binding?.roomId || ''}}));}
   };
   let libraryQueue = Promise.resolve();
   function publishLibrary(data) {
@@ -229,7 +230,7 @@
   }
   async function restoreAccount() {
     let account = await post('session');
-    if (account.migrate && localStorage.getItem('lx_user_token')) {
+    if (!account.revoked && account.migrate && localStorage.getItem('lx_user_token')) {
       const username = localStorage.getItem('lx_sync_user') || '', token = localStorage.getItem('lx_user_token');
       const owner = localStorage.getItem('lx_web_token_user');
       if ((!owner || owner === username) && await post('auth', {username, token})) account = {username, token};
@@ -244,7 +245,10 @@
       localStorage.removeItem('lx_sync_pass');
       window.SyncManager?.initLocal(account.username, '');
       if (typeof notifyAccountChange === 'function') notifyAccountChange();
-    } else if (localStorage.getItem('lx_sync_user') !== '__device__') clearWebSession();
+    } else {
+      if (localStorage.getItem('lx_sync_user') !== '__device__') clearWebSession();
+      if (account.revoked) window.dispatchEvent(new CustomEvent('lx-auth-revoked'));
+    }
     return account;
   }
   const originalSet = Storage.prototype.setItem;

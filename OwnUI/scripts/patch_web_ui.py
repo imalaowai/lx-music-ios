@@ -32,6 +32,9 @@ def patch_web_ui(html):
     }""")
     html = replace(html, 'function savePlaybackState() {', 'function savePlaybackState() {\n    if (window.LXBridge) return;')
     html = replace(html, 'async function restorePlaybackState() {', 'async function restorePlaybackState() {\n    if (window.LXBridge) return;')
+    html = replace(html, "const button=$('mobile-mini-play'),playing=!audio.paused;",
+                   """const paused=window.LXBridge?.getPlayback().paused ?? audio.paused;
+  const button=$('mobile-mini-play'),playing=!paused;""")
     html = replace(html, '    // 1. Restore cached list data (from IndexedDB) for logged in user only',
                    '    if (window.LXBridge) return;\n\n    // 1. Restore cached list data (from IndexedDB) for logged in user only')
     html = replace(html, '        // [Fix] Auto-Login logic (Restore Session)',

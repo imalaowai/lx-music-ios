@@ -1,7 +1,7 @@
 name: Background room and phone recovery
 on:
   push:
-    branches: [fix/background-carplay-room-recovery-20261104]
+    branches: [fix/background-carplay-room-recovery-20261104, fix/ios-session-playback-recovery-20261109]
   workflow_dispatch:
 permissions:
   contents: read

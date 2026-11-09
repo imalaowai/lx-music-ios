@@ -240,7 +240,7 @@ final class RoomClient {
         case "room:state", "room:snapshot": apply(value["state"] as? Object ?? value)
         case "room:chat-update", "room:chat-history": player.onChat?(type, value)
         case "room:dissolved": player.pause(user: false); disconnect(clear: true)
-        case "room:session-evicted": player.onRevoked?(); player.configure(nil); player.failure = "账号登录已失效，请重新登录"; player.publish()
+        case "room:session-evicted": player.revokeSession()
         case "room:switched": disconnect(clear: true); refresh()
         case "room:error": player.failure = text(value["message"]); player.publish()
         default: break

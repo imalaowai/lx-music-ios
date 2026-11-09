@@ -34,7 +34,11 @@ final class Player {
     func seek(_ time: Double, user: Bool) { seeks.append(time); position = time }
     func play(user: Bool) { wanted = true }
     func pause(user: Bool) { wanted = false }
-    func configure(_ value: Credentials?) { api.credentials = value }
+    func revokeSession() {
+        guard api.credentials != nil else { return }
+        api.credentials = nil
+        onRevoked?()
+    }
     func finishTransition() {}
     func persistQueue() {}
     func publish() {}
@@ -208,6 +212,15 @@ final class Player {
         paused.wanted = false; paused.audio.currentItem = nil; pausedRoom.binding = ["roomId":"empty"]
         pausedRoom.handle("room:joined", ["state":["song":NSNull()]])
         check(paused.api.requests.isEmpty, "cold room join does not broadcast an old paused queue to an empty room")
+        let evicted = Player(), evictedRoom = RoomClient(player:evicted)
+        var notices = 0
+        evicted.onRevoked = {
+            check(evicted.api.credentials == nil, "session credentials are cleared before the room notifies the page")
+            notices += 1
+        }
+        evictedRoom.handle("room:session-evicted", nil)
+        evictedRoom.handle("room:session-evicted", nil)
+        check(notices == 1, "a duplicate eviction cannot restart the logout flow")
         offRoom.disconnect(clear:true); pausedRoom.disconnect(clear:true)
         retryRoom.disconnect(clear:true); room.disconnect(clear:true)
         print(String(data:try! JSONSerialization.data(withJSONObject:checks,options:[.prettyPrinted,.sortedKeys]),encoding:.utf8)!)

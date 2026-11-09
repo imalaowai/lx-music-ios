@@ -16,7 +16,7 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     var serverGeneration = 0
     static let defaultServer = URL(string: "https://lx.minyue.de5.net:99")!
     static let serverKey = "lx.server"
-    static let migratedSessionKey = "lx.webSessionMigrated"
+    static let migratedSessionKey = Vault.webSessionMigratedKey
     private var guestOrigin: URL {
         let defaults = UserDefaults.standard
         if let saved = defaults.string(forKey:"lx.guestOrigin"), let origin = URL(string:saved) { return origin }
@@ -49,6 +49,8 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     var recoveryTimer: Timer?
     var pageRecovery = PageRecovery()
     var pageProbeInFlight = false
+    private var sessionReloadPending = false
+    private var sessionRevokedNotice = false
     #if LX_OWN_UI_TESTING
     var testPhoneInactive = false
     #endif
@@ -92,7 +94,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
         }
         player.onState = { [weak self] value in self?.emit("state", value) }
         player.onRoom = { [weak self] value in self?.emit("room", value) }
-        player.onRevoked = { [weak self] in self?.web.evaluateJavaScript("window.LXBridge?.revoked()", completionHandler: nil) }
+        player.onRevoked = { [weak self] in
+            self?.sessionRevokedNotice = true
+            self?.sessionReloadPending = true
+            self?.recoverForegroundPage()
+        }
         player.onChat = { [weak self] type, value in self?.emitChat(type, value) }
         MusicLibrary.shared.onChange = { [weak self] value in self?.emit("download", value) }
         MusicLibrary.shared.restoreTasks()
@@ -179,7 +185,9 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             emit("server", accountInfo)
         }
     }
-    func open(_ url: URL) {
+    func open(_ requestedURL: URL) {
+        let url = sessionReloadPending ? (player.api.base ?? guestOrigin) : requestedURL
+        sessionReloadPending = false
         address = url; cancelImport()
         for ticket in Array(devicePreparations.keys) { finishDevicePreparation(ticket, error:"页面已重新加载，请重试") }
         view.viewWithTag(212)?.removeFromSuperview(); view.viewWithTag(213)?.removeFromSuperview()
@@ -201,6 +209,11 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
     }
     func recoverForegroundPage() {
         guard phoneForeground, let address = address else { return }
+        if sessionReloadPending {
+            // Keep an in-flight login from being abandoned by a late logout.
+            guard loginTask == nil else { return }
+            open(player.api.base ?? guestOrigin); return
+        }
         if pageRecovery.canReload(active:true, at:ProcessInfo.processInfo.systemUptime) {
             open(address); return
         }
@@ -261,38 +274,45 @@ final class WebController: UIViewController, WKScriptMessageHandler, WKNavigatio
             if let account = player.api.credentials, Self.serverURL(address?.absoluteString) == Self.serverURL(account.server) {
                 done(["username":account.username, "token":account.token, "info":accountInfo])
             } else {
-                done(["info":accountInfo, "migrate":player.api.credentials == nil && !UserDefaults.standard.bool(forKey: Self.migratedSessionKey)])
+                let revoked = player.api.credentials == nil && sessionRevokedNotice && !sessionReloadPending
+                if revoked { sessionRevokedNotice = false }
+                done(["info":accountInfo, "revoked":revoked, "migrate":player.api.credentials == nil && !UserDefaults.standard.bool(forKey: Self.migratedSessionKey)])
             }
         case "signIn":
             let username = text(value["username"]).trimmingCharacters(in: .whitespacesAndNewlines), password = text(value["password"])
             guard !username.isEmpty, !password.isEmpty else { done(false, "请输入账号和密码"); return }
             guard loginTask == nil else { done(false, "正在登录"); return }
             let endpoint = server, attempt = serverGeneration
-            var deviceID = text(value["deviceId"])
-            if deviceID.isEmpty { deviceID = UserDefaults.standard.string(forKey: "lx.loginDeviceId") ?? UUID().uuidString }
+            var deviceID = UserDefaults.standard.string(forKey: "lx.loginDeviceId") ?? ""
+            if deviceID.isEmpty { deviceID = text(value["deviceId"]) }
+            if deviceID.isEmpty { deviceID = UUID().uuidString }
             UserDefaults.standard.set(deviceID, forKey: "lx.loginDeviceId")
             let payload = ["username":username, "password":password, "deviceId":deviceID, "deviceName":"栖页音乐 · " + UIDevice.current.model]
             loginTask = player.api.requestServer(endpoint, path: "/api/user/login", body: payload, timeout: 10) { [weak self] result in
                 guard let self = self, self.serverGeneration == attempt else { return }
                 self.loginTask = nil
-                guard self.pageRecovery.generation == pageGeneration else { return }
                 do {
                     let session = try result.get()
                     let token = text(session["token"])
                     guard !token.isEmpty else { throw ClientError("登录服务没有返回会话") }
                     UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
-                    self.player.configure(Credentials(server: endpoint.absoluteString, username: username, token: token))
+                    let credentials = Credentials(server: endpoint.absoluteString, username: username, token: token)
+                    self.sessionRevokedNotice = false
+                    self.player.configure(credentials)
                     done(true)
-                    DispatchQueue.main.async { self.open(endpoint) }
+                    DispatchQueue.main.async {
+                        // The server may have issued a new token while WebKit reloaded.
+                        guard self.serverGeneration == attempt, self.player.api.credentials == credentials else { return }
+                        self.open(endpoint)
+                    }
                 } catch {
                     let message = error.localizedDescription
                     done(false, message == "Invalid credentials" ? "账号或密码不正确" : message)
+                    self.recoverForegroundPage()
                 }
             }
-        case "returnToGuest":
-            done()
-            if player.api.credentials == nil, address != guestOrigin { DispatchQueue.main.async { self.open(self.guestOrigin) } }
         case "signOut":
+            serverGeneration += 1; loginTask?.cancel(); loginTask = nil
             UserDefaults.standard.set(true, forKey: Self.migratedSessionKey)
             if player.api.credentials != nil { player.api.request("/api/user/logout", method: "POST", body: [:], timeout: 4) { _ in } }
             player.configure(nil); done()

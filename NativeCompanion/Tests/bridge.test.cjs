@@ -1,25 +1,25 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{EventEmitter}=require('node:events');
 function fixture({readyFailures=0,session={migrate:true},resume=true}={}){
-  const messages=[],listeners={},intervals=[],renders={queue:0,metadata:0,button:0,status:0};let htmlPlays=0;let context;let now=0;let ready;const initialized=new Promise(resolve=>ready=resolve);
+  const messages=[],events=[],listeners={},intervals=[],buttonStates=[],renders={queue:0,metadata:0,button:0,status:0};let htmlPlays=0;let context;let now=0;let ready;const initialized=new Promise(resolve=>ready=resolve);
   class Media extends EventEmitter {constructor(){super();this.id='audio-player';}play(){htmlPlays++;return Promise.resolve();}pause(){}load(){}dispatchEvent(e){this.emit(e.type,e);}addEventListener(n,f){this.on(n,f);}}
   class Storage{constructor(){this.map=new Map();}getItem(k){return this.map.get(k)??null;}setItem(k,v){this.map.set(k,String(v));}removeItem(k){this.map.delete(k);}clear(){this.map.clear();}}
   const storage=new Storage();storage.setItem('lx_sync_user','fixture');storage.setItem('lx_user_token','private-token');
   const audio=new Media(),queue=[{id:'a',name:'A',source:'wy'},{id:'b',name:'B',source:'wy'}];
-  const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',querySelectorAll:()=>[],getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
+  const document={documentElement:{dataset:{}},readyState:'loading',visibilityState:'visible',querySelector:()=>null,querySelectorAll:()=>[],getElementById:id=>id==='audio-player'?audio:null,addEventListener:(n,f)=>listeners[n]=f};
   const window={NativeShell:{ready:false}};window.top=window;window.window=window;
   window.webkit={messageHandlers:{lxNative:{postMessage(value){messages.push(value);queueMicrotask(()=>{if(value.op==='uiReady'&&readyFailures>0){readyFailures--;window.LXBridge.reply(value.id,false,null);return;}const response=value.op==='session'?session:value.op==='importLookup'?{url:'file:///cached.flac'}:value.op==='ready'&&resume?{state:{sampledAt:1700000000000,index:0,queueRevision:0,queue:queue.slice(),paused:true,position:0,duration:0}}:true;window.LXBridge.reply(value.id,response,null);if(value.op==='uiReady')ready();});}}}};
   window.__LX_PLAYER_GETTERS__={getCurrentPlaylist:()=>context.currentPlaylist,getCurrentIndex:()=>context.currentIndex,enqueue(songs){context.currentPlaylist.push(...songs);}};
   window.__LX_LIBRARY_GETTERS__={getData:()=>({loveList:queue,userList:[]})};
   window.removeFromQueue=index=>{context.currentPlaylist.splice(index,1);};window.clearQueue=async()=>{context.currentPlaylist=[];context.currentIndex=-1;};
-  window.updatePlayModeUI=()=>{};window.dispatchEvent=()=>{};window.showError=e=>{throw Error(String(e));};
+  window.updatePlayModeUI=()=>{};window.dispatchEvent=event=>events.push(event);window.showError=e=>{throw Error(String(e));};
   context={window,document,Date:{now:()=>1700000000000+now},performance:{now:()=>now},navigator:{mediaSession:{}},Storage,localStorage:storage,HTMLMediaElement:Media,Event:class{constructor(type){this.type=type;}},CustomEvent:class{constructor(type,value){this.type=type;this.detail=value?.detail;}},setTimeout,clearTimeout,setInterval:f=>intervals.push(f),queueMicrotask,Promise,console,Map,
     settings:{preferredQuality:'flac'},playMode:'list',currentPlaylist:queue,currentIndex:0,currentPlayingSong:null,requestedRoomSong:null,roomAudioSongKey:'',currentQuality:null,playbackProgressReady:false,shouldAutoRecoverPlayback:false,currentLoadingSongId:null,
-    updatePlayerInfo(){renders.metadata++;},updatePlayButton(){renders.button++;},setPlayerStatus(){renders.status++;},renderQueue(){renders.queue++;},fetchLyric(){},savePlayHistory(){}};
+    updatePlayerInfo(){renders.metadata++;},updatePlayButton(playing){renders.button++;buttonStates.push(playing);},setPlayerStatus(){renders.status++;},renderQueue(){renders.queue++;},fetchLyric(){},savePlayHistory(){}};
   vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../Resources/Bridge.js'),'utf8'),context);
   listeners.DOMContentLoaded();
   context.currentPlaylist=queue.slice();context.currentIndex=0;
-  return {window,context,audio,messages,intervals,storage,renders,advance:ms=>{now+=ms;},visibility:value=>{document.visibilityState=value;listeners.visibilitychange();},htmlPlays:()=>htmlPlays,settle:async()=>{await initialized;await new Promise(setImmediate);}};
+  return {window,context,audio,messages,events,intervals,storage,renders,buttonStates,advance:ms=>{now+=ms;},visibility:value=>{document.visibilityState=value;listeners.visibilitychange();},htmlPlays:()=>htmlPlays,settle:async()=>{await initialized;await new Promise(setImmediate);}};
 }
 test('Foreground native recovery can distinguish an installed UI from a loading document',async()=>{
   const f=fixture();await f.settle();assert.equal(f.window.LXBridge.isReady(),false);
@@ -44,6 +44,19 @@ test('Native remote state updates UI without echoing play, pause, seek or room c
   await f.settle();assert.equal(f.audio.currentTime,34);assert.equal(f.audio.paused,false);assert.equal(f.context.currentPlayingSong.id,'remote');assert.equal(f.messages.length,0);
   f.audio.currentTime=72;await f.settle();assert.equal(f.messages.at(-1).op,'seek');assert.equal(f.messages.at(-1).time,72);
 });
+test('The transport button follows the native pause command through loading and buffering',async()=>{
+  const f=fixture();await f.settle();
+  f.window.LXBridge.state({paused:false,playing:false,loading:true,position:0});
+  assert.deepEqual(f.buttonStates,[false,true]);
+  assert.equal(f.audio.paused,true);
+  f.window.LXBridge.state({loading:false,playing:true,position:5});
+  f.window.LXBridge.state({playing:false,position:5.5});
+  assert.deepEqual(f.buttonStates,[false,true]);
+  await f.window.togglePlay();assert.equal(f.messages.at(-1).op,'pause');
+  f.window.LXBridge.state({paused:true});
+  assert.deepEqual(f.buttonStates,[false,true,false]);
+  await f.window.togglePlay();assert.equal(f.messages.at(-1).op,'play');
+});
 test('Legacy session migration uses the token once and a blank web store cannot sign out the native player',async()=>{
   const f=fixture();f.storage.setItem('lx_sync_pass','old-web-password');await f.settle();
   assert.equal(f.messages.find(x=>x.op==='auth').token,'private-token');
@@ -58,6 +71,24 @@ test('Native session recovery replaces a stale WebView token before library acce
   assert.equal(f.messages.some(x=>x.op==='auth'),false);
   assert.equal(f.storage.getItem('lx_sync_user'),'restored');
   assert.equal(f.storage.getItem('lx_user_token'),'native-token');
+});
+test('An evicted account cannot be migrated back and the next login can select a song',async()=>{
+  const guest=fixture({session:{revoked:true,migrate:true,info:{hasAccount:false}}});
+  guest.storage.setItem('lx_sync_pass','old-password');
+  guest.storage.setItem('lx_sync_mode','local');
+  await guest.settle();
+  assert.equal(guest.messages.some(x=>x.op==='auth'||x.op==='returnToGuest'),false);
+  for(const key of ['lx_user_token','lx_sync_user','lx_sync_pass','lx_sync_mode'])
+    assert.equal(guest.storage.getItem(key),null);
+  assert.equal(guest.window.LXBridge.getAccountInfo().hasAccount,false);
+  assert.equal(guest.events.filter(x=>x.type==='lx-auth-revoked').length,1);
+
+  const signedIn=fixture({session:{username:'fixture',token:'new-token',info:{hasAccount:true}}});
+  await signedIn.settle();
+  assert.equal(signedIn.storage.getItem('lx_user_token'),'new-token');
+  await signedIn.window.playSong(signedIn.context.currentPlaylist[0],0);
+  assert.equal(signedIn.messages.find(x=>x.op==='select').queue[0].id,'a');
+  assert.equal(signedIn.events.some(x=>x.type==='lx-auth-revoked'),false);
 });
 test('Selecting a device song hands the queue to native playback without transferring every device file',async()=>{
   const f=fixture();await f.settle();f.messages.length=0;
