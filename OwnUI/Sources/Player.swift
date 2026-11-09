@@ -242,7 +242,7 @@ final class Player {
         guard song.raw["openlist"] == nil, song.raw["deviceKey"] != nil || !bool(song.raw["isLocal"]) else { return }
         // Resolve one future address only. The reference core opens it when selected.
         let requestedQuality = QualityPolicy.best(for: song.raw, preference: quality, allowFallback: allowFallback)
-        prefetchTask = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback) { _ in }
+        prefetchTask = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback, allowServerFallback: false) { _ in }
     }
     func play(user: Bool = true) {
         guard current != nil else { return }

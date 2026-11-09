@@ -10,6 +10,8 @@ final class PlaylistFixtureProtocol: URLProtocol {
     static let renewedToken = "renewed-fixture-token"
     static var loginReply: (() -> Void)?
     static var obsoleteReply: (() -> Void)?
+    static var verificationRequests = 0
+    static var musicRequests = 0
     override class func canInit(with request:URLRequest)->Bool { ["http","https"].contains(request.url?.scheme ?? "") }
     override class func canonicalRequest(for request:URLRequest)->URLRequest { request }
     static var payload:Object {
@@ -28,11 +30,24 @@ final class PlaylistFixtureProtocol: URLProtocol {
             case "/api/user/list" where url.query == "session-test=obsolete":
                 DispatchQueue.main.async { Self.obsoleteReply = { [weak self] in self?.reply(401, ["success":false]) } }
                 return
+            case "/api/room/binding" where url.query == "session-test=denied":
+                reply(401, ["message":"Unauthorized"])
+                return
+            case "/api/user/auth/verify":
+                let valid = request.value(forHTTPHeaderField: "x-user-token") == Self.renewedToken
+                DispatchQueue.main.async { [weak self] in
+                    Self.verificationRequests += 1
+                    self?.reply(200, ["valid":valid])
+                }
+                return
             case "/api/music/url":
-                if request.value(forHTTPHeaderField: "x-user-token") == Self.renewedToken,
-                   let audio = Bundle.main.url(forResource: "local-audio", withExtension: "flac") {
-                    reply(200, ["url":audio.absoluteString, "quality":"flac"])
-                } else { reply(401, ["message":"Unauthorized"]) }
+                let valid = request.value(forHTTPHeaderField: "x-user-token") == Self.renewedToken
+                DispatchQueue.main.async { [weak self] in
+                    Self.musicRequests += 1
+                    if valid, let audio = Bundle.main.url(forResource: "local-audio", withExtension: "flac") {
+                        self?.reply(200, ["url":audio.absoluteString, "quality":"flac"])
+                    } else { self?.reply(401, ["message":"Unauthorized"]) }
+                }
                 return
             default: break
             }

@@ -57,6 +57,18 @@ test('The transport button follows the native pause command through loading and 
   assert.deepEqual(f.buttonStates,[false,true,false]);
   await f.window.togglePlay();assert.equal(f.messages.at(-1).op,'play');
 });
+test('A native track failure is shown once and a later attempt can report it again',async()=>{
+  const f=fixture();await f.settle();
+  const errors=[];
+  f.window.showError=message=>errors.push(message);
+  f.window.LXBridge.state({song:{id:'a',name:'A'},paused:false,error:''});
+  f.window.LXBridge.state({paused:true,error:'音源拒绝请求'});
+  f.window.LXBridge.state({position:1});
+  assert.deepEqual(errors,['音源拒绝请求']);
+  f.window.LXBridge.state({paused:false,error:''});
+  f.window.LXBridge.state({paused:true,error:'音源拒绝请求'});
+  assert.deepEqual(errors,['音源拒绝请求','音源拒绝请求']);
+});
 test('Legacy session migration uses the token once and a blank web store cannot sign out the native player',async()=>{
   const f=fixture();f.storage.setItem('lx_sync_pass','old-web-password');await f.settle();
   assert.equal(f.messages.find(x=>x.op==='auth').token,'private-token');

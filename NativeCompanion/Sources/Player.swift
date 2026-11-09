@@ -186,7 +186,7 @@ final class Player {
         guard song.raw["deviceKey"] == nil, song.raw["openlist"] == nil, !bool(song.raw["isLocal"]) else { return }
         // Resolve one future address only. AVPlayer opens audio when selected.
         let requestedQuality = QualityPolicy.best(for: song.raw, preference: quality, allowFallback: allowFallback)
-        prefetchTask = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback) { _ in }
+        prefetchTask = api.resolve(song, quality: requestedQuality, allowFallback: allowFallback, allowServerFallback: false) { _ in }
     }
     func play(user: Bool = true) {
         guard current != nil else { return }

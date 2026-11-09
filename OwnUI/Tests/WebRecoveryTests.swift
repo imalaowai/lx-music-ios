@@ -89,6 +89,25 @@ enum WebRecoveryTests {
         }
         let pauseIcon = try await c.web.evaluateJavaScript("!!document.querySelector('#mobile-mini-play .fa-pause') && !!document.querySelector('#btn-play .fa-pause')")
         try check(pauseIcon as? Bool == true && player.failure.isEmpty, "firstTrackAfterLoginPlaysAndUpdatesBothButtons")
+
+        player.audio.localAudio?.numberOfLoops = -1
+        let musicRequests = PlaylistFixtureProtocol.musicRequests
+        player.queue.append(Song(raw:["id":"prefetch-no-source","name":"没有本机音源的下一首","source":"wy"]))
+        player.mode = "list"
+        player.prefetchNext()
+        let verifications = PlaylistFixtureProtocol.verificationRequests
+        var rejected = false
+        player.api.request("/api/room/binding?session-test=denied") { result in
+            if case .failure = result { rejected = true }
+        }
+        try await waitFor("Secondary endpoint's 401 triggers verification") {
+            rejected && PlaylistFixtureProtocol.verificationRequests > verifications
+        }
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+        try check(PlaylistFixtureProtocol.musicRequests == musicRequests, "speculativePrefetchDoesNotCallAuthenticatedFallback")
+        try check(player.api.credentials?.token == PlaylistFixtureProtocol.renewedToken &&
+                  player.current?.key == "session-track" && player.playbackAdvancing && player.failure.isEmpty,
+                  "background401DoesNotStopPlaybackWithAValidLogin")
         player.pause(user: false)
     }
     @MainActor static func waitFor(_ description: String, _ condition: () -> Bool) async throws {

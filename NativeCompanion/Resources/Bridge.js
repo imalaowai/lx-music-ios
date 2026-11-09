@@ -129,6 +129,7 @@
       const status = state.error || (state.loading ? '正在获取播放链接' : state.ended && !state.paused ? '等待房间下一首' : !state.paused && !playing ? '正在缓冲' : '');
       const statusKey = JSON.stringify([status, playing]);
       if (renderedStatus !== statusKey) {setPlayerStatus(status, playing); renderedStatus = statusKey;}
+      if (paused && state.song?.name && state.error && state.error !== previous.error) window.showError?.(state.error);
       const audio = audioElement();
       if (audio) {
         audio.dispatchEvent(new Event('timeupdate'));

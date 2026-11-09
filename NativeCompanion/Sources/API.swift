@@ -33,8 +33,8 @@ private final class DirectServerRequest: NSObject, URLSessionTaskDelegate {
     }
 }
 
-private struct ServerSessionExpired: LocalizedError {
-    var errorDescription: String? { "账号登录已失效，请重新登录" }
+private struct ServerAuthorizationRejected: LocalizedError {
+    var errorDescription: String? { "音乐服务器拒绝了请求（401）" }
 }
 
 final class API {
@@ -46,6 +46,7 @@ final class API {
         }
     }
     private var sessionRevision = 0
+    private var verifyingRevision: Int?
     var onSessionExpired: (() -> Void)?
     var sourceCache: [String: (ResolvedAudio, Date)] = [:]
     let session: URLSession
@@ -58,6 +59,7 @@ final class API {
         if let fixture = Self.fixtureProtocol { configuration.protocolClasses = [fixture] }
         #endif
         configuration.httpShouldSetCookies = false
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForResource = 15
         return URLSession(configuration: configuration, delegate: DirectServerRequest(), delegateQueue: nil)
     }()
@@ -79,8 +81,22 @@ final class API {
         let revision = sessionRevision
         return requestJSON(url, via: session, method: method, body: body, timeout: timeout, identity: identity) { [weak self] result in
             guard let self = self, self.sessionRevision == revision else { completion(.failure(URLError(.cancelled))); return }
-            if case .failure(let error) = result, error is ServerSessionExpired { self.onSessionExpired?() }
+            if case .failure(let error) = result, error is ServerAuthorizationRejected {
+                self.confirmSessionExpiration(identity, revision: revision)
+            }
             completion(result)
+        }
+    }
+    private func confirmSessionExpiration(_ identity: Credentials, revision: Int) {
+        guard verifyingRevision != revision, let url = url("/api/user/auth/verify") else { return }
+        verifyingRevision = revision
+        requestJSON(url, via: directSession, method: "GET", body: nil, timeout: 6, identity: identity) { [weak self] result in
+            guard let self = self, self.sessionRevision == revision else { return }
+            self.verifyingRevision = nil
+            // An individual music or room endpoint can reject a valid account.
+            guard case .success(let value) = result, value["valid"] as? Bool == false else { return }
+            RuntimeTrace.record("auth.confirmed-expired")
+            self.onSessionExpired?()
         }
     }
     @discardableResult func requestServer(_ base: URL, path: String, body: Object, timeout: TimeInterval,
@@ -105,7 +121,7 @@ final class API {
             if let error = error { result = .failure(error) }
             else if code == 401, identity != nil,
                     text(value?["code"]) == "AUTH_REQUIRED" || ["/api/music/url", "/api/user/list", "/api/room/binding"].contains(url.path) {
-                result = .failure(ServerSessionExpired())
+                result = .failure(ServerAuthorizationRejected())
             }
             else if let value = value {
                 if (200..<300).contains(code), value["success"] == nil || bool(value["success"]) { result = .success(value) }
@@ -164,7 +180,7 @@ final class API {
               FileManager.default.fileExists(atPath:url.path) else { return nil }
         return url
     }
-    @discardableResult func resolve(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) -> Cancellable? {
+    @discardableResult func resolve(_ song: Song, quality: String, allowFallback: Bool, allowServerFallback: Bool = true, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) -> Cancellable? {
         if let local = MusicLibrary.shared.localURL(song) {
             let reported = text(song.raw["quality"]).isEmpty ? local.pathExtension.lowercased() : text(song.raw["quality"])
             completion(.success(ResolvedAudio(url: local, playbackQuality: reported.isEmpty ? "unknown" : reported, qualityReported: !reported.isEmpty)))
@@ -222,7 +238,7 @@ final class API {
                 self.sourceCache[key] = (media, Date())
                 completion(.success(media))
             } catch {
-                let useServer = !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")
+                let useServer = allowServerFallback && !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")
                 if useServer, self.credentials != nil, (error as? URLError)?.code != .cancelled {
                     self.resolveOnServer(song, quality: quality, allowFallback: allowFallback, completion: completion)
                 } else if useServer, self.credentials == nil, error.localizedDescription.hasPrefix("请在") {
