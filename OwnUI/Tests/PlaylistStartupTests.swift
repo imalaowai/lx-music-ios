@@ -42,11 +42,16 @@ final class PlaylistFixtureProtocol: URLProtocol {
                 return
             case "/api/music/url":
                 let valid = request.value(forHTTPHeaderField: "x-user-token") == Self.renewedToken
+                let song = requestSong()
                 DispatchQueue.main.async { [weak self] in
                     Self.musicRequests += 1
-                    if valid, let audio = Bundle.main.url(forResource: "local-audio", withExtension: "flac") {
-                        self?.reply(200, ["url":audio.absoluteString, "quality":"flac"])
-                    } else { self?.reply(401, ["message":"Unauthorized"]) }
+                    guard valid else { self?.reply(401, ["message":"Unauthorized"]); return }
+                    guard song["songmid"] as? Int == 1231, (song["meta"] as? Object)?["songId"] as? String == "1231",
+                          let audio = Bundle.main.url(forResource: "local-audio", withExtension: "flac") else {
+                        self?.reply(500, ["error":"Server fallback changed the web song payload"])
+                        return
+                    }
+                    self?.reply(200, ["url":audio.absoluteString, "quality":"flac"])
                 }
                 return
             default: break
@@ -56,6 +61,22 @@ final class PlaylistFixtureProtocol: URLProtocol {
         DispatchQueue.global().asyncAfter(deadline:.now()+delay) { [weak self] in
             self?.reply(200, Self.payload)
         }
+    }
+    private func requestSong() -> Object {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            let capacity = 1024
+            var buffer = [UInt8](repeating: 0, count: capacity)
+            while true {
+                let count = stream.read(&buffer, maxLength: capacity)
+                if count <= 0 { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        let value = (try? JSONSerialization.jsonObject(with: data)) as? Object
+        return value?["songInfo"] as? Object ?? [:]
     }
     private func reply(_ status: Int, _ payload: Object) {
         guard let url = request.url else { return }
@@ -88,6 +109,7 @@ enum PlaylistStartupTests {
         let script="""
         const {on,request,send}=window.lx;
         on('request',({info})=>{
+          console.debug('playback'); window.console.time('resolve'); globalThis.console.timeEnd('resolve');
           if(info.musicInfo.songmid!=='123' || !info.musicInfo._types?.['128k'] || info.quality!==info.type)
             throw new Error('Saved song did not supply source parameters');
           return {data:{url:'//audio.invalid/restored.mp3',quality:info.type}};

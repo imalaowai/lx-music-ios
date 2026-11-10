@@ -10,7 +10,7 @@ function engine(options={}){
   if(request.url.includes('/getSongPic'))body=options.miguCoverFailure?{returnCode:'999999'}:{returnCode:'000000',largePic:'//image.invalid/mg/cover.jpg'};
   const payload=Buffer.from(JSON.stringify(body));queueMicrotask(()=>context.__nativeReply(id,JSON.stringify({statusCode:200,headers:{'content-type':'application/json'},base64:payload.toString('base64'),text:payload.toString()}),''));
  };
- context={__nativeRandom:n=>crypto.randomBytes(n).toString('base64'),__nativeHTTP:http,__nativeCancel(){},__nativeTimer:(id,delay)=>{const timer=setTimeout(()=>context.__runTimer(id),delay);timer.unref();},__nativeURL:(value,base)=>{const u=new URL(value,base||undefined);return JSON.stringify({origin:u.origin,protocol:u.protocol,host:u.host,hostname:u.hostname,port:u.port,pathname:u.pathname,search:u.search,hash:u.hash});},__nativeComplete:(id,json,error)=>{const item=pending.get(id);if(!item)return;pending.delete(id);clearTimeout(item.timer);error?item.reject(new Error(error)):item.resolve(JSON.parse(json));},console};
+ context={__nativeRandom:n=>crypto.randomBytes(n).toString('base64'),__nativeHTTP:http,__nativeCancel(){},__nativeTimer:(id,delay)=>{const timer=setTimeout(()=>context.__runTimer(id),delay);timer.unref();},__nativeURL:(value,base)=>{const u=new URL(value,base||undefined);return JSON.stringify({origin:u.origin,protocol:u.protocol,host:u.host,hostname:u.hostname,port:u.port,pathname:u.pathname,search:u.search,hash:u.hash});},__nativeComplete:(id,json,error)=>{const item=pending.get(id);if(!item)return;pending.delete(id);clearTimeout(item.timer);error?item.reject(new Error(error)):item.resolve(JSON.parse(json));},console:options.console||console};
  vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../generated/LocalEngine.js'),'utf8'),context,{timeout:3000});
  return {context,calls,run:(op,payload={})=>new Promise((resolve,reject)=>{const id=++sequence,timer=setTimeout(()=>reject(Error('Engine timeout')),4000);pending.set(id,{resolve,reject,timer});context.__engineRun(id,op,JSON.stringify(payload));})};
 }
@@ -49,6 +49,22 @@ send(EVENT_NAMES.inited,{sources:{${platform}:{qualitys:['flac','192k']}}});`;
   ['https://audio.invalid/wy.mp3?first=1&second=2','192k',true,'wy'],
  ]);
  assert.equal(e.context.lx,undefined);
+});
+test('Source playback can use the web sandbox console methods inside an iOS context',async()=>{
+ const engineConsole={log(){},warn(){},error(){}};
+ const e=engine({console:engineConsole});
+ const sourceScript=[
+  "lx.on('request',()=>{",
+  " console.debug('parsing'); window.console.info('parsing');",
+  " globalThis.console.time('resolve'); console.timeEnd('resolve');",
+  " return 'https://audio.invalid/track.mp3';",
+  "});",
+  "lx.send('inited',{sources:{kw:{qualitys:['128k']}}});",
+ ].join('\n');
+ await e.run('import',{id:'console',script:sourceScript});
+ const result=await e.run('resolve',{song:{source:'kw',songmid:'123'},quality:'128k'});
+ assert.equal(result.url,'https://audio.invalid/track.mp3');
+ assert.equal(engineConsole.debug,undefined);
 });
 test('URL-only results leave lossless quality unconfirmed and known lossy results are rejected',async()=>{
  const e=engine();

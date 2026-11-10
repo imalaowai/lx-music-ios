@@ -240,7 +240,9 @@ final class API {
             } catch {
                 let useServer = allowServerFallback && !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")
                 if useServer, self.credentials != nil, (error as? URLError)?.code != .cancelled {
-                    self.resolveOnServer(songInfo, quality: quality, allowFallback: allowFallback, completion: completion)
+                    RuntimeTrace.record("source.local-failed", ["source":text(songInfo["source"]), "quality":quality, "error":error.localizedDescription])
+                    // The web server normalizes the original song, including numeric IDs and nested metadata.
+                    self.resolveOnServer(song.raw, quality: quality, allowFallback: allowFallback, completion: completion)
                 } else if useServer, self.credentials == nil, error.localizedDescription.hasPrefix("请在") {
                     completion(.failure(ClientError("请登录同步账号使用服务器音源，或在「音源管理」导入本机音源")))
                 } else {

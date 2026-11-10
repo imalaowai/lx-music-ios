@@ -60,7 +60,7 @@ enum WebRecoveryTests {
         }
         try await waitFor("Old session request reached the server") { PlaylistFixtureProtocol.obsoleteReply != nil }
 
-        let selectSong = "window.playSong({id:'session-track',name:'重登播放测试曲',singer:'Fixture',source:'wy'},0); true"
+        let selectSong = "window.playSong({id:'session-track',songmid:1231,meta:{songId:'1231'},name:'重登播放测试曲',singer:'Fixture',source:'wy'},0); true"
         let signedInPage = c.pageRecovery.generation
         _ = try await c.web.evaluateJavaScript(selectSong)
         try await waitFor("An unauthorized playback request opens the signed-out page") {

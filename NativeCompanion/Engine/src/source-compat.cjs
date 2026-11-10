@@ -4,11 +4,13 @@ const sourceQualityOrder = ['master', 'atmos_plus', 'atmos', 'hires', 'flac24bit
 
 function runImportedMusicSource(script, lx, requireModule, buffer) {
     const scope = Object.create(globalThis);
-    Object.assign(scope, {lx, require: requireModule, Buffer: buffer, globalThis: scope, window: scope, self: scope, global: scope});
+    const quiet = () => {};
+    const sourceConsole = {log: quiet, info: quiet, debug: quiet, warn: quiet, error: quiet, time: quiet, timeEnd: quiet};
+    Object.assign(scope, {lx, require: requireModule, Buffer: buffer, console: sourceConsole, globalThis: scope, window: scope, self: scope, global: scope});
     // Keep the LX object available to asynchronous handlers from this script.
-    const execute = new Function('lx', 'require', 'Buffer', 'globalThis', 'window', 'self', 'global',
+    const execute = new Function('lx', 'require', 'Buffer', 'console', 'globalThis', 'window', 'self', 'global',
         'return (function () {\n' + script + '\n}).call(globalThis);\n//# sourceURL=imported-music-source.js');
-    return execute(lx, requireModule, buffer, scope, scope, scope, scope);
+    return execute(lx, requireModule, buffer, sourceConsole, scope, scope, scope, scope);
 }
 
 function localSourceQualities(supported, preferred, allowFallback) {
