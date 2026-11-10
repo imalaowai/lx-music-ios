@@ -86,9 +86,14 @@ enum PlaylistStartupTests {
         UserDefaults.standard.set(false,forKey:"lx.routeHold")
         let engine=LocalEngine.shared,folder=try! engine.directory(),id="16DE785F-48B3-47D0-BD9E-6951CE1135AB"
         let script="""
-        lx.on('request',()=>Promise.resolve('https://audio.invalid/restored.mp3'));
-        lx.request('https://qiye-fixture.invalid/source-delayed',{},(error)=>{
-          if(!error)lx.send('inited',{sources:{kw:{actions:['musicUrl'],qualitys:['128k']}}});
+        const {on,request,send}=window.lx;
+        on('request',({info})=>{
+          if(info.musicInfo.songmid!=='123' || !info.musicInfo._types?.['128k'] || info.quality!==info.type)
+            throw new Error('Saved song did not supply source parameters');
+          return {data:{url:'//audio.invalid/restored.mp3',quality:info.type}};
+        });
+        request('https://qiye-fixture.invalid/source-delayed',{},(error)=>{
+          if(!error)send('inited',{sources:{kw:{actions:['musicUrl'],qualitys:['128k']}}});
         });
         """
         try! script.write(to:folder.appendingPathComponent(id+".js"),atomically:true,encoding:.utf8)
@@ -126,9 +131,11 @@ enum PlaylistStartupTests {
             } else {checks["nativeCoverLookupUsesProviderSDKWithoutPhoneWebView"]=false}
             finishIfReady()
         }
-        engine.call("resolve",["song":["source":"kw","songmid":"123"],"quality":"128k"]) { result in
-            if case .success(let response)=result,let value=response as? Object {
-                checks["playbackResolutionWaitsForSavedSourceInitialization"]=text(value["url"])=="https://audio.invalid/restored.mp3" && ProcessInfo.processInfo.systemUptime-began>=3.5
+        let savedSong = Song(raw:["id":"kw_123","meta":["source":"kw","songId":"kw_123","_qualitys":["128k":["size":123]]]])
+        player.api.resolve(savedSong, quality:"128k", allowFallback:false, allowServerFallback:false) { result in
+            if case .success(let media)=result {
+                checks["playbackResolutionWaitsForSavedSourceInitialization"]=media.url.absoluteString=="https://audio.invalid/restored.mp3" &&
+                    media.playbackQuality=="128k" && media.qualityReported && ProcessInfo.processInfo.systemUptime-began>=3.5
             }else{checks["playbackResolutionWaitsForSavedSourceInitialization"]=false}
             finishIfReady()
         }

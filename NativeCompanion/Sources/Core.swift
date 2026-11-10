@@ -69,6 +69,25 @@ struct Song {
     var name: String { text(raw["name"]) }
     var artist: String { text(raw["singer"]).isEmpty ? text(raw["artist"]) : text(raw["singer"]) }
     var playbackIdentity: String { text(raw["source"]) + "|" + key }
+    var sourceParameters: Object {
+        var parameters = (raw["meta"] as? Object ?? [:]).merging(raw) { nested, top in
+            top is NSNull || (top as? String)?.isEmpty == true ? nested : top
+        }
+        let source = text(parameters["source"])
+        var id = ""
+        for field in ["songmid", "mid", "songId", "id"] {
+            if let value = parameters[field], !(value is NSNull), !String(describing: value).isEmpty {
+                id = String(describing: value); break
+            }
+        }
+        if !source.isEmpty, let prefix = [source + "_", source + ":"].first(where: { id.hasPrefix($0) }) {
+            id = String(id.dropFirst(prefix.count))
+        }
+        parameters["songmid"] = id
+        if parameters["types"] == nil || parameters["types"] is NSNull { parameters["types"] = parameters["qualitys"] }
+        if parameters["_types"] == nil || parameters["_types"] is NSNull { parameters["_types"] = parameters["_qualitys"] }
+        return parameters
+    }
 }
 
 enum ArtworkAddress {
@@ -96,17 +115,6 @@ enum ArtworkAddress {
     }
     static func embedded(_ song: Song, base: URL?) -> String {
         candidates(song, base: base).first ?? ""
-    }
-    static func providerSong(_ song: Song) -> Object {
-        var raw=(song.raw["meta"] as? Object ?? [:]).merging(song.raw) { _, top in top }
-        var id=""
-        for field in ["songmid","songId","id"] {
-            if let value=raw[field],!(value is NSNull),!String(describing:value).isEmpty { id=String(describing:value);break }
-        }
-        let prefix=text(raw["source"])+"_"
-        if id.hasPrefix(prefix) { id=String(id.dropFirst(prefix.count)) }
-        raw["songmid"]=id
-        return raw
     }
 }
 

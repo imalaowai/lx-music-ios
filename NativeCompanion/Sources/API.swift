@@ -138,7 +138,7 @@ final class API {
         let source=text(song.raw["source"])
         guard ["kw","kg","tx","wy","mg"].contains(source),song.raw["offlineId"] == nil,
               song.raw["deviceKey"] == nil,song.raw["openlist"] == nil,!bool(song.raw["isLocal"]) else { return nil }
-        return LocalEngine.shared.call("api",["path":"/api/music/pic?source="+source,"body":["songInfo":ArtworkAddress.providerSong(song)]]) { [weak self] result in
+        return LocalEngine.shared.call("api",["path":"/api/music/pic?source="+source,"body":["songInfo":song.sourceParameters]]) { [weak self] result in
             do {
                 let response=try result.get() as? Object ?? [:]
                 let address=ArtworkAddress.normalize(text(response["url"]),base:self?.base)
@@ -223,8 +223,8 @@ final class API {
             } catch { completion(.failure(error)) }
             return nil
         }
-        let revision = sessionRevision
-        return LocalEngine.shared.call("resolve", ["song": song.raw, "quality": quality, "allowFallback": allowFallback]) { [weak self] result in
+        let revision = sessionRevision, songInfo = song.sourceParameters
+        return LocalEngine.shared.call("resolve", ["song": songInfo, "quality": quality, "allowFallback": allowFallback]) { [weak self] result in
             guard let self = self, self.sessionRevision == revision else { completion(.failure(URLError(.cancelled))); return }
             do {
                 guard let value = try result.get() as? Object else { throw ClientError("音源没有返回播放地址") }
@@ -240,7 +240,7 @@ final class API {
             } catch {
                 let useServer = allowServerFallback && !UserDefaults.standard.bool(forKey: "lx.disableLegacySourceFallback")
                 if useServer, self.credentials != nil, (error as? URLError)?.code != .cancelled {
-                    self.resolveOnServer(song, quality: quality, allowFallback: allowFallback, completion: completion)
+                    self.resolveOnServer(songInfo, quality: quality, allowFallback: allowFallback, completion: completion)
                 } else if useServer, self.credentials == nil, error.localizedDescription.hasPrefix("请在") {
                     completion(.failure(ClientError("请登录同步账号使用服务器音源，或在「音源管理」导入本机音源")))
                 } else {
@@ -249,8 +249,8 @@ final class API {
             }
         }
     }
-    func resolveOnServer(_ song: Song, quality: String, allowFallback: Bool, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) {
-        request("/api/music/url", method: "POST", body: ["songInfo": song.raw, "quality": quality, "allowQualityFallback": allowFallback, "enableAutoSwitchApiSource": true]) { [weak self] result in
+    private func resolveOnServer(_ songInfo: Object, quality: String, allowFallback: Bool, completion: @escaping (Result<ResolvedAudio, Error>) -> Void) {
+        request("/api/music/url", method: "POST", body: ["songInfo": songInfo, "quality": quality, "allowQualityFallback": allowFallback, "enableAutoSwitchApiSource": true]) { [weak self] result in
             do {
                 let value = try result.get()
                 guard let self = self, let base = self.base, !text(value["url"]).isEmpty else { throw ClientError("音源没有返回播放地址") }

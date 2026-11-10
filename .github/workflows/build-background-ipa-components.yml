@@ -1,4 +1,4 @@
-name: Build Qiye 1.9.17 playback recovery components
+name: Build Qiye 1.9.18 source compatibility components
 on:
   push:
     branches: [fix/ios-session-playback-recovery-20261109]
@@ -36,12 +36,12 @@ jobs:
           import json,pathlib,subprocess
           root=pathlib.Path('build/own-ui')
           meta=json.loads((root/'components.json').read_text())
-          assert meta['version']=='1.9.17' and meta['build']=='105'
+          assert meta['version']=='1.9.18' and meta['build']=='106'
           assert meta['sourceCommit']==subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: QiyeMusic-v1.9.17-Native-Components
+          name: QiyeMusic-v1.9.18-Native-Components
           path: build/own-ui/LX-OwnUI-Native-Components.zip
           if-no-files-found: error
   signer:

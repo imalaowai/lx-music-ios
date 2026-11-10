@@ -10,8 +10,12 @@ check(ArtworkAddress.embedded(Song(raw:["pic":"https://image.invalid/legacy.jpg"
 check(ArtworkAddress.normalize("https://image.invalid/{size}/cover.jpg",base:nil)=="https://image.invalid/500/cover.jpg","provider cover size templates resolve before fetching")
 check(ArtworkAddress.normalize("/covers/a.jpg",base:URL(string:"https://music.invalid/"))=="https://music.invalid/covers/a.jpg","relative covers resolve against the configured server")
 check(ArtworkAddress.normalize("lx-local://cover/file",base:nil).isEmpty && ArtworkAddress.normalize("javascript:alert(1)",base:nil).isEmpty,"WebKit-only cover schemes never reach native image loading")
-check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","id":"wy_123"]))["songmid"])=="123","synced provider IDs normalize for native cover lookup")
-check(text(ArtworkAddress.providerSong(Song(raw:["source":"wy","songmid":123]))["songmid"])=="123","numeric provider IDs survive native cover lookup")
+check(text(Song(raw:["source":"wy","id":"wy_123"]).sourceParameters["songmid"])=="123","synced provider IDs normalize for source requests")
+check(text(Song(raw:["source":"wy","songmid":123]).sourceParameters["songmid"])=="123","numeric provider IDs survive source normalization")
+let sourceParameters = Song(raw:["id":"kg_123","source":NSNull(),"meta":["source":"kg","songId":"kg_123","hash":"fixture","qualitys":["192k"],"_qualitys":["192k":["hash":"fixture"]]]]).sourceParameters
+check(text(sourceParameters["source"])=="kg" && text(sourceParameters["songmid"])=="123","nested source metadata supplies a usable provider ID")
+check(sourceParameters["types"] as? [String] == ["192k"] && text(((sourceParameters["_types"] as? Object)?["192k"] as? Object)?["hash"])=="fixture",
+      "playback scripts receive nested quality metadata under their usual field names")
 check(SongInterval.seconds("03:20")==200 && SongInterval.seconds("1:03:20")==3800,"provider interval supplies seekable seconds before decoder metadata arrives")
 check(SongInterval.seconds(180.5)==180.5 && SongInterval.seconds("180.5")==180.5,"interval preserves native fractional seconds")
 check(SongInterval.seconds("03:99")==0 && SongInterval.seconds("nan")==0 && SongInterval.seconds(-1)==0,"invalid provider duration cannot reach system metadata")

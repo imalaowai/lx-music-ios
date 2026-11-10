@@ -30,6 +30,26 @@ test('Local source import, crypto, callback HTTP and quality fallback work witho
  await assert.rejects(e.run('resolve',{song:{source:'kw'},quality:'flac',allowFallback:false}),/fixture only/);
  await e.run('enable',{id:'fixture',enabled:false});await assert.rejects(e.run('resolve',{song:{source:'kw'},quality:'128k'}),/导入/);
 });
+test('A source imported from the server can read its own global LX API and return the web URL format',async()=>{
+ const e=engine();
+ const serverStyle=(name,platform)=>`/** @name ${name} */
+const {on,send,EVENT_NAMES}=window.lx;
+if (globalThis.lx!==window.lx || self.lx!==lx || global.lx!==lx || this.lx!==lx) throw Error('inconsistent LX globals');
+on(EVENT_NAMES.request,async ({info})=>{
+ await Promise.resolve();
+ if(globalThis.lx.currentScriptInfo.name!==${JSON.stringify(name)}) throw Error('another source replaced the LX globals');
+ if(info.quality!==info.type || info.type!=='192k') throw Error('unsupported requested quality');
+ return {data:{url:' //audio.invalid/${platform}.mp3?first=1&amp;second=2 ',quality:info.type}};
+});
+send(EVENT_NAMES.inited,{sources:{${platform}:{qualitys:['flac','192k']}}});`;
+ await Promise.all(['kw','wy'].map(platform=>e.run('import',{id:platform,script:serverStyle(platform,platform)})));
+ const results=await Promise.all(['kw','wy'].map(source=>e.run('resolve',{song:{source,songmid:'123'},quality:'flac'})));
+ assert.deepEqual(results.map(x=>[x.url,x.type,x.qualityReported,x.sourceId]),[
+  ['https://audio.invalid/kw.mp3?first=1&second=2','192k',true,'kw'],
+  ['https://audio.invalid/wy.mp3?first=1&second=2','192k',true,'wy'],
+ ]);
+ assert.equal(e.context.lx,undefined);
+});
 test('Provider search is performed from the bundled SDK, not from the sync server',async()=>{
  const e=engine(),songs=await e.run('api',{path:'/api/music/search?source=kw&name=test&page=1'});assert.equal(songs.length,1);assert.equal(songs[0].name,'测试歌曲');assert.equal(String(songs[0].songmid),'123');assert.ok(e.calls.every(x=>new URL(x.url).hostname!=='local.invalid'));assert.ok(e.calls.some(x=>x.url.includes('search.kuwo.cn')));
 });

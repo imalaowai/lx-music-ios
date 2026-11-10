@@ -10,10 +10,19 @@ for name,extension,key in [('WebUI','html','htmlSha256'),('LocalEngine','js','sh
     metadata=json.loads((old/f'Resources/{name}.manifest.json').read_text())
     assert hashlib.sha256(data).hexdigest()==metadata[key],name+' integrity mismatch'
     if name=='LocalEngine':
-        marker=b'return{url:A,type:w,sourceId:p.id}'
-        replacement=b'let sourceQuality=typeof E==="object"&&E!==null?(typeof E.type==="string"?E.type:typeof E.quality==="string"?E.quality:""):"";let qualityOrder=["master","atmos_plus","atmos","hires","flac24bit","flac","320k","192k","128k"];let requestedRank=qualityOrder.indexOf(w),actualRank=qualityOrder.indexOf(sourceQuality),urlPath=new URL(A).pathname.toLowerCase();if((sourceQuality&&requestedRank>=0&&actualRank>requestedRank)||((w==="flac"||w==="flac24bit")&&/\\.(mp3|m4a|aac|ogg|opus)$/.test(urlPath)))throw new Error("\\u97F3\\u6E90\\u8FD4\\u56DE\\u7684\\u5B9E\\u9645\\u683C\\u5F0F\\u6216\\u97F3\\u8D28\\u4F4E\\u4E8E\\u8BF7\\u6C42\\u6863\\u4F4D");return{url:A,type:sourceQuality||w,qualityReported:!!sourceQuality,sourceId:p.id}'
-        assert data.count(marker)==1,'Local source quality return anchor changed; review resolver before rebuilding'
-        data=data.replace(marker,replacement)
+        patches = [
+            (b'new Function("lx","require","Buffer",e.script+`\n//# sourceURL=imported-music-source.js`)(w,A,T.Buffer)',
+             b'runImportedMusicSource(e.script,w,A,T.Buffer)'),
+            (b'let b=p.sources[a.source]?.qualitys||p.sources[a.source]?.qualities||["128k","320k","flac"],_=[t,...r?["flac","320k","128k"]:[]].filter((w,E,A)=>A.indexOf(w)===E&&b.includes(w))',
+             b'let b=p.sources[a.source],_=localSourceQualities(b?.qualitys||b?.qualities,t,r)'),
+            (b'let E=await p.handler({source:a.source,action:"musicUrl",info:{musicInfo:a,type:w}}),A=typeof E=="string"?E:E?.url;if(!/^https?:\\/\\//i.test(A||""))throw new Error("\\u97F3\\u6E90\\u6CA1\\u6709\\u8FD4\\u56DE\\u6709\\u6548\\u7684\\u64AD\\u653E\\u5730\\u5740");return{url:A,type:w,sourceId:p.id}',
+             b'return localSourceAudio(await p.handler({source:a.source,action:"musicUrl",info:{musicInfo:a,type:w,quality:w}}),w,p.id)'),
+        ]
+        for anchor, replacement in patches:
+            assert data.count(anchor) == 1, 'Local source compatibility anchor changed'
+            data = data.replace(anchor, replacement)
+        source_compat = (old/'Engine/src/source-compat.cjs').read_bytes().split(b'if (typeof module', 1)[0]
+        data = source_compat + b'\n' + data
         marker=b'var Bx=e=>e?.promise||e;'
         replacement=b'var Bx=async e=>{for(let i=0;i<8;i++){e=await e;if(e&&typeof e.promise?.then==="function"){e=e.promise;continue}return e}throw new Error("Provider response nesting is too deep")};'
         assert data.count(marker)==1,'Provider response unwrap anchor changed; review cover/lyric resolver'

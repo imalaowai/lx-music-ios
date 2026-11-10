@@ -1,5 +1,6 @@
 'use strict';
 const routeComment=require('./comment.cjs');
+const {runImportedMusicSource,localSourceQualities,localSourceAudio}=require('./source-compat.cjs');
 const network=require('./platform.cjs'),crypto=require('crypto'),compression=require('./compression.cjs');
 const providers={kw:require('../vendor/server/modules/utils/musicSdk/kw').default,kg:require('../vendor/server/modules/utils/musicSdk/kg').default,tx:require('../vendor/server/modules/utils/musicSdk/tx').default,wy:require('../vendor/server/modules/utils/musicSdk/wy').default,mg:require('../vendor/server/modules/utils/musicSdk/mg').default};
 const sources=new Map(),cache=new Map();
@@ -16,7 +17,7 @@ async function importSource(input){
  const timer=setTimeout(()=>fail(new Error('音源初始化超时，请检查脚本是否调用 lx.send("inited")')),8000);
  try{
   const safeRequire=name=>{if(name==='crypto')return crypto;if(name==='buffer')return {Buffer};if(name==='zlib')return compression;throw new Error('手机音源不支持 Node 模块 '+name);};
-  new Function('lx','require','Buffer',input.script+'\n//# sourceURL=imported-music-source.js')(lx,safeRequire,Buffer);
+  runImportedMusicSource(input.script,lx,safeRequire,Buffer);
   await initialized;if(typeof handler!=='function'||!Object.keys(registered).some(k=>providers[k]))throw new Error('脚本未注册可用的平台和请求处理器');
   record.handler=handler;sources.set(id,record);return listSources();
  }finally{clearTimeout(timer);}
@@ -27,9 +28,11 @@ async function resolveSong(song,quality='flac',fallback=true){
  const available=[...sources.values()].filter(x=>x.enabled&&x.sources[raw.source]);
  if(!available.length)throw new Error('请在“我的 → 音源管理”导入支持此平台的音源脚本');
  let failure;for(const source of available){
-  const supported=source.sources[raw.source]?.qualitys||source.sources[raw.source]?.qualities||['128k','320k','flac'];
-  const qualities=[quality,...fallback?['flac','320k','128k']:[]].filter((q,i,a)=>a.indexOf(q)===i&&supported.includes(q));
-  for(const type of qualities){try{const value=await source.handler({source:raw.source,action:'musicUrl',info:{musicInfo:raw,type}});const url=typeof value==='string'?value:value?.url;if(!/^https?:\/\//i.test(url||''))throw new Error('音源没有返回有效的播放地址');return {url,type,sourceId:source.id};}catch(e){failure=e;}}
+  const supported=source.sources[raw.source]?.qualitys||source.sources[raw.source]?.qualities;
+  for(const type of localSourceQualities(supported,quality,fallback)){
+   try {return localSourceAudio(await source.handler({source:raw.source,action:'musicUrl',info:{musicInfo:raw,type,quality:type}}),type,source.id);}
+   catch(error){failure=error;}
+  }
  }
  throw failure||new Error('该音源不支持选择的音质');
 }
