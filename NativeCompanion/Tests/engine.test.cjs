@@ -50,6 +50,18 @@ send(EVENT_NAMES.inited,{sources:{${platform}:{qualitys:['flac','192k']}}});`;
  ]);
  assert.equal(e.context.lx,undefined);
 });
+test('URL-only results leave lossless quality unconfirmed and known lossy results are rejected',async()=>{
+ const e=engine();
+ const sourceScript=[
+  "lx.on('request',({info})=>info.musicInfo.songmid==='123'?'https://audio.invalid/track.flac':{url:'https://audio.invalid/track.mp3',type:'320k'});",
+  "lx.send('inited',{sources:{kw:{qualitys:['flac']}}});",
+ ].join('\n');
+ await e.run('import',{id:'quality',script:sourceScript});
+ const result=await e.run('resolve',{song:{source:'kw',songmid:'123'},quality:'flac',allowFallback:false});
+ assert.equal(result.type,'flac');
+ assert.equal(result.qualityReported,false);
+ await assert.rejects(e.run('resolve',{song:{source:'kw',songmid:'456'},quality:'flac',allowFallback:false}),/低于请求档位/);
+});
 test('Provider search is performed from the bundled SDK, not from the sync server',async()=>{
  const e=engine(),songs=await e.run('api',{path:'/api/music/search?source=kw&name=test&page=1'});assert.equal(songs.length,1);assert.equal(songs[0].name,'测试歌曲');assert.equal(String(songs[0].songmid),'123');assert.ok(e.calls.every(x=>new URL(x.url).hostname!=='local.invalid'));assert.ok(e.calls.some(x=>x.url.includes('search.kuwo.cn')));
 });
